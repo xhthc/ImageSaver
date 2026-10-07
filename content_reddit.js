@@ -71,6 +71,25 @@
   }
 
   /**
+   * A scrub-preview <video> (observed on a signed-out www.reddit.com post, 2026-10-07: a <video src=".../CMAF_96.mp4"> inside <shreddit-preview-video-lazy>
+   * under <shreddit-progress-bar>) is a low-resolution thumbnail of the post's video, never the video: an address that merely ends in .mp4 does not
+   * promote it. The player's main video is the first <video> of its root that is not such a preview, whatever the order of the controls.
+   */
+  const PREVIEW_VIDEO_HOSTS = 'shreddit-preview-video-lazy, shreddit-progress-bar';
+  const PREVIEW_VIDEO_TAGS = ['SHREDDIT-PREVIEW-VIDEO-LAZY', 'SHREDDIT-PROGRESS-BAR'];
+  // `path` (a composed path, innermost first) also names hosts above a shadow boundary that closest() does not cross
+  function isPreviewVideo(video, path = null) {
+    if (!video) return false;
+    if (typeof video.closest === 'function' && video.closest(PREVIEW_VIDEO_HOSTS)) return true;
+    const at = Array.isArray(path) ? path.indexOf(video) : -1;
+    return at >= 0 && path.slice(at + 1).some((el) => el && PREVIEW_VIDEO_TAGS.includes(String(el.tagName).toUpperCase()));
+  }
+  function firstMainVideo(root) {
+    const all = root && typeof root.querySelectorAll === 'function' ? Array.from(root.querySelectorAll('video') || []) : [];
+    return all.find((v) => !isPreviewVideo(v)) || null;
+  }
+
+  /**
    * Inspects a DOM element or candidate URL to resolve media type and source details.
    * Preserves DOM video semantics for blob sources (type: 'video').
    */
@@ -215,7 +234,7 @@
 
     // 3. Inspect open shadowRoot
     if (player.shadowRoot) {
-      const shadowVideo = player.shadowRoot.querySelector('video');
+      const shadowVideo = firstMainVideo(player.shadowRoot);
       if (shadowVideo && shadowVideo.isConnected !== false) {
         const sources = Array.from(shadowVideo.querySelectorAll?.('source') || []).slice(0, 8);
         for (const s of sources) {
@@ -379,6 +398,8 @@
     if (!clickedVideo && Array.isArray(path)) {
       clickedVideo = path.find(el => el && (el.tagName || '').toLowerCase() === 'video') || null;
     }
+    // a scrub preview is not the post's video
+    if (clickedVideo && isPreviewVideo(clickedVideo, path)) return null;
 
     if (clickedVideo && clickedVideo.isConnected !== false) {
       // Check if clicked native video itself has direct non-blob media (e.g. child source or direct src)
@@ -456,7 +477,7 @@
       const tag = (el.tagName || '').toLowerCase();
 
       // HTML5 video element
-      if (tag === 'video') {
+      if (tag === 'video' && !isPreviewVideo(el, elements)) {
         const videoSrc = el.currentSrc || el.src || el.querySelector?.('source')?.src || el.getAttribute('src');
         if (videoSrc) {
           if (videoSrc.startsWith('blob:')) {
@@ -480,7 +501,7 @@
         }
         // Inspect shadowRoot if open
         if (el.shadowRoot) {
-          const shadowVideo = el.shadowRoot.querySelector('video');
+          const shadowVideo = firstMainVideo(el.shadowRoot);
           if (shadowVideo && shadowVideo.isConnected !== false) {
             const shadowSources = shadowVideo.querySelectorAll?.('source') || [];
             for (const s of shadowSources) {
@@ -571,7 +592,7 @@
     }
 
     if (slideContainer && slideContainer.isConnected !== false) {
-      const slideVideo = slideContainer.querySelector('video');
+      const slideVideo = firstMainVideo(slideContainer);
       if (slideVideo && slideVideo.isConnected !== false) {
         const vSrc = slideVideo.currentSrc || slideVideo.src || slideVideo.querySelector?.('source')?.src || slideVideo.getAttribute?.('src');
         if (vSrc) {
@@ -648,7 +669,7 @@
 
       if (activeSlideContainers.size === 1) {
         const [singleActiveSlide] = Array.from(activeSlideContainers);
-        const aVideo = singleActiveSlide.querySelector('video');
+        const aVideo = firstMainVideo(singleActiveSlide);
         if (aVideo && aVideo.isConnected !== false) {
           const vSrc = aVideo.currentSrc || aVideo.src || aVideo.querySelector?.('source')?.src || aVideo.getAttribute?.('src');
           if (vSrc) {
@@ -706,7 +727,7 @@
                 const aSrc = activeImg.currentSrc || activeImg.src || activeImg.getAttribute?.('src');
                 if (aSrc) return resolveRedditMediaDescriptor(aSrc, activeImg, postUrl);
               }
-              const activeVid = activeSlide.querySelector('video');
+              const activeVid = firstMainVideo(activeSlide);
               if (activeVid && activeVid.isConnected !== false && holdsPoint(activeVid)) {
                 const vSrc = activeVid.currentSrc || activeVid.src;
                 if (vSrc) return resolveRedditMediaDescriptor(vSrc, activeVid, postUrl);
@@ -723,7 +744,7 @@
           }
 
           // Single-media card: check video or shreddit-player
-          const video = owningCard.querySelector('video');
+          const video = firstMainVideo(owningCard);
           if (video && video.isConnected !== false && holdsPoint(video)) {
             const vSrc = video.currentSrc || video.src || video.querySelector?.('source')?.src;
             if (vSrc) {
@@ -1210,7 +1231,7 @@
     if (el.tagName === 'SHREDDIT-EMBED') return riEmbedFrame(el);
     const p = riPlayerOf(el);
     const root = p && p.shadowRoot;
-    return root && typeof root.querySelector === 'function' ? (root.querySelector('video') || null) : null;
+    return firstMainVideo(root);
   };
   const riSrcOf = (el) => {
     const embedHost = riEmbedHost(el);
@@ -1219,7 +1240,7 @@
       return ['embed', riEmbedSrc(embedHost), o && o.owner ? riAttr(o.owner, 'content-href') : ''].join('|');
     }
     if (el.tagName !== 'VIDEO' && el.tagName !== 'SHREDDIT-PLAYER') return riImgSrc(el);
-    const inner = el.tagName === 'SHREDDIT-PLAYER' && typeof el.querySelector === 'function' ? el.querySelector('video') : null;
+    const inner = el.tagName === 'SHREDDIT-PLAYER' ? firstMainVideo(el) : null;
     const player = riPlayerOf(el);
     return [el.currentSrc || el.src || '', riAttr(el, 'src'), riAttr(el, 'stream-url'), inner ? (inner.currentSrc || inner.src || '') : '', riAttr(el, 'poster') || el.poster || '', player ? ((extractDirectCandidateFromPlayer(player, null) || {}).url || '') : ''].join('|');
   };
@@ -1338,7 +1359,10 @@
     const own = riState.host;
     for (const el of stack.slice(0, RI.MAX_STACK)) {
       if (!el || (own && (el === own || (typeof own.contains === 'function' && own.contains(el))))) continue;
-      if (el.tagName === 'VIDEO') return { el, kind: 'video' };
+      if (el.tagName === 'VIDEO') {
+        if (isPreviewVideo(el)) continue; // the scrub preview of a player: the player below it is the candidate
+        return { el, kind: 'video' };
+      }
       if (el.tagName === 'SHREDDIT-PLAYER') return { el, kind: 'video' };
       if (el.tagName === 'IFRAME' || el.tagName === 'SHREDDIT-EMBED') {
         const embed = riEmbedOf(el);

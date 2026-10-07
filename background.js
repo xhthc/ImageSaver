@@ -4601,7 +4601,9 @@ function readContextMediaTarget() {
  * one the native menu claimed? A source or link URL handed over by Chrome is only a claim made at the gesture: the
  * node that gesture pressed must still be that same node (connected, same ancestors and owner attributes), still show
  * the claimed source, and for a media link still sit inside an anchor with that address. A removed, re-sourced,
- * reused or replaced node is 'refused'. 'unproven' = the capture script is not running in this frame (not injected), so
+ * reused or replaced node is 'refused'. A scrub-preview <video> (the thumbnail player inside <shreddit-preview-video-lazy> or
+ * <shreddit-progress-bar>, found by its DOM role through shadow boundaries, never by its address) is never the selected media, pressed
+ * itself or selected as the media under a pressed layer: 'preview', whatever source Chrome claims. 'unproven' = the capture script is not running in this frame (not injected), so
  * nothing contradicts the claim. A script that runs here but recorded no gesture in this document (null: the document was
  * navigated or reloaded after the right-click, or the gesture was not a real one) is not the document the menu was built for:
  * its claim is stale and is 'refused'. Local DOM reads only: no network, no messages.
@@ -4613,10 +4615,22 @@ function verifyContextOwner(claim) {
     if (!cap) return 'refused';
     const el = cap.ref && typeof cap.ref.deref === 'function' ? cap.ref.deref() : null;
     if (!el || el.isConnected === false || typeof cap.unchanged !== 'function' || !cap.unchanged(el)) return 'refused';
+    const inPreviewHost = (node) => {
+      for (let i = 0; node && i < 32; i++) {
+        const tag = String(node.tagName || '').toUpperCase();
+        if (tag === 'SHREDDIT-PREVIEW-VIDEO-LAZY' || tag === 'SHREDDIT-PROGRESS-BAR') return true;
+        const root = !node.parentElement && typeof node.getRootNode === 'function' ? node.getRootNode() : null;
+        node = node.parentElement || (root && root.host) || (node.host && typeof node.host === 'object' ? node.host : null);
+      }
+      return false;
+    };
+    if (el.tagName === 'VIDEO' && inPreviewHost(el)) return 'preview';
     // A pressed layer (overlay, CSS card) is only the gesture's pointer to the media it selected: the pressed node can
     // survive while the media under it is removed, replaced or re-sourced. The capture's own proof of that media
     // (same media node, same asset, still under the point) must still hold, or the layer selects nothing now.
     if (cap.media && (typeof cap.media.check !== 'function' || !cap.media.check())) return 'refused';
+    const mediaEl = cap.media && cap.media.ref && typeof cap.media.ref.deref === 'function' ? cap.media.ref.deref() : null;
+    if (mediaEl && mediaEl.tagName === 'VIDEO' && inPreviewHost(mediaEl)) return 'preview';
     const src = claim && typeof claim.src === 'string' ? claim.src : '';
     if (src && (el.tagName === 'IMG' || el.tagName === 'VIDEO' || el.tagName === 'AUDIO')) {
       if (![el.currentSrc, el.src].includes(src)) return 'refused';
@@ -4641,7 +4655,7 @@ async function resolveContextOwner(tabId, frameId, claim) {
       args: [claim]
     });
     const res = results && results[0] && results[0].result;
-    return res === 'refused' || res === 'proven' ? res : 'unproven';
+    return res === 'refused' || res === 'proven' || res === 'preview' ? res : 'unproven';
   } catch (e) {
     return 'unproven';
   }
@@ -10527,8 +10541,10 @@ async function onContextMenuClicked(info, tab) {
     const claimsMediaLink = !rawImageUrl && hasMediaAssociation('', rawLinkUrl);
     // An inline Reddit click (UX-11-RD) was proven by the document right before this call; a gesture capture, possibly of another tile, must not decide it.
     const owner = redditInlineInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '' });
-    if (owner === 'refused') {
-      console.warn('[Image Saver] Владелец выбранной цели удалён, заменён или изменён после жеста — сохранение отклонено без запросов');
+    if (owner === 'refused' || owner === 'preview') {
+      console.warn(owner === 'preview'
+        ? '[Image Saver] The selected video is a seek preview, not the media of the post: save refused without requests'
+        : '[Image Saver] Владелец выбранной цели удалён, заменён или изменён после жеста — сохранение отклонено без запросов');
       const staleOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, '') });
       await fbFail(staleOp, { stage: 'resolve', code: 'NO_MEDIA' });
       await fbBadgeReporter(staleOp)('ERR', '#ef4444');

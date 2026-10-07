@@ -3134,6 +3134,216 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     'shadow <source>': (w, url) => { const g = playerPost(w.env, 'mq1', 'vid9mq', { json: null }); const so = w.env.context.document.createElement('source'); so.setAttribute('src', url); g.video.appendChild(so); return g; }
   };
 
+  // ===== 9.31: the observed signed-out DOM of an HLS-only post (r/AnimatedPornzzz t3_1sqccda, 2026-10-07, read by an independent observer; NOT a capture of an
+  // authenticated, playing player): <shreddit-player src=".../t2zsy4wr79wg1/HLSPlaylist.m3u8">, no packaged-media-json, the main <video> has no source yet, and a
+  // scrub-preview <video src=".../CMAF_96.mp4"> inside <shreddit-preview-video-lazy> under <shreddit-progress-bar>. The preview is not the post's video.
+  // The observation does not say whether the preview precedes the main video in the player's tree, so both orders (and a light-DOM placement) are built.
+  const HLS_ID = 't2zsy4wr79wg1';
+  const HLS_URL = `https://v.redd.it/${HLS_ID}/HLSPlaylist.m3u8`;
+  const PREVIEW_URL = `https://v.redd.it/${HLS_ID}/CMAF_96.mp4`;
+  const BLOB_SRC = 'blob:https://www.reddit.com/0a1b2c3d-0000-4000-8000-000000000000';
+  function hlsOnlyPost(env, { order = 'main-first', place = 'shadow', mainSrc = '', json = null } = {}) {
+    const { document } = env.context;
+    const post = document.createElement('shreddit-post');
+    post.setAttribute('id', 't3_1sqccda');
+    post.setAttribute('permalink', '/r/AnimatedPornzzz/comments/1sqccda/daring_catch_deepstroke/');
+    post.setAttribute('post-type', 'video');
+    R(post, 100, 100, 600, 500);
+    const cont = document.createElement('div');
+    cont.style.position = 'relative';
+    R(cont, 100, 100, 600, 500);
+    const player = document.createElement('shreddit-player');
+    player.setAttribute('src', HLS_URL);
+    if (json !== null) player.setAttribute('packaged-media-json', json);
+    R(player, 100, 100, 600, 500);
+    const main = document.createElement('video');
+    if (mainSrc) { main.src = mainSrc; main.currentSrc = mainSrc; }
+    R(main, 100, 100, 600, 500);
+    const bar = document.createElement('shreddit-progress-bar');
+    const lazy = document.createElement('shreddit-preview-video-lazy');
+    const preview = document.createElement('video');
+    preview.src = PREVIEW_URL; preview.currentSrc = PREVIEW_URL;
+    R(bar, 100, 560, 600, 20); R(lazy, 100, 520, 100, 40); R(preview, 100, 520, 100, 40);
+    lazy.appendChild(preview); bar.appendChild(lazy);
+    const host = place === 'shadow' ? shadowOf(env, player) : player;
+    if (order === 'main-first') { host.appendChild(main); host.appendChild(bar); } else { host.appendChild(bar); host.appendChild(main); }
+    cont.appendChild(player);
+    post.appendChild(cont);
+    document.body.appendChild(post);
+    return { post, player, main, bar, lazy, preview };
+  }
+  const HLS_VARIANTS = [];
+  for (const place of ['shadow', 'light']) for (const order of ['main-first', 'preview-first']) for (const mainSrc of ['', BLOB_SRC]) HLS_VARIANTS.push({ place, order, mainSrc, tag: `${place}/${order}/${mainSrc ? 'blob' : 'empty'}` });
+
+  await itAsync('9.31 an HLS-only player (observed DOM) never yields the scrub-preview .mp4 on any route, whatever the order of its controls: the helper, both menu routes and the click path refuse it', async () => {
+    const found = [];
+    for (const v of HLS_VARIANTS) {
+      const w = await world();
+      const g = hlsOnlyPost(w.env, v);
+      const ctx = w.env.context;
+      const urlOf = (r) => (r && (r.url || r.targetUrl)) || '';
+      const note = (what, r) => { if (/CMAF_96/.test(urlOf(r))) found.push(`${v.tag}: ${what} -> ${urlOf(r)}`); };
+      if (ctx.extractDirectCandidateFromPlayer(g.player, null)) found.push(`${v.tag}: extractDirectCandidateFromPlayer returned a candidate: ${urlOf(ctx.extractDirectCandidateFromPlayer(g.player, null))}`);
+      note('menu route on the player', ctx.findRedditMediaFromTargetAndPath(g.player, [g.player, g.post], null));
+      note('menu route on the main video', ctx.findRedditMediaFromTargetAndPath(g.main, [g.main, g.player, g.post], null));
+      note('menu route on the preview', ctx.findRedditMediaFromTargetAndPath(g.preview, [g.preview, g.lazy, g.bar, g.player, g.post], null));
+      note('menu route on the preview (retargeted at the host)', ctx.findRedditMediaFromTargetAndPath(g.player, [g.preview, g.lazy, g.bar, g.player, g.post], null));
+      note('blob recovery from the main video', ctx.findRedditDirectMediaForBlob(g.main, [g.main, g.player, g.post], v.mainSrc));
+      note('blob recovery from the preview', ctx.findRedditDirectMediaForBlob(g.preview, [g.preview, g.lazy, g.bar, g.player, g.post], ''));
+      for (const [what, target, path] of [['main video', g.main, [g.main, g.player, g.post]], ['preview', g.preview, [g.preview, g.lazy, g.bar, g.player, g.post]]]) {
+        ctx.setLastRedditContextmenuTarget(target, path);
+        const res = w.env.ask({ action: 'RESOLVE_REDDIT_BLOB_MEDIA', clickedSrc: v.mainSrc || BLOB_SRC });
+        note(`RESOLVE_REDDIT_BLOB_MEDIA from the ${what}`, res);
+        const cur = w.env.ask({ action: 'GET_REDDIT_MEDIA_AT_CURSOR' });
+        note(`GET_REDDIT_MEDIA_AT_CURSOR from the ${what}`, cur && cur.media);
+      }
+      await hover(w.env, 200, 200);
+      if (!w.state.btn) { found.push(`${v.tag}: no inline control over the player`); continue; }
+      const r = await saveThis(w, 0);
+      for (const d of r.d) found.push(`${v.tag}: inline Save downloaded ${d.url}`);
+      for (const u of w.bg.fetched) found.push(`${v.tag}: inline Save requested ${u}`);
+      if (JSON.stringify(failedCodes(r.ops)) !== '["UNRESOLVED_BLOB_MEDIA"]') found.push(`${v.tag}: inline failure code ${JSON.stringify(failedCodes(r.ops))}`);
+    }
+    assert.deepStrictEqual(found, [], found.join('\n'));
+  });
+
+  await itAsync('9.31b the preview never displaces the player\'s own source: a declared MP4 or a playing direct file wins in either order, and the preview address is never requested', async () => {
+    const OWN = 'https://packaged-media.redd.it/t2zsy4wr79wg1/pb/m2-res_720p.mp4?s=H264720';
+    const PLAYING = 'https://packaged-media.redd.it/t2zsy4wr79wg1/pb/m2-res_480p.mp4?s=playing';
+    for (const order of ['main-first', 'preview-first']) for (const [name, opts, expected] of [
+      ['declared packaged-media-json', { json: pmj(HLS_ID) }, OWN],
+      ['a direct file the main video is playing', { mainSrc: PLAYING }, PLAYING]
+    ]) {
+      const w = await world();
+      hlsOnlyPost(w.env, { order, ...opts });
+      await hover(w.env, 200, 200);
+      assert(w.state.btn !== null, `${order}/${name}: control shown`);
+      const r = await saveThis(w);
+      assert.strictEqual(r.d.length, 1, `${order}/${name}`);
+      assert.strictEqual(r.d[0].url, expected, `${order}/${name}: the player's own exact source`);
+      assert(w.bg.fetched.every((u) => !/CMAF_96/.test(u)), `${order}/${name}: the preview was never requested: ${JSON.stringify(w.bg.fetched)}`);
+    }
+  });
+
+
+  await itAsync('9.31c a scrub preview with no player in its path is never the clicked video (no post-level or blob recovery promotes it); an ordinary standalone video keeps its own source', async () => {
+    const w = await world();
+    const { document } = w.env.context;
+    const post = document.createElement('shreddit-post');
+    post.setAttribute('permalink', '/r/AnimatedPornzzz/comments/1sqccda/daring_catch_deepstroke/');
+    R(post, 100, 100, 600, 500);
+    const bar = document.createElement('shreddit-progress-bar');
+    const lazy = document.createElement('shreddit-preview-video-lazy');
+    const preview = document.createElement('video');
+    preview.src = PREVIEW_URL; preview.currentSrc = PREVIEW_URL;
+    lazy.appendChild(preview); bar.appendChild(lazy); post.appendChild(bar); document.body.appendChild(post);
+    const ctx = w.env.context;
+    assert.strictEqual(ctx.findRedditDirectMediaForBlob(preview, [preview, lazy, bar, post], ''), null, 'no recovery from an orphan preview');
+    assert.strictEqual(ctx.findRedditDirectMediaForBlob(preview, [preview, post], ''), null, 'the hosts named only in the composed path above a shadow boundary count too');
+    const own = document.createElement('video');
+    own.src = 'https://v.redd.it/standalone9/CMAF_96.mp4'; own.currentSrc = own.src;
+    const post2 = document.createElement('shreddit-post');
+    post2.setAttribute('permalink', '/r/pics/comments/standalone9/a_video/');
+    post2.appendChild(own); document.body.appendChild(post2);
+    const got = ctx.findRedditDirectMediaForBlob(own, [own, post2], '');
+    assert(got && got.url === own.src, 'a standalone video outside every preview host is still its own source: ' + JSON.stringify(got));
+  });
+
+  // ===== 9.32: the native entry. Chrome hands the extension the preview's own address (srcUrl) when the right-click lands on the scrub-preview <video>. The
+  // real content_context_target.js records the gesture in the content context, the real injected verifier runs there, and the real onContextMenuClicked
+  // decides: a positively identified seek preview (its DOM role: inside <shreddit-preview-video-lazy> / <shreddit-progress-bar>, shadow boundaries
+  // included) is refused before any fetch, probe or download. The address is NOT matched by name: a standalone video called CMAF_96.mp4 stays valid.
+  const PAGE_HLS = 'https://www.reddit.com/r/AnimatedPornzzz/comments/1sqccda/daring_catch_deepstroke/';
+  function armNativeMenu(w) {
+    const { env } = w;
+    MockElement.prototype.nodeType = 1; // the capture accepts element nodes only
+    vm.runInContext(fs.readFileSync(path.join(__dirname, 'content_context_target.js'), 'utf8'), env.context);
+    // chrome.scripting.executeScript: the function Chrome would inject runs in the content context, as in the browser
+    w.bg.sandbox.chrome.scripting.executeScript = async (o) => {
+      if (!o || typeof o.func !== 'function') return [{ result: null }];
+      const f = vm.runInContext('(' + o.func.toString() + ')', env.context);
+      return [{ result: f(...(o.args || [])), documentId: 'doc-R' }];
+    };
+  }
+  // the nodes of one fixture that live below a shadow root know their root, as in a browser
+  function giveRoots(env, g, place) {
+    const root = place === 'shadow' ? g.player.shadowRoot : env.context.document;
+    for (const n of [g.main, g.bar, g.lazy, g.preview]) if (n) n.getRootNode = () => root;
+    if (place === 'shadow') g.player._shadow = root; // the mock hit test walks _shadow
+  }
+  async function nativeMenuSave(w, { path: nodes, x, y, srcUrl = '', mediaType = undefined, retarget = null }) {
+    w.env.fireWin('contextmenu', { clientX: x, clientY: y, target: retarget || nodes[0], composedPath: () => nodes, timeStamp: Date.now() });
+    const before = w.bg.downloads.length;
+    const known = await w.bg.known();
+    await w.bg.sandbox.onContextMenuClicked({ menuItemId: 'save-image-item', mediaType, frameId: 0, srcUrl, pageUrl: PAGE_HLS, frameUrl: PAGE_HLS }, { id: 101, url: PAGE_HLS });
+    await quiesce(120);
+    await w.bg.complete(before);
+    return { d: w.bg.downloads.slice(before), ops: await w.bg.opsSince(known) };
+  }
+
+  await itAsync('9.32 native menu: a right-click on the seek-preview video with Chrome\'s own srcUrl is refused before any fetch, probe or download (every order, shadow and light DOM)', async () => {
+    const found = [];
+    for (const place of ['shadow', 'light']) for (const order of ['main-first', 'preview-first']) for (const mainSrc of ['', BLOB_SRC]) {
+      const tag = `${place}/${order}/${mainSrc ? 'blob' : 'empty'}`;
+      const w = await world();
+      const g = hlsOnlyPost(w.env, { place, order, mainSrc });
+      giveRoots(w.env, g, place);
+      armNativeMenu(w);
+      const rootNode = place === 'shadow' ? [g.player.shadowRoot] : [];
+      const r = await nativeMenuSave(w, { path: [g.preview, g.lazy, g.bar, ...rootNode, g.player, g.post], x: 150, y: 540, srcUrl: PREVIEW_URL, mediaType: 'video', retarget: place === 'shadow' ? g.player : g.preview });
+      if (r.d.length) found.push(`${tag}: downloaded ${r.d.map((d) => d.url).join(',')}`);
+      if (w.bg.fetched.length) found.push(`${tag}: requested ${w.bg.fetched.join(',')}`);
+      if (JSON.stringify(failedCodes(r.ops)) !== '["NO_MEDIA"]') found.push(`${tag}: failure codes ${JSON.stringify(failedCodes(r.ops))}`);
+    }
+    assert.deepStrictEqual(found, [], found.join('\n'));
+  });
+
+  await itAsync('9.32b native menu: a layer pressed over the preview selects the preview as its media: refused too; the player itself is untouched by the refusal', async () => {
+    for (const place of ['shadow', 'light']) {
+      const w = await world();
+      const g = hlsOnlyPost(w.env, { place, order: 'main-first', mainSrc: BLOB_SRC });
+      giveRoots(w.env, g, place);
+      armNativeMenu(w);
+      const rootNode = place === 'shadow' ? [g.player.shadowRoot] : [];
+      const r = await nativeMenuSave(w, { path: [g.lazy, g.bar, ...rootNode, g.player, g.post], x: 150, y: 540, retarget: place === 'shadow' ? g.player : g.lazy });
+      assert.strictEqual(r.d.length, 0, `${place}: nothing downloaded`);
+      assert(w.bg.fetched.every((u) => !/CMAF_96/.test(u)), `${place}: the preview was never requested: ${JSON.stringify(w.bg.fetched)}`);
+    }
+  });
+
+  await itAsync('9.32c native menu positives: a standalone video named CMAF_96.mp4 and a player\'s own playing direct file still save with their own srcUrl, preview present or not', async () => {
+    // a standalone video outside every preview host (the name proves nothing)
+    {
+      const w = await world();
+      const { document } = w.env.context;
+      const post = document.createElement('shreddit-post');
+      post.setAttribute('id', 't3_standalone9');
+      post.setAttribute('permalink', '/r/pics/comments/standalone9/a_video/');
+      R(post, 100, 100, 600, 500);
+      const own = document.createElement('video');
+      const OWN = 'https://v.redd.it/standalone9/CMAF_96.mp4';
+      own.src = OWN; own.currentSrc = OWN; R(own, 100, 100, 600, 500);
+      post.appendChild(own); document.body.appendChild(post);
+      own.getRootNode = () => document;
+      armNativeMenu(w);
+      const r = await nativeMenuSave(w, { path: [own, post], x: 300, y: 300, srcUrl: OWN, mediaType: 'video' });
+      assert.strictEqual(r.d.length, 1, 'the standalone CMAF_96.mp4 is saved: ' + JSON.stringify(failedCodes(r.ops)));
+      assert.strictEqual(r.d[0].url, OWN);
+    }
+    // the main video plays a direct file while a preview exists in the same player, in either order
+    const PLAYING = 'https://packaged-media.redd.it/t2zsy4wr79wg1/pb/m2-res_480p.mp4?s=playing';
+    for (const order of ['main-first', 'preview-first']) {
+      const w = await world();
+      const g = hlsOnlyPost(w.env, { place: 'shadow', order, mainSrc: PLAYING });
+      giveRoots(w.env, g, 'shadow');
+      armNativeMenu(w);
+      const r = await nativeMenuSave(w, { path: [g.main, g.player.shadowRoot, g.player, g.post], x: 300, y: 300, srcUrl: PLAYING, mediaType: 'video', retarget: g.player });
+      assert.strictEqual(r.d.length, 1, `${order}: the playing direct file is saved: ${JSON.stringify(failedCodes(r.ops))}`);
+      assert.strictEqual(r.d[0].url, PLAYING, order);
+      assert(w.bg.fetched.every((u) => !/CMAF_96/.test(u)), `${order}: the preview was never requested`);
+    }
+  });
+
   await itAsync('9.30a direct MP4 + manifest query on every player route (src, stream-url, shadow video, shadow <source>): the helper returns the exact full address as a video', async () => {
     for (const [route, make] of Object.entries(mqRoutes)) {
       for (const url of [MQ, VQ]) {
