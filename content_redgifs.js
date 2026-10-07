@@ -150,6 +150,7 @@
     '[data-item-id]',
     '.card',
     '.player',
+    '.Player',
     '.video-player',
     '.redgifs-player',
     '.gif-player',
@@ -204,7 +205,42 @@
   const MAX_GESTURE_VIDEOS = 50;
 
   /**
-   * What identifies a player's selection: its document and every source address it shows (its own src/currentSrc and the child sources).
+   * The clip a provider player proves for itself: the poster image(s) of the `.Player` that owns exactly this video, named by a provider media
+   * file (https, a RedGIFs host, an image extension). Identity only: a poster is never a downloadable video and never builds an address.
+   * Only on the provider's own origin, never from a feed or a neighbor; posters naming different clips are a conflict, not a proof.
+   */
+  function posterClipOf(video) {
+    const none = { id: '', conflict: false };
+    if (!video || typeof video.closest !== 'function' || !isProviderOwnOrigin()) return none;
+    try {
+      const owner = video.closest('.Player');
+      if (!owner || !isConnectedNode(owner) || typeof owner.querySelectorAll !== 'function') return none;
+      const players = Array.from(owner.querySelectorAll('video')).filter(isConnectedNode);
+      if (players.length !== 1 || players[0] !== video) return none;
+      const ids = new Set();
+      for (const img of Array.from(owner.querySelectorAll('img'))) {
+        const cls = String((img.getAttribute && img.getAttribute('class')) || '');
+        if (!/(?:^|\s)Player-Poster(?:\s|$)/.test(cls)) continue;
+        const src = String(img.currentSrc || img.src || (img.getAttribute && img.getAttribute('src')) || '');
+        let isImage = false;
+        try { isImage = /\.(?:jpe?g|png|webp)$/i.test(new URL(src).pathname); } catch (_) {}
+        const id = isImage ? (extractRedGifsIdFromUrl(src) || '').toLowerCase() : '';
+        if (id) ids.add(id);
+      }
+      return ids.size === 1 ? { id: Array.from(ids)[0], conflict: false } : { id: '', conflict: ids.size > 1 };
+    } catch (_) {
+      return none;
+    }
+  }
+
+  const posterKeyOf = (video) => {
+    const p = posterClipOf(video);
+    return p.conflict ? '!' : p.id;
+  };
+
+  /**
+   * What identifies a player's selection: its document, every source address it shows (its own src/currentSrc and the child sources) and the
+   * clip its own poster names, so a recycled player that keeps its node but changes clip is not the selection.
    */
   function sourceEvidenceOf(video) {
     const sources = [];
@@ -215,11 +251,11 @@
         }
       }
     } catch (_) {}
-    return { ownerDocument: (video && video.ownerDocument) || null, src: String((video && video.src) || ''), currentSrc: String((video && video.currentSrc) || ''), sources };
+    return { ownerDocument: (video && video.ownerDocument) || null, src: String((video && video.src) || ''), currentSrc: String((video && video.currentSrc) || ''), sources, poster: posterKeyOf(video) };
   }
 
   function sameSourceEvidence(a, b) {
-    return a.ownerDocument === b.ownerDocument && a.src === b.src && a.currentSrc === b.currentSrc && a.sources.length === b.sources.length && a.sources.every((u, i) => u === b.sources[i]);
+    return a.ownerDocument === b.ownerDocument && a.src === b.src && a.currentSrc === b.currentSrc && a.poster === b.poster && a.sources.length === b.sources.length && a.sources.every((u, i) => u === b.sources[i]);
   }
 
   /**
@@ -785,6 +821,33 @@
       }
     }
 
+    // C2. The selected player's own poster: a clip the player proves for itself outranks the frame (a feed names no clip) and may not contradict one
+    const poster = posterClipOf(targetVideo);
+    const clipOf = (id) => String(id).replace(/-(?:mobile|silent|poster)$/i, '').toLowerCase();
+    if (poster.conflict || (poster.id && videoId && clipOf(videoId) !== poster.id)) {
+      return {
+        success: false,
+        error: 'UNRESOLVED_BLOB_MEDIA',
+        targetUrl: null,
+        diagnostics: {
+          frameId: options.frameId ?? null,
+          safeFrameUrl: getSafeFrameUrl(),
+          targetFound: true,
+          videoCount: allVideos.length,
+          videoId: null,
+          videoIdSource: 'none',
+          inspectedSources: Array.from(new Set(inspectedCategories)),
+          candidateCount: 0,
+          validCandidateCount: 0,
+          rejectionReasons: ['CONFLICTING_CLIP_ID']
+        }
+      };
+    }
+    if (!videoId && poster.id) {
+      videoId = poster.id;
+      videoIdSource = 'player_poster';
+    }
+
     // D. Frame location (e.g. /ifr/<id> or /watch/<id>)
     if (!videoId && typeof window !== 'undefined' && window.location?.href && isRedGifsUrl(window.location.href)) {
       const frameIdFromLoc = extractRedGifsIdFromUrl(window.location.href);
@@ -1085,15 +1148,53 @@
     return { ...result, diagnostics: { ...result.diagnostics, providerAudio: code } };
   }
 
-  // The clip id to ask the provider about, or '' when the answer cannot change the choice: not a success, positive audio evidence already in the
+  // The clip id to ask the provider about, or '' when the answer cannot change the choice: not a success (unless the selected player proved its clip), positive audio evidence already in the
   // page, a selected rendition that is not the muted one, no valid clip id, a frame that is not the provider's own origin.
   function providerClipToAsk(base) {
-    if (!base || base.success !== true || !base.diagnostics) return '';
+    if (!base || !base.diagnostics) return '';
     const clipId = typeof base.diagnostics.videoId === 'string' ? base.diagnostics.videoId.replace(/-(?:mobile|silent|poster)$/i, '').toLowerCase() : '';
+    if (base.success !== true) {
+      // no direct address in the page: only a selected player that proved its clip by its own poster may ask for the clip's declared renditions
+      const proven = base.diagnostics.targetFound === true && base.diagnostics.videoIdSource === 'player_poster';
+      return proven && PROVIDER_CLIP_ID.test(clipId) && isProviderOwnOrigin() && typeof fetch === 'function' ? clipId : '';
+    }
     const evidence = base.candidateAudio || {};
     if (Object.keys(evidence).some((u) => evidence[u] === 'present')) return '';
     if (!hasSilentMarker(base.targetUrl) || !PROVIDER_CLIP_ID.test(clipId) || !isProviderOwnOrigin() || typeof fetch !== 'function') return '';
     return clipId;
+  }
+
+  // The page declared no direct address: the provider's own declaration for this very clip supplies it. Only validated direct video addresses whose
+  // file names the selected clip are used (a poster or thumbnail is never one, nothing is constructed); a declared muted rendition is kept, and a
+  // rendition with positive audio evidence is preferred. A clip with no such rendition stays unresolved, and so does a clip the provider declares
+  // with sound when no validated same-clip rendition carries it: a muted file is never saved in its place.
+  function recoverDeclaredRenditions(base, gif, clipId) {
+    const urls = [];
+    const declared = gif && gif.urls && typeof gif.urls === 'object' && !Array.isArray(gif.urls) ? gif.urls : {};
+    for (const value of Object.values(declared)) {
+      if (urls.length >= MAX_COLLECTED_CANDIDATES) break;
+      if (typeof value === 'string' && isValidDirectVideoUrl(value) && (extractRedGifsIdFromUrl(value) || '').toLowerCase() === clipId && !urls.includes(value)) urls.push(value);
+    }
+    if (urls.length === 0) return withProviderDiagnostic(base, gif.hasAudio === true ? 'AUDIO_NO_VALID_RENDITION' : 'NO_DIRECT_DECLARED');
+    const candidateAudio = {};
+    for (const [url, state] of audioStatesOfClipObject(gif, clipId)) if (urls.includes(url)) candidateAudio[url] = state;
+    const present = urls.some((u) => candidateAudio[u] === 'present');
+    if (gif.hasAudio === true && !present) return withProviderDiagnostic(base, 'AUDIO_NO_VALID_RENDITION');
+    // without audio evidence the established resolution-first order holds; a muted rendition only breaks a tie within its rank
+    const ranked = rankCandidates(urls.slice().sort((a, b) => Number(hasSilentMarker(a)) - Number(hasSilentMarker(b))), candidateAudio);
+    return {
+      success: true,
+      targetUrl: ranked[0],
+      candidates: ranked,
+      candidateAudio,
+      diagnostics: {
+        ...base.diagnostics,
+        providerAudio: present ? 'present' : (gif.hasAudio === false ? 'AUDIO_FALSE' : 'NO_AUDIO_DECLARED'),
+        candidateCount: urls.length,
+        validCandidateCount: ranked.length,
+        rejectionReasons: []
+      }
+    };
   }
 
   async function enrichWithProviderAudio(base, clipId, clickedSrc, requireGesture = false, gestureAt = null) {
@@ -1103,6 +1204,7 @@
     const videoBefore = findClickedVideo(clickedSrc, requireGesture);
     const srcBefore = videoBefore ? (videoBefore.src || '') : '';
     const currentSrcBefore = videoBefore ? (videoBefore.currentSrc || '') : '';
+    const posterBefore = videoBefore ? posterKeyOf(videoBefore) : '';
 
     const checkContinuity = () => {
       if (requireGesture && !admittedCaptureHolds(gestureAt)) return false;
@@ -1113,6 +1215,7 @@
         if (typeof videoBefore.isConnected === 'boolean' && !videoBefore.isConnected) return false;
         if ((videoBefore.src || '') !== srcBefore) return false;
         if ((videoBefore.currentSrc || '') !== currentSrcBefore) return false;
+        if (posterKeyOf(videoBefore) !== posterBefore) return false;
       }
       return true;
     };
@@ -1128,6 +1231,8 @@
       };
     }
     if (!found.ok) return withProviderDiagnostic(base, found.reason);
+
+    if (base.success !== true) return recoverDeclaredRenditions(base, found.gif, clipId);
 
     // only renditions of this very clip: a validated direct video address of the provider whose own clip id is the selected clip's
     const states = new Map();

@@ -139,13 +139,14 @@ class MockDOMElement {
   }
 
   matches(sel) {
-    const parts = sel.split(',').map(s => s.trim().toLowerCase());
+    const strict = MockDOMElement.strictClassCase === true;
+    const parts = sel.split(',').map(s => (strict ? s.trim() : s.trim().toLowerCase()));
     const tag = this.tagName.toLowerCase();
-    const className = (this.attributes['class'] || '').toLowerCase();
+    const className = strict ? (this.attributes['class'] || '') : (this.attributes['class'] || '').toLowerCase();
     const id = (this.attributes['id'] || '').toLowerCase();
 
     for (const part of parts) {
-      if (part === tag) return true;
+      if ((strict ? part.toLowerCase() : part) === tag) return true;
       if (part.startsWith('.') && className.split(/\s+/).includes(part.slice(1))) return true;
       if (part.startsWith('#') && id === part.slice(1)) return true;
       if (part.startsWith('[') && part.endsWith(']')) {
@@ -1176,6 +1177,322 @@ runTest('Gesture-bound request: the document\'s own fresh trusted selection reso
   fire(forged.env, 'contextmenu', forged.a, { trusted: false });
   assert.strictEqual(forged.env.ctx.findClickedVideo('', true), null, 'an event dispatched by the page selects nothing');
 });
+
+// ---- F4: own-site player proven by its own poster (.Player / .Player-Poster / .GifPreview, observed 2026-10-07) ---------------------------------
+
+// The observed structure: GifPreview > TapTracker > Player > [Player-Poster image, Player-Video > video]; a feed holds several cards, the page names
+// no clip (/niches/<name>), the player is blob-only. Class names are matched case-sensitively, as a real standards-mode document does.
+const NICHE_URL = 'https://www.redgifs.com/niches/ecchi-anime';
+const posterUrl = (name) => `https://media.redgifs.com/${name}-mobile.jpg`;
+const TOKEN = 'synthetic-session-token';
+
+const strictly = (fn) => async () => {
+  MockDOMElement.strictClassCase = true;
+  try { await fn(); } finally { MockDOMElement.strictClassCase = false; }
+};
+
+function nicheFeed(names = ['ClipAlpha', 'ClipBravo'], pageUrl = NICHE_URL) {
+  const env = createTestEnvironment(pageUrl);
+  const feed = env.doc.createElement('div', { class: 'previewFeed' });
+  env.body.appendChild(feed);
+  const cards = names.map((name, i) => {
+    const blob = `blob:https://www.redgifs.com/niche-${i}`;
+    const gif = env.doc.createElement('div', { class: 'GifPreview GifPreview_isActive GifPreview_isVideo' });
+    const preview = env.doc.createElement('img', { src: posterUrl(name) });
+    const tap = env.doc.createElement('div', { class: 'TapTracker' });
+    const player = env.doc.createElement('div', { class: 'Player' });
+    const poster = env.doc.createElement('img', { class: 'Player-Poster isHidden', src: posterUrl(name) });
+    const holder = env.doc.createElement('div', { class: 'Player-Video' });
+    const video = env.doc.createElement('video', { class: 'isLoaded', src: blob, currentSrc: blob });
+    const overlay = env.doc.createElement('div', { class: 'touch-overlay' });
+    feed.appendChild(gif);
+    gif.appendChild(preview);
+    gif.appendChild(tap);
+    tap.appendChild(player);
+    player.appendChild(poster);
+    player.appendChild(holder);
+    holder.appendChild(video);
+    player.appendChild(overlay);
+    return {
+      name, blob, gif, tap, player, poster, holder, video, overlay,
+      path: [video, holder, player, tap, gif, feed, env.body],
+      overlayPath: [overlay, player, tap, gif, feed, env.body]
+    };
+  });
+  return { env, feed, cards };
+}
+
+const mediaOf = (name, suffix = '', ext = 'mp4') => `https://media.redgifs.com/${name}${suffix}.${ext}`;
+
+// Provider mock: the guest session, then the clip by id; hooks run on every request (a way to change the page during the lookup)
+function providerMock(env, gifs, { onRequest, status = 200 } = {}) {
+  const reply = (body) => ({ ok: status === 200, status, headers: { get: () => null }, text: async () => JSON.stringify(body) });
+  env.ctx.fetch = async (url, opts) => {
+    const u = String(url);
+    env.fetchCalls.push({ url: u, opts });
+    if (onRequest) onRequest(u, env.fetchCalls.length);
+    if (u.endsWith('v2/auth/temporary')) return reply({ token: TOKEN });
+    const id = decodeURIComponent(u.split('/v2/gifs/')[1] || '');
+    return reply({ gif: gifs[id] });
+  };
+}
+
+// the mock document has no attribute selectors: the page's og:video is modeled as the existing G3 tests do
+function addOgVideo(env, url) {
+  const realQuery = env.doc.querySelectorAll;
+  const metas = [{ getAttribute: (k) => ({ property: 'og:video', content: url })[k] || null }];
+  env.doc.querySelectorAll = (sel) => (/meta/.test(sel) ? metas : realQuery(sel));
+}
+
+const answerAsync = (env, clickedSrc, extra = {}) => new Promise((resolve) => {
+  env.messageListeners[0]({ action: 'RESOLVE_FRAME_MEDIA', clickedSrc, frameId: 0, ...extra }, {}, resolve);
+});
+
+const refusedAnswer = (answer, label) => assert.ok(answer && answer.success === false && answer.targetUrl === null, `${label}: refused (${JSON.stringify(answer && answer.diagnostics && answer.diagnostics.rejectionReasons)})`);
+
+runTestAsync('F4 observed niche structure: the blob-only player with no id and no direct address proves its clip by its own poster and recovers it from the provider', strictly(async () => {
+  const { env, cards } = nicheFeed(['ClipAlpha', 'ClipBravo']);
+  const [first, second] = cards;
+  // the second (not first) card is the clicked one; every route that reaches its player selects it, the first card's player never
+  for (const [what, path] of [['video', second.path], ['overlay in the Player', second.overlayPath]]) {
+    env.ctx.setLastContextmenuTarget(path[0], path);
+    assert.strictEqual(env.ctx.findClickedVideo(second.blob), second.video, `${what}: the clicked player is selected`);
+  }
+  env.ctx.setLastContextmenuTarget(second.video, second.path);
+  const base = env.ctx.resolveFrameRedGifsMedia(second.blob);
+  assert.strictEqual(base.success, false, 'the page declares no direct address');
+  assert.strictEqual(base.diagnostics.videoId, 'clipbravo', 'the clicked card names its own clip');
+  assert.strictEqual(base.diagnostics.videoIdSource, 'player_poster');
+  assert.strictEqual(env.fetchCalls.length, 0, 'the synchronous resolver asks nobody');
+
+  providerMock(env, { clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { silent: mediaOf('ClipBravo', '-silent'), hd: mediaOf('ClipBravo'), sd: mediaOf('ClipBravo', '-mobile'), poster: mediaOf('ClipBravo', '-poster', 'jpg'), thumbnail: mediaOf('ClipBravo', '-mobile', 'jpg') } } });
+  const answer = await answerAsync(env, second.blob);
+  assert.strictEqual(answer.success, true, 'recovered');
+  assert.strictEqual(answer.targetUrl, mediaOf('ClipBravo'), 'the audio-bearing rendition of the clicked clip');
+  assert.ok(answer.candidates.every((u) => /ClipBravo/.test(u) && /\.mp4$/.test(u)), 'only video renditions of the clicked clip: a poster is never a candidate');
+  assert.ok(!answer.candidates.some((u) => /ClipAlpha/.test(u)), 'no neighbor');
+  assert.strictEqual(answer.candidateAudio[mediaOf('ClipBravo')], 'present');
+  assert.strictEqual(answer.candidateAudio[mediaOf('ClipBravo', '-silent')], 'absent', 'the muted rendition is never audio evidence');
+  assert.deepStrictEqual(env.fetchCalls.map((c) => c.url), ['https://api.redgifs.com/v2/auth/temporary', 'https://api.redgifs.com/v2/gifs/clipbravo'], 'the existing two bounded requests');
+  assert.ok(env.fetchCalls.every((c) => c.opts && c.opts.credentials === 'omit'), 'no credentials');
+  assert.ok(!JSON.stringify(answer).includes(TOKEN), 'the guest session never leaves the frame');
+  assert.ok(first.video.isConnected, 'control: the first player was never involved');
+}));
+
+runTestAsync('F4 audio declarations: a sound-bearing clip prefers its audio rendition, a declared muted clip is kept, an undeclared one prefers the unmuted file', strictly(async () => {
+  const run = async (gif) => {
+    const { env, cards } = nicheFeed(['ClipBravo']);
+    env.ctx.setLastContextmenuTarget(cards[0].video, cards[0].path);
+    providerMock(env, { clipbravo: gif });
+    return answerAsync(env, cards[0].blob);
+  };
+  const silent = mediaOf('ClipBravo', '-silent');
+  const hd = mediaOf('ClipBravo');
+  const mutedOnly = await run({ id: 'ClipBravo', hasAudio: false, urls: { silent } });
+  assert.strictEqual(mutedOnly.success, true, 'a declared silent clip is recovered too');
+  assert.strictEqual(mutedOnly.targetUrl, silent);
+  assert.strictEqual(mutedOnly.diagnostics.providerAudio, 'AUDIO_FALSE');
+  const noAudioFlag = await run({ id: 'ClipBravo', urls: { silent, hd } });
+  assert.strictEqual(noAudioFlag.targetUrl, hd, 'no audio declaration: the rendition not named muted may carry the sound');
+  assert.deepStrictEqual(Array.from(noAudioFlag.candidates).sort(), [hd, silent].sort(), 'the muted rendition stays available');
+  assert.strictEqual(noAudioFlag.diagnostics.providerAudio, 'NO_AUDIO_DECLARED');
+  const bearing = await run({ id: 'ClipBravo', hasAudio: true, urls: { silent, hd } });
+  assert.strictEqual(bearing.targetUrl, hd);
+  assert.strictEqual(bearing.diagnostics.providerAudio, 'present');
+}));
+
+runTestAsync('F4 known audio: a clip the provider declares with sound is never saved as a muted file when no validated sound-bearing rendition exists', strictly(async () => {
+  const silent = mediaOf('ClipBravo', '-silent');
+  const hd = mediaOf('ClipBravo');
+  const run = async (gif) => {
+    const { env, cards } = nicheFeed(['ClipBravo']);
+    env.ctx.setLastContextmenuTarget(cards[0].video, cards[0].path);
+    providerMock(env, { clipbravo: gif });
+    const answer = await answerAsync(env, cards[0].blob);
+    return { answer, env };
+  };
+  const knownAudioRefused = ({ answer, env }, label) => {
+    refusedAnswer(answer, label);
+    assert.strictEqual(answer.diagnostics.providerAudio, 'AUDIO_NO_VALID_RENDITION', `${label}: an accurate diagnostic, not "no audio declared"`);
+    assert.ok(!answer.candidates && !answer.candidateAudio, `${label}: no candidate is offered`);
+    assert.strictEqual(env.fetchCalls.length, 2, `${label}: only the two bounded requests`);
+    assert.ok(!JSON.stringify(answer).includes(TOKEN), `${label}: the guest session stays in the frame`);
+  };
+  knownAudioRefused(await run({ id: 'ClipBravo', hasAudio: true, urls: { silent } }), 'hasAudio true, only the silent rendition declared');
+  knownAudioRefused(await run({ id: 'ClipBravo', hasAudio: true, urls: { silent, hd: 'https://evil.example/ClipBravo.mp4', sd: mediaOf('ClipAlpha', '-mobile'), mobile: 'http://media.redgifs.com/ClipBravo-mobile.mp4' } }), 'hasAudio true, sound URLs foreign, of another clip or not https, valid silent URL');
+  knownAudioRefused(await run({ id: 'ClipBravo', hasAudio: true, urls: { poster: mediaOf('ClipBravo', '-poster', 'jpg') } }), 'hasAudio true, only a poster declared');
+  knownAudioRefused(await run({ id: 'ClipBravo', hasAudio: true, urls: {} }), 'hasAudio true, nothing declared');
+
+  // controls: a validated sound rendition still wins, declared silence and unknown audio keep succeeding, a muted file is never called sound
+  const withSound = await run({ id: 'ClipBravo', hasAudio: true, urls: { silent, hd, bad: 'https://evil.example/ClipBravo.mp4' } });
+  assert.strictEqual(withSound.answer.targetUrl, hd, 'control: the validated sound rendition');
+  assert.strictEqual(withSound.answer.diagnostics.providerAudio, 'present');
+  assert.strictEqual(withSound.answer.candidateAudio[silent], 'absent');
+  const declaredSilence = await run({ id: 'ClipBravo', hasAudio: false, urls: { silent } });
+  assert.strictEqual(declaredSilence.answer.targetUrl, silent, 'control: a declared silent clip is saved');
+  assert.strictEqual(declaredSilence.answer.diagnostics.providerAudio, 'AUDIO_FALSE');
+  const unknown = await run({ id: 'ClipBravo', urls: { silent } });
+  assert.strictEqual(unknown.answer.targetUrl, silent, 'control: undeclared audio keeps the declared file');
+  assert.strictEqual(unknown.answer.diagnostics.providerAudio, 'NO_AUDIO_DECLARED');
+  assert.strictEqual(unknown.answer.candidateAudio[silent], 'absent', 'unknown audio is never claimed present');
+}));
+
+runTestAsync('F4 refusals before any request: a missing, foreign, non-image, conflicting or ambiguous poster, an ambiguous player or a foreign origin never reaches the provider', strictly(async () => {
+  const refusals = {
+    'no poster': (c) => c.poster.remove(),
+    'poster of a foreign host': (c) => c.poster.setAttribute('src', 'https://evil.example/ClipBravo-mobile.jpg'),
+    'poster lookalike host': (c) => c.poster.setAttribute('src', 'https://media.redgifs.com.evil.example/ClipBravo-mobile.jpg'),
+    'poster is a video address': (c) => c.poster.setAttribute('src', mediaOf('ClipBravo')),
+    'poster that is not a clip file': (c) => c.poster.setAttribute('src', 'https://www.redgifs.com/'),
+    'plain preview image is no proof': (c) => { c.poster.setAttribute('class', 'isHidden'); },
+    'two posters naming different clips': (c) => c.player.appendChild(new MockDOMElement('img', { class: 'Player-Poster', src: posterUrl('ClipAlpha') })),
+    'a second player under the same Player': (c) => { const v = new MockDOMElement('video', { src: 'blob:https://www.redgifs.com/second', currentSrc: 'blob:https://www.redgifs.com/second' }); c.player.appendChild(v); }
+  };
+  for (const [what, mutate] of Object.entries(refusals)) {
+    const { env, cards } = nicheFeed(['ClipBravo']);
+    const c = cards[0];
+    mutate(c);
+    providerMock(env, { clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: mediaOf('ClipBravo') } } });
+    env.ctx.setLastContextmenuTarget(c.video, c.path);
+    const answer = await answerAsync(env, c.blob);
+    refusedAnswer(answer, what);
+    assert.strictEqual(env.fetchCalls.length, 0, `${what}: the provider was never asked`);
+  }
+  // the same structure on a foreign origin (the content script also runs on Reddit pages): no proof there
+  const foreign = nicheFeed(['ClipBravo'], 'https://www.reddit.com/r/something/comments/abc/post/');
+  providerMock(foreign.env, { clipbravo: { id: 'ClipBravo', urls: { hd: mediaOf('ClipBravo') } } });
+  foreign.env.ctx.setLastContextmenuTarget(foreign.cards[0].video, foreign.cards[0].path);
+  refusedAnswer(await answerAsync(foreign.env, foreign.cards[0].blob), 'foreign origin');
+  assert.strictEqual(foreign.env.fetchCalls.length, 0, 'foreign origin: no request');
+}));
+
+runTestAsync('F4 conflicts: a poster that contradicts the player\'s own clip evidence is refused, a poster outranks a feed or another clip\'s metadata', strictly(async () => {
+  // the player already names another clip by its direct address: the poster contradicts it
+  const conflict = nicheFeed(['ClipBravo']);
+  setSource(conflict.cards[0].video, mediaOf('ClipAlpha'));
+  conflict.env.ctx.setLastContextmenuTarget(conflict.cards[0].video, conflict.cards[0].path);
+  providerMock(conflict.env, { clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: mediaOf('ClipBravo') } } });
+  const res = conflict.env.ctx.resolveFrameRedGifsMedia(mediaOf('ClipAlpha'));
+  assert.strictEqual(res.success, false, 'a direct address of one clip under a poster of another is refused');
+  assert.deepStrictEqual(Array.from(res.diagnostics.rejectionReasons), ['CONFLICTING_CLIP_ID']);
+  refusedAnswer(await answerAsync(conflict.env, mediaOf('ClipAlpha')), 'conflict');
+  assert.strictEqual(conflict.env.fetchCalls.length, 0);
+
+  // a watch page of clip W whose clicked player shows the poster of clip Y: the player is Y, W's metadata never stands in for it
+  const watch = nicheFeed(['ClipYankee'], 'https://www.redgifs.com/watch/ClipWhiskey');
+  addOgVideo(watch.env, mediaOf('ClipWhiskey', '-silent'));
+  watch.env.ctx.setLastContextmenuTarget(watch.cards[0].video, watch.cards[0].path);
+  const base = watch.env.ctx.resolveFrameRedGifsMedia(watch.cards[0].blob);
+  assert.strictEqual(base.success, false, 'the page\'s own og:video belongs to another clip');
+  assert.strictEqual(base.diagnostics.videoId, 'clipyankee');
+  providerMock(watch.env, { clipyankee: { id: 'ClipYankee', hasAudio: true, urls: { hd: mediaOf('ClipYankee') } } });
+  const answer = await answerAsync(watch.env, watch.cards[0].blob);
+  assert.strictEqual(answer.targetUrl, mediaOf('ClipYankee'));
+  assert.ok(!answer.candidates.some((u) => /Whiskey/.test(u)), 'the watched clip is not a candidate of the clicked player');
+
+  // the same page's own player (poster of the watched clip): the page metadata and the poster agree and the existing path is kept
+  const own = nicheFeed(['ClipWhiskey'], 'https://www.redgifs.com/watch/ClipWhiskey');
+  addOgVideo(own.env, mediaOf('ClipWhiskey', '-silent'));
+  own.env.ctx.setLastContextmenuTarget(own.cards[0].video, own.cards[0].path);
+  const ownBase = own.env.ctx.resolveFrameRedGifsMedia(own.cards[0].blob);
+  assert.strictEqual(ownBase.success, true, 'the declared muted file is still found');
+  assert.strictEqual(ownBase.targetUrl, mediaOf('ClipWhiskey', '-silent'));
+}));
+
+runTestAsync('F4 wrong clip or provider failure stays a refusal: another clip id, an HTTP error, no declared video file, only a poster', strictly(async () => {
+  const build = (gifs, opts) => {
+    const f = nicheFeed(['ClipBravo']);
+    f.env.ctx.setLastContextmenuTarget(f.cards[0].video, f.cards[0].path);
+    providerMock(f.env, gifs, opts);
+    return f;
+  };
+  const cases = {
+    'the provider answers another clip': [{ clipbravo: { id: 'ClipOther', hasAudio: true, urls: { hd: mediaOf('ClipOther') } } }, undefined],
+    'HTTP failure': [{}, { status: 500 }],
+    'no gif in the answer': [{}, undefined],
+    'only a poster declared': [{ clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { poster: mediaOf('ClipBravo', '-poster', 'jpg') } } }, undefined],
+    'only another clip\'s files declared': [{ clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: mediaOf('ClipAlpha') } } }, undefined],
+    'only a foreign host declared': [{ clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: 'https://evil.example/ClipBravo.mp4' } } }, undefined]
+  };
+  for (const [what, [gifs, opts]] of Object.entries(cases)) {
+    const { env, cards } = build(gifs, opts);
+    const answer = await answerAsync(env, cards[0].blob);
+    refusedAnswer(answer, what);
+    assert.ok(env.fetchCalls.length <= 2, `${what}: at most the two bounded requests`);
+  }
+}));
+
+runTestAsync('F4 continuity: a poster, a source or the node that changes during the lookup refuses the answer, each before the next request or before the answer', strictly(async () => {
+  const mutations = {
+    'poster changed to another clip': (c) => c.poster.setAttribute('src', posterUrl('ClipAlpha')),
+    'player source changed': (c) => setSource(c.video, 'blob:https://www.redgifs.com/recycled'),
+    'player removed': (c) => c.video.remove(),
+    'card removed': (c) => c.gif.remove()
+  };
+  for (const [what, mutate] of Object.entries(mutations)) {
+    for (const atRequest of [1, 2]) {
+      const { env, cards } = nicheFeed(['ClipBravo']);
+      const c = cards[0];
+      env.ctx.setLastContextmenuTarget(c.video, c.path);
+      providerMock(env, { clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: mediaOf('ClipBravo') } } }, { onRequest: (u, n) => { if (n === atRequest) mutate(c); } });
+      const answer = await answerAsync(env, c.blob);
+      refusedAnswer(answer, `${what} at request ${atRequest}`);
+      assert.strictEqual(answer.diagnostics.providerAudio, 'FRAME_CHANGED', `${what} at request ${atRequest}`);
+      assert.strictEqual(env.fetchCalls.length, atRequest, `${what}: nothing is asked after the change was seen`);
+    }
+  }
+}));
+
+runTestAsync('F4 recycled player: the same node under a different poster, or a new node, is not the gesture\'s selection (no request)', strictly(async () => {
+  const same = nicheFeed(['ClipBravo']);
+  const c = same.cards[0];
+  same.env.ctx.setLastContextmenuTarget(c.video, c.path);
+  assert.strictEqual(same.env.ctx.findClickedVideo(c.blob), c.video, 'control: the unchanged player is the selection');
+  c.poster.setAttribute('src', posterUrl('ClipAlpha'));
+  providerMock(same.env, { clipalpha: { id: 'ClipAlpha', hasAudio: true, urls: { hd: mediaOf('ClipAlpha') } } });
+  assert.strictEqual(same.env.ctx.findClickedVideo(c.blob), null, 'the poster changed: not the player the gesture saw');
+  refusedAnswer(await answerAsync(same.env, c.blob), 'poster changed after the gesture');
+  assert.strictEqual(same.env.fetchCalls.length, 0);
+
+  const swapped = nicheFeed(['ClipBravo']);
+  const d = swapped.cards[0];
+  swapped.env.ctx.setLastContextmenuTarget(d.video, d.path);
+  d.video.remove();
+  const next = swapped.env.doc.createElement('video', { src: d.blob, currentSrc: d.blob });
+  d.holder.appendChild(next);
+  providerMock(swapped.env, { clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: mediaOf('ClipBravo') } } });
+  refusedAnswer(await answerAsync(swapped.env, d.blob), 'a recycled node with the same blob address');
+  assert.strictEqual(swapped.env.fetchCalls.length, 0);
+}));
+
+runTestAsync('F4 gesture binding: untrusted events and a stale or foreign gesture are refused without requests; the admitted trusted selection recovers', strictly(async () => {
+  const forged = nicheFeed(['ClipAlpha', 'ClipBravo']);
+  providerMock(forged.env, { clipalpha: { id: 'ClipAlpha', hasAudio: true, urls: { hd: mediaOf('ClipAlpha') } }, clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: mediaOf('ClipBravo') } } });
+  fire(forged.env, 'contextmenu', forged.cards[0].video, { trusted: false, path: forged.cards[0].path });
+  refusedAnswer(await answerAsync(forged.env, '', { requireGesture: true, gestureAt: 5 }), 'an event dispatched by the page selects nothing for a gesture-bound request');
+  assert.strictEqual(forged.env.fetchCalls.length, 0);
+  // an ordinary request keeps its established exact-address rule; the forged event on the first card redirects it nowhere
+  const ordinary = await answerAsync(forged.env, forged.cards[1].blob);
+  assert.strictEqual(ordinary.targetUrl, mediaOf('ClipBravo'), 'the exact blob address names its own player; the forged gesture on the other card changes nothing');
+
+  const { env, cards } = nicheFeed(['ClipAlpha', 'ClipBravo']);
+  providerMock(env, { clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: mediaOf('ClipBravo') } } });
+  fire(env, 'contextmenu', cards[1].video, { path: cards[1].path });
+  env.ctx.__imageSaverContextTarget = { at: 4242 };
+  for (const wrong of [{ requireGesture: true }, { requireGesture: true, gestureAt: 1 }]) {
+    refusedAnswer(await answerAsync(env, '', wrong), 'not bound to the latest capture ' + JSON.stringify(wrong));
+  }
+  assert.strictEqual(env.fetchCalls.length, 0, 'no request for an unbound operation');
+  const bound = await answerAsync(env, '', { requireGesture: true, gestureAt: 4242 });
+  assert.strictEqual(bound.success, true, 'the admitted selection (address-less request) recovers its clip');
+  assert.strictEqual(bound.targetUrl, mediaOf('ClipBravo'));
+  // a later trusted gesture on the other card redirects nothing: the earlier operation is refused
+  fire(env, 'contextmenu', cards[0].video, { path: cards[0].path });
+  env.ctx.__imageSaverContextTarget = { at: 9999 };
+  const before = env.fetchCalls.length;
+  refusedAnswer(await answerAsync(env, '', { requireGesture: true, gestureAt: 4242 }), 'an earlier operation after a later gesture');
+  assert.strictEqual(env.fetchCalls.length, before, 'and it asks nobody');
+}));
 
 // ---- summary --------------------------------------------------------------
 
