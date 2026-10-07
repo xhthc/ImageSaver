@@ -8859,8 +8859,22 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
     }
     (async () => {
       try {
-        if (action === 'FEEDBACK_MARK_SEEN') await feedbackTracker.markSeen();
-        else if (action === 'FEEDBACK_CLEAR') await feedbackTracker.clearFinished();
+        if (action === 'FEEDBACK_MARK_SEEN') {
+          const rawIds = message?.ids;
+          if (Array.isArray(rawIds) && rawIds.length > 0) {
+            const maxOps = FeedbackLib?.LIMITS?.maxOps || 50;
+            const validIds = [];
+            for (const id of rawIds) {
+              if (typeof id === 'string' && id.length > 0 && id.length <= 128) {
+                validIds.push(id);
+                if (validIds.length >= maxOps) break;
+              }
+            }
+            if (validIds.length > 0) {
+              await feedbackTracker.markSeen(validIds);
+            }
+          }
+        } else if (action === 'FEEDBACK_CLEAR') await feedbackTracker.clearFinished();
         sendResponse({ success: true, records: await feedbackTracker.list() });
       } catch (_) {
         sendResponse({ success: false, error: 'FEEDBACK_UNAVAILABLE' });

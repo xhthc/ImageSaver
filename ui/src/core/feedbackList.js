@@ -51,15 +51,16 @@ export function createFeedbackList(deps, options = {}) {
   let disposed = false;
   let visible = options.visible !== false;
   let pendingAck = false;
+  let pendingAckIds = [];
   let acking = false;
   let unwatch = null;
   let syncing = false; // a FEEDBACK_LIST request is running
   let dirty = false;   // the storage changed while it ran
   const active = () => !disposed && (typeof options.isActive !== 'function' || options.isActive() !== false);
 
-  const load = async (action) => {
+  const load = async (action, extra = {}) => {
     try {
-      const res = await chromeApi.runtime.sendMessage({ action });
+      const res = await chromeApi.runtime.sendMessage({ action, ...extra });
       if (!res || res.success !== true || !Array.isArray(res.records)) throw new Error('FEEDBACK_UNAVAILABLE');
       store.setState({ error: '' });
       return res.records.map(FB.sanitizeRecord).filter(Boolean);
@@ -70,11 +71,22 @@ export function createFeedbackList(deps, options = {}) {
   };
 
   async function acknowledge() {
-    if (!pendingAck || acking || !active() || !visible) return;
+    if (!pendingAck || pendingAckIds.length === 0 || acking || !active() || !visible) return;
     acking = true;
     try {
-      const ok = await load('FEEDBACK_MARK_SEEN');
-      if (ok) pendingAck = false; // on failure it stays pending and is retried the next time the list is shown
+      while (pendingAck && active() && visible) {
+        const displayedIds = new Set(store.getState().records.map((r) => r.id));
+        const idsToAck = pendingAckIds.filter((id) => displayedIds.has(id));
+        if (idsToAck.length === 0) {
+          pendingAck = false;
+          pendingAckIds = [];
+          break;
+        }
+        const ok = await load('FEEDBACK_MARK_SEEN', { ids: idsToAck });
+        if (!ok) break;
+        pendingAckIds = pendingAckIds.filter((id) => !idsToAck.includes(id));
+        pendingAck = pendingAckIds.some((id) => displayedIds.has(id));
+      }
     } finally {
       acking = false;
     }
@@ -84,11 +96,15 @@ export function createFeedbackList(deps, options = {}) {
    *  only when the list is visible and current. */
   async function apply(records) {
     const prev = store.getState();
+    const displayed = records.slice(0, limit);
+    const displayedIdSet = new Set(displayed.map((r) => r.id));
+    const displayedUnreadNow = displayed.filter((r) => (r.state === 'failed' || r.state === 'interrupted') && !r.seen).map((r) => r.id);
     const unreadNow = records.filter((r) => (r.state === 'failed' || r.state === 'interrupted') && !r.seen).map((r) => r.id);
     const known = new Set(records.map((r) => r.id));
     const unreadIds = Array.from(new Set([...prev.unreadIds, ...unreadNow])).filter((id) => known.has(id));
-    store.setState({ status: 'ready', records: records.slice(0, limit), unreadIds });
-    pendingAck = unreadNow.length > 0;
+    store.setState({ status: 'ready', records: displayed, unreadIds });
+    pendingAckIds = Array.from(new Set([...pendingAckIds.filter((id) => displayedIdSet.has(id)), ...displayedUnreadNow]));
+    pendingAck = pendingAckIds.length > 0;
     if (pendingAck) await acknowledge(); // viewing the (visible, current) list acknowledges failures
   }
 
@@ -127,7 +143,7 @@ export function createFeedbackList(deps, options = {}) {
   /** The list became visible or hidden. Becoming visible acknowledges failures that were rendered while hidden. */
   function setVisible(value) {
     visible = value !== false;
-    if (visible) acknowledge().catch(() => {});
+    if (visible && pendingAck) acknowledge().catch(() => {});
   }
 
   async function clear() {
@@ -145,6 +161,8 @@ export function createFeedbackList(deps, options = {}) {
 
   function dispose() {
     disposed = true;
+    pendingAck = false;
+    pendingAckIds = [];
     if (unwatch) { unwatch(); unwatch = null; }
   }
 

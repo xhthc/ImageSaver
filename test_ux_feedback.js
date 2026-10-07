@@ -1838,6 +1838,875 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     }
   }
 
+  // =================================================================================================
+  console.log('\n--- 26. F4: acknowledge only the displayed failure snapshot ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    const tracker = env.sandbox.feedbackTracker;
+    const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
+
+    const failedIds = [];
+    for (let i = 0; i < 7; i++) {
+      const id = await tracker.begin({ site: 'example.com' });
+      await tracker.fail(id, { stage: 'resolve', code: 'NETWORK_ERR' });
+      failedIds.push(id);
+    }
+    assert(tracker.unseenFailureCount() === 7, '26a: 7 unseen failures initially');
+    assert((await env.sandbox.getUnseenFailureCount()) === 7, '26b: background sees 7 unseen failures');
+
+    const sentMessages = [];
+    const uiChrome = {
+      runtime: {
+        getManifest: () => ({ version: '2.0.0' }),
+        getURL: (p) => `chrome-extension://testid/${p}`,
+        sendMessage: (msg) => new Promise((resolve) => {
+          sentMessages.push(msg);
+          let responded = false;
+          for (const l of env.messageListeners) {
+            const keep = l(msg, extSender, (resp) => { responded = true; resolve(resp); });
+            if (keep === true || responded) break;
+          }
+          if (!responded) setTimeout(() => resolve(undefined), 0);
+        })
+      },
+      storage: {
+        session: {
+          get: async () => env.session,
+          set: async (v) => Object.assign(env.session, v)
+        },
+        local: {
+          get: async () => env.local,
+          set: async (v) => Object.assign(env.local, v)
+        },
+        onChanged: { addListener() {} }
+      }
+    };
+
+    const list = createFeedbackList({ chrome: uiChrome, FB: FBLib }, { limit: 5, visible: true });
+    await list.start();
+
+    assert(list.store.getState().records.length === 5, '26c: controller displays exactly 5 records');
+    const markSeenMsgs = sentMessages.filter((m) => m.action === 'FEEDBACK_MARK_SEEN');
+    assert(markSeenMsgs.length === 1, '26d: FEEDBACK_MARK_SEEN sent exactly once');
+    assert(Array.isArray(markSeenMsgs[0].ids) && markSeenMsgs[0].ids.length === 5, '26e: payload contains exactly the 5 displayed IDs');
+    assert(tracker.unseenFailureCount() === 2, '26f: exactly 2 hidden failures remain unseen in tracker');
+    assert((await env.sandbox.getUnseenFailureCount()) === 2, '26g: badge count is 2 (only displayed failures acknowledged)');
+
+    const sendExtMessage = (msg, sender = extSender) => new Promise((resolve) => {
+      let responded = false;
+      for (const l of env.messageListeners) {
+        const keep = l(msg, sender, (resp) => {
+          responded = true;
+          resolve(resp);
+        });
+        if (keep === true || responded) break;
+      }
+      if (!responded) setTimeout(() => resolve(undefined), 0);
+    });
+
+    const lateId = await tracker.begin({ site: 'example.com' });
+    await tracker.fail(lateId, { stage: 'resolve', code: 'LATE_ERR' });
+    assert(tracker.unseenFailureCount() === 3, '26h: late failure remains unseen (now 3 unseen)');
+
+    const hiddenList = createFeedbackList({ chrome: uiChrome, FB: FBLib }, { limit: 5, visible: false });
+    const countBeforeHidden = sentMessages.filter((m) => m.action === 'FEEDBACK_MARK_SEEN').length;
+    await hiddenList.start();
+    assert(sentMessages.filter((m) => m.action === 'FEEDBACK_MARK_SEEN').length === countBeforeHidden, '26i: hidden list sends no acknowledgement');
+
+    const disposedList = createFeedbackList({ chrome: uiChrome, FB: FBLib }, { limit: 5, visible: true });
+    disposedList.dispose();
+    await disposedList.start();
+    assert(sentMessages.filter((m) => m.action === 'FEEDBACK_MARK_SEEN').length === countBeforeHidden, '26j: disposed list sends no acknowledgement');
+
+    const respUnknown = await sendExtMessage({ action: 'FEEDBACK_MARK_SEEN', ids: ['non-existent-id', 'another-fake'] });
+    assert(respUnknown?.success === true && tracker.unseenFailureCount() === 3, '26k: unknown IDs do not alter unseen count');
+
+    const respDupes = await sendExtMessage({ action: 'FEEDBACK_MARK_SEEN', ids: [lateId, lateId, lateId] });
+    assert(respDupes?.success === true && tracker.unseenFailureCount() === 2, '26l: duplicate IDs acknowledge the item once');
+
+    const oversizeId = 'a'.repeat(200);
+    const respMalformed = await sendExtMessage({ action: 'FEEDBACK_MARK_SEEN', ids: [oversizeId, 12345, null, {}] });
+    assert(respMalformed?.success === true && tracker.unseenFailureCount() === 2, '26m: malformed/oversized IDs are ignored');
+
+    const respNoIds = await sendExtMessage({ action: 'FEEDBACK_MARK_SEEN' });
+    assert(respNoIds?.success === true && tracker.unseenFailureCount() === 2, '26n: missing ids array acknowledges nothing (no fallback)');
+
+    const rogueSender = { id: 'other-extension-id', url: 'chrome-extension://other/popup.html' };
+    const respForbidden = await sendExtMessage({ action: 'FEEDBACK_MARK_SEEN', ids: [lateId] }, rogueSender);
+    assert(respForbidden?.success === false && respForbidden?.error === 'FORBIDDEN', '26o: unauthorized sender is rejected');
+
+    // 6. Failed acknowledgement remains retryable only for applicable visible snapshot
+    // Add 1 fresh failure so it is at index 0 of displayed list
+    const retryFailId = await tracker.begin({ site: 'example.com' });
+    await tracker.fail(retryFailId, { stage: 'resolve', code: 'RETRY_FAIL_ERR' });
+    assert(tracker.unseenFailureCount() === 3, '26p1: fresh failure is unseen');
+
+    let failAck = true;
+    const retryMessages = [];
+    const failUiChrome = {
+      runtime: {
+        getManifest: () => ({ version: '2.0.0' }),
+        getURL: (p) => `chrome-extension://testid/${p}`,
+        sendMessage: (msg) => new Promise((resolve) => {
+          retryMessages.push(msg);
+          if (msg.action === 'FEEDBACK_MARK_SEEN' && failAck) {
+            return resolve({ success: false });
+          }
+          let responded = false;
+          for (const l of env.messageListeners) {
+            const keep = l(msg, extSender, (resp) => { responded = true; resolve(resp); });
+            if (keep === true || responded) break;
+          }
+          if (!responded) setTimeout(() => resolve(undefined), 0);
+        })
+      },
+      storage: uiChrome.storage
+    };
+
+    const retryList = createFeedbackList({ chrome: failUiChrome, FB: FBLib }, { limit: 5, visible: true });
+    await retryList.start();
+    assert(retryMessages.filter((m) => m.action === 'FEEDBACK_MARK_SEEN').length === 1, '26p: mark seen attempted');
+    assert(tracker.unseenFailureCount() === 3, '26q: acknowledgement failed so unseen count unchanged');
+
+    failAck = false;
+    retryList.setVisible(false);
+    retryList.setVisible(true);
+    await new Promise((r) => setTimeout(r, 20));
+    assert(retryMessages.filter((m) => m.action === 'FEEDBACK_MARK_SEEN').length === 2, '26r: retried acknowledgement on visibility');
+    assert(tracker.unseenFailureCount() === 2, '26s: retried snapshot successfully acknowledged');
+
+    const fullList = createFeedbackList({ chrome: uiChrome, FB: FBLib }, { limit: 50, visible: true });
+    await fullList.start();
+    assert(tracker.unseenFailureCount() === 0, '26t: full page with limit=50 acknowledges cleanly');
+
+    // 26u: Hidden refresh pushes old IDs below limit; visible acknowledges only the 5 displayed IDs
+    {
+      const envU = makeEnv();
+      await envU.ready();
+      const trackerU = envU.sandbox.feedbackTracker;
+      const uIds = [];
+      for (let i = 0; i < 7; i++) {
+        const id = await trackerU.begin({ site: 'reddit' });
+        await trackerU.fail(id, { stage: 'resolve', code: 'NO_MEDIA' });
+        uIds.push(id);
+      }
+      assert(trackerU.unseenFailureCount() === 7, '26u1: 7 failures initially unseen');
+
+      let ackPromiseU;
+      const acksU = [];
+      const uiChromeU = {
+        runtime: {
+          getManifest: () => ({ version: '2.0.0.24' }),
+          getURL: (p) => `chrome-extension://testid/${p}`,
+          sendMessage: (msg) => {
+            const resp = (async () => {
+              if (msg.action === 'FEEDBACK_MARK_SEEN') {
+                acksU.push([...msg.ids]);
+                await trackerU.markSeen(msg.ids);
+              }
+              return { success: true, records: await trackerU.list() };
+            })();
+            if (msg.action === 'FEEDBACK_MARK_SEEN') ackPromiseU = resp;
+            return resp;
+          }
+        },
+        storage: {
+          session: { get: async () => envU.session, set: async (v) => Object.assign(envU.session, v) },
+          local: { get: async () => envU.local, set: async (v) => Object.assign(envU.local, v) },
+          onChanged: { addListener() {} }
+        }
+      };
+
+      const hiddenUi = createFeedbackList({ chrome: uiChromeU, FB: FBLib }, { limit: 5, visible: false });
+      await hiddenUi.start();
+      assert(acksU.length === 0, '26u2: hidden list sends no acknowledgement on start');
+
+      // Add 2 more failures while hidden
+      for (let i = 0; i < 2; i++) {
+        const id = await trackerU.begin({ site: 'reddit' });
+        await trackerU.fail(id, { stage: 'resolve', code: 'NO_MEDIA' });
+        uIds.push(id);
+      }
+      assert(trackerU.unseenFailureCount() === 9, '26u3: 9 failures total unseen');
+
+      await hiddenUi.start(); // refresh while still hidden
+      assert(acksU.length === 0, '26u4: hidden refresh sends no acknowledgement');
+
+      const displayedIds = hiddenUi.store.getState().records.map((r) => r.id);
+      assert(displayedIds.length === 5, '26u5: snapshot displays top 5 failures');
+
+      hiddenUi.setVisible(true);
+      await ackPromiseU;
+
+      const flatAcks = acksU.flat();
+      const hiddenAcked = flatAcks.filter((id) => !displayedIds.includes(id));
+      assert(hiddenAcked.length === 0, `26u6: no hidden IDs acknowledged (got ${hiddenAcked.length})`);
+      assert(flatAcks.length === 5, `26u7: exactly 5 visible IDs acknowledged (got ${flatAcks.length})`);
+      assert(trackerU.unseenFailureCount() === 4, `26u8: 4 older unviewed failures remain unseen (got ${trackerU.unseenFailureCount()})`);
+      assert((await envU.sandbox.getUnseenFailureCount()) === 4, '26u9: toolbar badge count matches remaining 4 unseen');
+
+      hiddenUi.dispose();
+    }
+
+    // 26v: Failed acknowledgement followed by a newer applicable snapshot
+    {
+      const envV = makeEnv();
+      await envV.ready();
+      const trackerV = envV.sandbox.feedbackTracker;
+      const vIds = [];
+      for (let i = 0; i < 5; i++) {
+        const id = await trackerV.begin({ site: 'reddit' });
+        await trackerV.fail(id, { stage: 'resolve', code: 'ERR_INIT' });
+        vIds.push(id);
+      }
+      assert(trackerV.unseenFailureCount() === 5, '26v1: 5 initial failures');
+
+      let failAckV = true;
+      let ackAttemptV = null;
+      const acksV = [];
+      const uiChromeV = {
+        runtime: {
+          getManifest: () => ({ version: '2.0.0.24' }),
+          getURL: (p) => `chrome-extension://testid/${p}`,
+          sendMessage: (msg) => {
+            const resp = (async () => {
+              if (msg.action === 'FEEDBACK_MARK_SEEN') {
+                acksV.push([...msg.ids]);
+                if (failAckV) return { success: false };
+                await trackerV.markSeen(msg.ids);
+              }
+              return { success: true, records: await trackerV.list() };
+            })();
+            if (msg.action === 'FEEDBACK_MARK_SEEN') ackAttemptV = resp;
+            return resp;
+          }
+        },
+        storage: {
+          session: { get: async () => envV.session, set: async (v) => Object.assign(envV.session, v) },
+          local: { get: async () => envV.local, set: async (v) => Object.assign(envV.local, v) },
+          onChanged: { addListener() {} }
+        }
+      };
+
+      const liveList = createFeedbackList({ chrome: uiChromeV, FB: FBLib }, { limit: 5, visible: true });
+      await liveList.start();
+      assert(acksV.length === 1, '26v2: acknowledgement attempted initially');
+      assert(trackerV.unseenFailureCount() === 5, '26v3: failed acknowledgement leaves all 5 unseen');
+
+      // Now add 2 newer failures, pushing 2 of the previous failures below limit
+      for (let i = 0; i < 2; i++) {
+        const id = await trackerV.begin({ site: 'reddit' });
+        await trackerV.fail(id, { stage: 'resolve', code: 'ERR_NEW' });
+        vIds.push(id);
+      }
+      assert(trackerV.unseenFailureCount() === 7, '26v4: 7 unseen failures total');
+
+      // Acknowledgement now succeeds on refresh
+      failAckV = false;
+      await liveList.start();
+      await ackAttemptV;
+
+      assert(acksV.length === 2, '26v5: second acknowledgement attempt occurred');
+      const latestAckPayload = acksV[1];
+      const currentDisplayed = liveList.store.getState().records.map((r) => r.id);
+      assert(currentDisplayed.length === 5, '26v6: current snapshot has 5 items');
+      // The payload must NOT include the 2 pushed-off old IDs
+      const pushedOffIds = vIds.slice(0, 2); // the two oldest IDs
+      const leakedPushedOff = latestAckPayload.filter((id) => pushedOffIds.includes(id));
+      assert(leakedPushedOff.length === 0, `26v7: pushed-off IDs not acknowledged on newer snapshot (leaked: ${leakedPushedOff})`);
+      assert(latestAckPayload.length === 5, `26v8: payload contains only the 5 currently visible items (got ${latestAckPayload.length})`);
+      assert(trackerV.unseenFailureCount() === 2, `26v9: 2 older unviewed failures remain unseen (got ${trackerV.unseenFailureCount()})`);
+      assert((await envV.sandbox.getUnseenFailureCount()) === 2, '26v10: toolbar badge count matches remaining 2 unseen');
+
+      liveList.dispose();
+    }
+  }
+
+  // =================================================================================================
+  console.log('\n--- 27. F6: persist successful retention pruning ---');
+  {
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const STORAGE_KEY = ctx.ImageSaverFeedbackTracker.STORAGE_KEY;
+    const DAY = 24 * 60 * 60 * 1000;
+    const T0 = 1700000000000;
+
+    // 27a: Central reproduction: 7 terminal records, 25h passes, fresh tracker hydrates and persists cleanup
+    {
+      const clock = { v: T0 };
+      const expiredOps = [];
+      for (let i = 0; i < 7; i++) {
+        expiredOps.push(FBLib.sanitizeRecord({
+          id: `op-exp-${i}`,
+          createdAt: T0,
+          updatedAt: T0,
+          state: 'complete',
+          site: 'example.com'
+        }));
+      }
+      let writeCount = 0;
+      let lastWritten = null;
+      const store = {
+        [STORAGE_KEY]: { v: FBLib.SCHEMA_VERSION, ops: expiredOps }
+      };
+      const storage = {
+        get: async (k) => store[k],
+        set: async (k, v) => {
+          writeCount++;
+          lastWritten = JSON.parse(JSON.stringify(v));
+          store[k] = lastWritten;
+        }
+      };
+
+      // Advance clock 25 hours
+      clock.v = T0 + 25 * 3600 * 1000;
+
+      const t = ctx.ImageSaverFeedbackTracker.createTracker({
+        storage,
+        now: () => clock.v,
+        genId: () => 'op-new',
+        getDownloadItem: async () => undefined,
+        peekEarlyTerminal: () => undefined,
+        notify: async () => {},
+        log: () => {}
+      });
+
+      await t.ready();
+      const listed = await t.list();
+      assert(listed.length === 0, '27a1: 0 records listed after 25h expiry');
+      assert(writeCount === 1, '27a2: pruned snapshot was persisted to storage (writeCount === 1)');
+      assert(Array.isArray(store[STORAGE_KEY]?.ops) && store[STORAGE_KEY].ops.length === 0, '27a3: storage holds 0 ops after pruning write');
+    }
+
+    // 27b: Clean hydration with valid unexpired records does not perform an unnecessary write
+    {
+      const clock = { v: T0 };
+      const validOps = [
+        FBLib.sanitizeRecord({
+          id: 'op-valid-1',
+          createdAt: T0,
+          updatedAt: T0,
+          state: 'complete',
+          site: 'example.com'
+        })
+      ];
+      let writeCount = 0;
+      const store = {
+        [STORAGE_KEY]: { v: FBLib.SCHEMA_VERSION, ops: validOps }
+      };
+      const storage = {
+        get: async (k) => store[k],
+        set: async (k, v) => { writeCount++; store[k] = JSON.parse(JSON.stringify(v)); }
+      };
+
+      const t = ctx.ImageSaverFeedbackTracker.createTracker({
+        storage,
+        now: () => clock.v,
+        genId: () => 'op-new',
+        getDownloadItem: async () => undefined,
+        peekEarlyTerminal: () => undefined,
+        notify: async () => {},
+        log: () => {}
+      });
+
+      await t.ready();
+      const listed = await t.list();
+      assert(listed.length === 1, '27b1: unexpired record listed');
+      assert(writeCount === 0, '27b2: clean hydration performed zero writes');
+      const item = await t.get('op-valid-1');
+      assert(item !== null && writeCount === 0, '27b3: get() on unexpired record performed zero writes');
+    }
+
+    // 27c: In-memory expiry pruning via list() and get() persists cleanup
+    {
+      const clock = { v: T0 };
+      let writeCount = 0;
+      const store = {};
+      const storage = {
+        get: async (k) => store[k],
+        set: async (k, v) => { writeCount++; store[k] = JSON.parse(JSON.stringify(v)); }
+      };
+
+      let n = 0;
+      const t = ctx.ImageSaverFeedbackTracker.createTracker({
+        storage,
+        now: () => clock.v,
+        genId: () => `op-live-${++n}`,
+        getDownloadItem: async () => undefined,
+        peekEarlyTerminal: () => undefined,
+        notify: async () => {},
+        log: () => {}
+      });
+
+      const id1 = await t.begin({ site: 'example.com' });
+      await t.stage(id1, 'saving', {});
+      await t.attachDownload(id1, 101);
+      await t.downloadTerminal(101, 'complete');
+
+      const id2 = await t.begin({ site: 'example.com' });
+      await t.stage(id2, 'saving', {});
+      await t.attachDownload(id2, 102);
+      await t.downloadTerminal(102, 'complete');
+
+      const writesAfterCreate = writeCount;
+      assert((await t.list()).length === 2, '27c1: 2 records currently tracked');
+
+      // Advance clock past 24h retention window
+      clock.v += DAY + 1000;
+
+      // list() triggers evict() and persists
+      const listedAfterExpiry = await t.list();
+      assert(listedAfterExpiry.length === 0, '27c2: records pruned on list()');
+      assert(writeCount === writesAfterCreate + 1, '27c3: list() pruning was persisted');
+      assert(store[STORAGE_KEY].ops.length === 0, '27c4: stored ops length is 0');
+
+      // get() on an expired record also persists if not already pruned
+      clock.v = T0;
+      const t2 = ctx.ImageSaverFeedbackTracker.createTracker({
+        storage,
+        now: () => clock.v,
+        genId: () => `op-get-${++n}`,
+        getDownloadItem: async () => undefined,
+        peekEarlyTerminal: () => undefined,
+        notify: async () => {},
+        log: () => {}
+      });
+      const id3 = await t2.begin({ site: 'example.com' });
+      await t2.attachDownload(id3, 103);
+      await t2.downloadTerminal(103, 'complete');
+      const writesBeforeGetPrune = writeCount;
+
+      clock.v += DAY + 1000;
+      const got = await t2.get(id3);
+      assert(got === null, '27c5: get() returns null for expired record');
+      assert(writeCount === writesBeforeGetPrune + 1, '27c6: get() persisted the eviction');
+    }
+
+    // 27d: Persistent failed reads never overwrite stored list; later successful recovery persists merged list
+    {
+      const clock = { v: T0 };
+      const initialOps = [
+        FBLib.sanitizeRecord({
+          id: 'op-init-1',
+          createdAt: T0,
+          updatedAt: T0,
+          state: 'complete',
+          site: 'example.com'
+        })
+      ];
+      const store = {
+        [STORAGE_KEY]: { v: FBLib.SCHEMA_VERSION, ops: initialOps }
+      };
+      let failGet = true;
+      let setAttempts = 0;
+      const storage = {
+        get: async (k) => {
+          if (failGet) throw new Error('READ_FAIL');
+          return store[k];
+        },
+        set: async (k, v) => {
+          setAttempts++;
+          store[k] = JSON.parse(JSON.stringify(v));
+        }
+      };
+
+      const t = ctx.ImageSaverFeedbackTracker.createTracker({
+        storage,
+        now: () => clock.v,
+        genId: () => 'op-failread-1',
+        getDownloadItem: async () => undefined,
+        peekEarlyTerminal: () => undefined,
+        notify: async () => {},
+        log: () => {}
+      });
+
+      // Begin operation while storage is unreadable
+      const newId = await t.begin({ site: 'example.com' });
+      assert(setAttempts === 0, '27d1: unreadable store is never overwritten on begin');
+      assert(store[STORAGE_KEY].ops.length === 1 && store[STORAGE_KEY].ops[0].id === 'op-init-1', '27d2: stored list preserved intact');
+
+      // Now storage becomes readable
+      failGet = false;
+      const listed = await t.list();
+      assert(listed.length === 2, '27d3: successful read merges stored and in-memory operations');
+      assert(setAttempts === 1, '27d4: deferred persist writes merged list once storage is readable');
+      assert(store[STORAGE_KEY].ops.length === 2, '27d5: store contains both ops');
+    }
+
+    // 27e: Failed cleanup write does not crash tracker
+    {
+      const clock = { v: T0 };
+      const expiredOps = [
+        FBLib.sanitizeRecord({
+          id: 'op-exp-err',
+          createdAt: T0,
+          updatedAt: T0,
+          state: 'complete',
+          site: 'example.com'
+        })
+      ];
+      const store = {
+        [STORAGE_KEY]: { v: FBLib.SCHEMA_VERSION, ops: expiredOps }
+      };
+      const storage = {
+        get: async (k) => store[k],
+        set: async () => { throw new Error('STORAGE_WRITE_FAILURE'); }
+      };
+
+      clock.v = T0 + 25 * 3600 * 1000;
+      const t = ctx.ImageSaverFeedbackTracker.createTracker({
+        storage,
+        now: () => clock.v,
+        genId: () => 'op-new',
+        getDownloadItem: async () => undefined,
+        peekEarlyTerminal: () => undefined,
+        notify: async () => {},
+        log: () => {}
+      });
+
+      await t.ready();
+      let listResult;
+      try {
+        listResult = await t.list();
+      } catch (e) {
+        listResult = 'THREW';
+      }
+      assert(Array.isArray(listResult) && listResult.length === 0, '27e1: failed cleanup write handled gracefully without throwing');
+    }
+  }
+
+  // =================================================================================================
+  console.log('\n--- 28. F5: recover transient failed delivery to enabled history ---');
+  {
+    const hEnv = (o = {}) => makeEnv({ ...o, local: { historyEnabled: true, ...(o.local || {}) } });
+    const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
+    const ask = (env, action, sender = extSender) => new Promise((resolve) => {
+      let responded = false;
+      for (const l of env.messageListeners) {
+        const keep = l({ action }, sender, (r) => { responded = true; resolve(r); });
+        if (keep === true || responded) break;
+      }
+      if (!responded) setTimeout(() => resolve(undefined), 0);
+    });
+    const hist = async (env) => (await ask(env, 'HISTORY_LIST')).records;
+    const saveOne = async (env, n) => {
+      await env.click(imageClick(n));
+      const r = await env.last();
+      await env.finish(r.downloadId);
+      return env.last();
+    };
+
+    // 28a: Real history writer with injected transient storage failure followed by successful recovery and tracker recreation
+    {
+      const env1 = hEnv();
+      await env1.ready();
+
+      // Inject transient write failure into chrome.storage.local
+      env1.failLocalWrite = true;
+      const op1 = await saveOne(env1, 'recov1');
+      await env1.tracker.flush();
+
+      // Write failed: history store has 0 entries
+      env1.failLocalWrite = false;
+      assert((await hist(env1)).length === 0, '28a1: storage failure prevented immediate history recording');
+
+      // Tracker record in memory and session storage has historyPending === true
+      const memRec = await env1.tracker.get(op1.id);
+      assert(memRec && memRec.historyPending === true, '28a2: in-memory tracker marks historyPending === true');
+      const sessionOps = env1.session[env1.sandbox.ImageSaverFeedbackTracker.STORAGE_KEY]?.ops || [];
+      const sessionRec = sessionOps.find((o) => o.id === op1.id);
+      assert(sessionRec && sessionRec.historyPending === true, '28a3: session storage persists historyPending === true');
+
+      // Simulate service worker restart: recreate tracker with the same session and local stores
+      const env2 = hEnv({ session: env1.session, local: env1.local, downloadsDb: env1.downloadsDb });
+      await env2.ready();
+      await env2.tracker.flush();
+
+      // Recovery occurred: history store now holds the record!
+      const recoveredHist = await hist(env2);
+      assert(recoveredHist.length === 1 && recoveredHist[0].id === op1.id, '28a4: tracker recreation successfully recovered failed history write');
+
+      // historyPending was cleared from tracker and session storage
+      const memRec2 = await env2.tracker.get(op1.id);
+      assert(memRec2 && !memRec2.historyPending, '28a5: historyPending cleared from tracker in memory');
+      const sessionOps2 = env2.session[env2.sandbox.ImageSaverFeedbackTracker.STORAGE_KEY]?.ops || [];
+      const sessionRec2 = sessionOps2.find((o) => o.id === op1.id);
+      assert(sessionRec2 && !sessionRec2.historyPending, '28a6: historyPending cleared from session storage');
+
+      // 28b: Acknowledged writes do not duplicate
+      await env2.tracker.list();
+      await env2.tracker.flush();
+      assert((await hist(env2)).length === 1, '28b1: subsequent list() does not duplicate history entry');
+
+      // 28c: Repeat terminal events remain idempotent
+      await env2.emitDownload({ id: op1.downloadId, state: { current: 'complete' } });
+      await env2.tracker.flush();
+      assert((await hist(env2)).length === 1, '28c1: repeat terminal event remains idempotent (no duplicate entry)');
+    }
+
+    // 28d: Session persistence failure does not destructively overwrite stored records
+    {
+      const env = hEnv();
+      await env.ready();
+      await saveOne(env, 'persist_ok');
+      await env.tracker.flush();
+      const countBefore = env.session[env.sandbox.ImageSaverFeedbackTracker.STORAGE_KEY]?.ops?.length || 0;
+      assert(countBefore >= 1, '28d1: record persisted in session');
+
+      env.failSessionSet = true;
+      await env.click(imageClick('fail_session'));
+      const r = await env.last();
+      if (r && r.downloadId) await env.finish(r.downloadId);
+      await env.tracker.flush();
+      env.failSessionSet = false;
+
+      const opsAfter = env.session[env.sandbox.ImageSaverFeedbackTracker.STORAGE_KEY]?.ops || [];
+      assert(opsAfter.length >= countBefore, '28d2: session storage write failure did not destroy stored records');
+    }
+
+    // 28e: Disabled history preference never grants recording, and enabling later does not retroactively record
+    {
+      const envDis = makeEnv({ local: { historyEnabled: false } });
+      await envDis.ready();
+      const opDis = await saveOne(envDis, 'disabled_save');
+      await envDis.tracker.flush();
+
+      // Not recorded
+      assert((await hist(envDis)).length === 0, '28e1: save while history disabled is not in history');
+      const disRec = await envDis.tracker.get(opDis.id);
+      assert(disRec && !disRec.historyPending, '28e2: historyPending is NOT set for save made while history was disabled');
+
+      // Now enable history: does NOT retroactively record previously ineligible save
+      envDis.local.historyEnabled = true;
+      const envRecreated = hEnv({ session: envDis.session, local: envDis.local, downloadsDb: envDis.downloadsDb });
+      await envRecreated.ready();
+      await envRecreated.tracker.flush();
+      assert((await hist(envRecreated)).length === 0, '28e3: enabling history later does not record save made while disabled');
+    }
+
+    // 28f: Unreadable history preference never grants recording
+    {
+      const envUnread = hEnv();
+      await envUnread.ready();
+      envUnread.failLocalGet = true;
+      await saveOne(envUnread, 'unread_pref_save');
+      await envUnread.tracker.flush();
+      envUnread.failLocalGet = false;
+
+      assert((await hist(envUnread)).length === 0, '28f1: unreadable preference never authorizes recording');
+    }
+
+    // 28g: Clear during pending delivery cannot resurrect entries
+    {
+      const envClear = hEnv();
+      await envClear.ready();
+
+      // Transient storage failure
+      envClear.failLocalWrite = true;
+      const opClear = await saveOne(envClear, 'pending_before_clear');
+      await envClear.tracker.flush();
+      envClear.failLocalWrite = false;
+
+      const pRec = await envClear.tracker.get(opClear.id);
+      assert(pRec && pRec.historyPending === true, '28g1: record has historyPending === true');
+
+      // User clears history while delivery was pending
+      const clrRes = await ask(envClear, 'HISTORY_CLEAR');
+      assert(clrRes.success === true, '28g2: HISTORY_CLEAR succeeded');
+
+      // Recreate tracker and trigger recovery
+      const envClear2 = hEnv({ session: envClear.session, local: envClear.local, downloadsDb: envClear.downloadsDb });
+      await envClear2.ready();
+      await envClear2.tracker.flush();
+
+      // Entry was created before clearedAt, so it must NOT be resurrected into history
+      assert((await hist(envClear2)).length === 0, '28g3: cleared boundary prevents resurrecting pre-clear entry');
+      const recAfterClear = await envClear2.tracker.get(opClear.id);
+      assert(recAfterClear && !recAfterClear.historyPending, '28g4: historyPending cleared after rejected pre-clear delivery');
+    }
+
+    // 28h: Entries older than clear / retention boundary stay absent
+    {
+      const envRet = hEnv();
+      await envRet.ready();
+      const DAY = 24 * 60 * 60 * 1000;
+      const oldTime = Date.now() - 8 * DAY;
+      envRet.local.imageSaverHistoryV1 = {
+        v: 1,
+        entries: [FBLib.sanitizeRecord({ id: 'op-hist-ancient', createdAt: oldTime, updatedAt: oldTime, state: 'complete', site: 'example.com' })],
+        clearedAt: 0
+      };
+      const entries = await hist(envRet);
+      assert(!entries.some((e) => e.id === 'op-hist-ancient'), '28h1: history entry older than 7 days retention is excluded');
+    }
+
+    // 28i: History callback bookkeeping write serializes ahead of concurrent begin; both survive restart
+    {
+      const state = {};
+      let rejectDelivery, releaseWrite, holdOnce = true, writeStarted;
+      let deliveryStarted;
+      const delivery = new Promise((resolve) => { deliveryStarted = resolve; });
+      const started = new Promise((resolve) => { writeStarted = resolve; });
+
+      let history;
+      const tCtx = (() => {
+        const s = { URL, console, setTimeout, clearTimeout };
+        vm.createContext(s);
+        for (const f of ['lib/feedback.js', 'lib/feedback_history.js', 'lib/feedback_tracker.js']) {
+          vm.runInContext(read(f), s);
+        }
+        return vm.runInContext('globalThis', s);
+      })();
+
+      let opCount = 0;
+      const makeTrack = (storageDeps = {}) => tCtx.ImageSaverFeedbackTracker.createTracker({
+        now: () => 1800000000000,
+        genId: () => `op-r2-${++opCount}`,
+        getDownloadItem: async () => null,
+        storage: {
+          get: async (key) => (state[key] ? JSON.parse(JSON.stringify(state[key])) : null),
+          set: async (key, value) => { state[key] = JSON.parse(JSON.stringify(value)); }
+        },
+        onFinished: (rec) => history.record(rec),
+        ...storageDeps
+      });
+
+      const tracker = makeTrack({
+        storage: {
+          get: async (key) => (state[key] ? JSON.parse(JSON.stringify(state[key])) : null),
+          set: async (key, value) => {
+            const snapshot = JSON.parse(JSON.stringify(value));
+            if (holdOnce && snapshot.ops && snapshot.ops.some((r) => r.historyPending)) {
+              holdOnce = false;
+              writeStarted();
+              await new Promise((resolve) => { releaseWrite = resolve; });
+            }
+            state[key] = snapshot;
+          }
+        }
+      });
+
+      history = tCtx.ImageSaverFeedbackHistory.createHistory({
+        now: () => 1800000000000,
+        isEnabled: async () => true,
+        storage: {
+          get: async () => null,
+          set: () => new Promise((_, reject) => {
+            rejectDelivery = reject;
+            deliveryStarted();
+          })
+        }
+      });
+
+      const opA = await tracker.begin({ site: 'reddit' });
+      await tracker.fail(opA, { code: 'NO_MEDIA' });
+      await delivery; // wait for history.record to be invoked
+
+      rejectDelivery(new Error('transient history storage failure'));
+      await started; // wait for bookkeeping persist to start and pause at barrier
+
+      // While bookkeeping write is held, start concurrent operation B
+      let opBFinishedWhileHeld = false;
+      const opBPromise = tracker.begin({ site: 'reddit' }).then((id) => {
+        opBFinishedWhileHeld = true;
+        return id;
+      });
+
+      // Flush microtasks to allow any unblocked promise chain to run
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      assert(!opBFinishedWhileHeld, '28i1: opB must serialize behind locked bookkeeping write');
+
+      // Now release the held bookkeeping write
+      releaseWrite();
+      const opB = await opBPromise;
+      await tracker.flush();
+
+      // Persisted state must have BOTH opA and opB
+      const finalStored = state.imageSaverFeedbackV1?.ops?.map((r) => r.id) || [];
+      assert(finalStored.includes(opA), '28i2: opA is present in persisted storage');
+      assert(finalStored.includes(opB), '28i3: opB is present in persisted storage (not overwritten by delayed bookkeeping write)');
+
+      // Recreated tracker hydrates both opA and opB
+      const recreated = makeTrack();
+      await recreated.ready();
+      const hydratedIds = (await recreated.list()).map((r) => r.id);
+      assert(hydratedIds.includes(opA), '28i4: recreated tracker hydrates opA');
+      assert(hydratedIds.includes(opB), '28i5: recreated tracker hydrates opB');
+    }
+
+    // 28j: clearFinished during in-flight history outcome does not resurrect cleared record
+    {
+      const state = {};
+      let releaseHistory;
+      const historyCalled = new Promise((resolve) => {
+        releaseHistory = resolve;
+      });
+      let holdHistoryDelivery = true;
+      let resumeHistory;
+
+      const tCtx = (() => {
+        const s = { URL, console, setTimeout, clearTimeout };
+        vm.createContext(s);
+        for (const f of ['lib/feedback.js', 'lib/feedback_history.js', 'lib/feedback_tracker.js']) {
+          vm.runInContext(read(f), s);
+        }
+        return vm.runInContext('globalThis', s);
+      })();
+
+      let opCount = 0;
+      const tracker = tCtx.ImageSaverFeedbackTracker.createTracker({
+        now: () => 1800000000000,
+        genId: () => `op-clr-${++opCount}`,
+        getDownloadItem: async () => null,
+        storage: {
+          get: async (key) => (state[key] ? JSON.parse(JSON.stringify(state[key])) : null),
+          set: async (key, value) => { state[key] = JSON.parse(JSON.stringify(value)); }
+        },
+        onFinished: async () => {
+          if (holdHistoryDelivery) {
+            holdHistoryDelivery = false;
+            releaseHistory();
+            await new Promise((resolve) => { resumeHistory = resolve; });
+            throw new Error('history failed');
+          }
+        }
+      });
+
+      const opToClear = await tracker.begin({ site: 'reddit' });
+      await tracker.fail(opToClear, { code: 'FAIL_CLEAR' });
+      await historyCalled; // onFinished is in-flight
+
+      // User clears finished operations while history delivery is in flight
+      await tracker.clearFinished();
+      const listAfterClear = await tracker.list();
+      assert(listAfterClear.length === 0, '28j1: tracker cleared in-memory operations');
+
+      // Now resume history failure, triggering bookkeeping error handler
+      resumeHistory();
+      await tracker.flush();
+
+      // Record must NOT have been resurrected in tracker or persisted storage
+      const listAfterResume = await tracker.list();
+      assert(listAfterResume.length === 0, '28j2: cleared record not reintroduced to tracker');
+      const storedAfterResume = state.imageSaverFeedbackV1?.ops || [];
+      assert(storedAfterResume.length === 0, '28j3: cleared record not reintroduced to persisted storage');
+
+      // Recreated tracker also has 0 records
+      const recreated = tCtx.ImageSaverFeedbackTracker.createTracker({
+        now: () => 1800000000000,
+        genId: () => `op-rec-${++opCount}`,
+        getDownloadItem: async () => null,
+        storage: {
+          get: async (key) => (state[key] ? JSON.parse(JSON.stringify(state[key])) : null),
+          set: async (key, value) => { state[key] = JSON.parse(JSON.stringify(value)); }
+        }
+      });
+      await recreated.ready();
+      assert((await recreated.list()).length === 0, '28j4: recreated tracker has 0 records');
+    }
+  }
+
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);
   process.exit(failed > 0 ? 1 : 0);
 })().catch((err) => {
