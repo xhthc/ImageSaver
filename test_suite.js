@@ -6730,6 +6730,8 @@ async function runTests() {
         }]
       };
       cardContainer.querySelector = (sel) => sel === 'video' ? overlayVideo : null;
+      // a real container also answers querySelectorAll: the production lookup enumerates the card's players
+      cardContainer.querySelectorAll = (sel) => sel === 'video' ? [overlayVideo] : [];
 
       const overlayButton = {
         tagName: 'BUTTON',
@@ -21041,6 +21043,7 @@ async function runTests() {
           cur = cur.parentElement;
         }
         const evt = {
+          isTrusted: true,
           button: 2,
           target,
           composedPath: () => path,
@@ -31887,6 +31890,18 @@ async function runTests() {
       const dlStale = await click(SILENT);
       assert(dlStale.length === 0, '263.14: direct silent context-menu save when frame navigated during lookup: refused with 0 downloads, never downloads old silent file');
 
+      // 9b. STAB-04 F1: the selected blob player is replaced by another clip after the gesture and before the menu action: the save refuses, no
+      // provider request is made and the replacement clip is never fetched or downloaded (the unchanged player of 263.3 still saves)
+      const REPLACED_CLIP = 'https://media.redgifs.com/ReplacedNextClip.mp4';
+      const replacedPlayer = makeVideo(blob);
+      withFrame(replacedPlayer);
+      network({ gif: { body: GOOD } });
+      replacedPlayer.src = REPLACED_CLIP;
+      replacedPlayer.currentSrc = REPLACED_CLIP;
+      dl = await click(blob);
+      assert(dl.length === 0 && apiCalls.length === 0 && !mediaCalls.includes(REPLACED_CLIP),
+        '263.17: a player replaced after the gesture is refused by the real save handler: no download, no provider request, replacement not fetched: ' + JSON.stringify({ dl: dl.map((d) => d.url), apiCalls: apiCalls.length, mediaCalls }));
+
       // 10. Probing audio renditions: HD 401, HD 404 -> SD 403, HD 410 -> SD network failure, HD 404 -> SD 200, HD 410 -> SD 200, both 404
       // 10a. HD answers 401: save fails, no silent substitution
       withFrame(makeVideo(SILENT));
@@ -31973,6 +31988,329 @@ async function runTests() {
       sandbox.fetch = prevFetch;
       sandbox.document.querySelectorAll = prevQueryAll;
       sandbox.document.querySelector = prevQueryOne;
+      sandbox.window.location = prevLocation;
+      sandbox.console.warn = prevWarn;
+      sandbox.console.log = prevLog;
+    }
+  }
+
+  // ── Test 264: RedGIFs native context menu on a URL-less player (beta 2.0.0.25 report, /watch/orangeworrisomelacewing) ──
+  // Native evidence: repeated context-menu saves on www.redgifs.com failed with NO_MEDIA; the worker logged an empty media address and then "context menu
+  // click without media association". The page context carries no srcUrl, and content_context_target.js proves the selected blob/MSE player as a URL-less
+  // `player`. The handler (readContextMediaTarget) dropped it because it accepted http(s) URLs only. Here the REAL capture script records the gesture
+  // (fake layout), the real handler runs the injected readers, and the real frame resolver (content_redgifs.js) answers; the player is admitted only while
+  // the capture re-proves the same player, in a RedGIFs frame, and nothing is guessed from the page address. Node mocks: the native player element/overlay
+  // of the reported page is not verified here.
+  {
+    console.log('\n--- Test 264: RedGIFs context menu on a URL-less selected player ---');
+    const prevTabsHandler = mockChrome.tabs._msgHandler;
+    const prevExec = mockChrome.scripting.executeScript;
+    const prevFetch = sandbox.fetch;
+    const prevQueryAll = sandbox.document.querySelectorAll;
+    const prevQueryOne = sandbox.document.querySelector;
+    const prevElementsFromPoint = sandbox.document.elementsFromPoint;
+    const prevLocation = sandbox.window.location;
+    const prevWarn = sandbox.console.warn;
+    const prevLog = sandbox.console.log;
+    sandbox.console.warn = () => {};
+    sandbox.console.log = () => {};
+    mockChrome.windows._autoExecuteAction = 'download_original';
+    try {
+      const PAGE = 'https://www.redgifs.com/watch/orangeworrisomelacewing';
+      const FILE = 'OrangeWorrisomeLacewing';
+      const ID = FILE.toLowerCase();
+      const HD = `https://media.redgifs.com/${FILE}.mp4`;
+      const SD = `https://media.redgifs.com/${FILE}-mobile.mp4`;
+      const SILENT = `https://media.redgifs.com/${FILE}-silent.mp4`;
+      const BLOB = 'blob:https://www.redgifs.com/264-player';
+      const TOKEN = 'SYNTH-264-session-token';
+      const frameLocation = (href) => { const u = new URL(href); return { href: u.href, protocol: u.protocol, host: u.host, hostname: u.hostname, pathname: u.pathname }; };
+      const scriptCode = fs.readFileSync(path.join(__dirname, 'content_context_target.js'), 'utf8');
+
+      // A fake layout that both the capture script and the RedGIfs frame script can read
+      const mk = (tag, o = {}) => {
+        const e = { nodeType: 1, tagName: tag.toUpperCase(), parentElement: o.parent || null, isConnected: true, _kids: [], _attrs: o.attrs || {}, src: o.src || '', currentSrc: o.src || '',
+          _rect: o.rect || { left: 0, top: 0, width: 400, height: 300 } };
+        if (o.parent) o.parent._kids.push(e);
+        e.getAttribute = (k) => (k in e._attrs ? e._attrs[k] : null);
+        e.hasAttribute = (k) => k in e._attrs;
+        e.matches = (sel) => sel.split(',').some((p) => { p = p.trim(); return (p.startsWith('.') && String(e._attrs.class || '').split(/\s+/).includes(p.slice(1))) || p === e.tagName.toLowerCase(); });
+        e.closest = (sel) => { for (let c = e; c; c = c.parentElement) if (c.matches(sel)) return c; return null; };
+        e.contains = (x) => { for (let c = x; c; c = c.parentElement) if (c === e) return true; return false; };
+        e.getBoundingClientRect = () => { const r = e._rect; return { left: r.left, top: r.top, right: r.left + r.width, bottom: r.top + r.height, width: r.width, height: r.height }; };
+        e.querySelector = () => null;
+        e.querySelectorAll = (sel) => { const out = []; const walk = (n) => { for (const k of n._kids) { if (k.matches(sel)) out.push(k); walk(k); } }; walk(e); return out; };
+        e.remove = () => { if (e.parentElement) e.parentElement._kids.splice(e.parentElement._kids.indexOf(e), 1); const off = (n) => { n.isConnected = false; n._kids.forEach(off); }; off(e); };
+        return e;
+      };
+      const setSrc = (v, s) => { v.src = s; v.currentSrc = s; };
+      const build = ({ players = 1, videoAttrs = null } = {}) => {
+        const body = mk('body');
+        const card = mk('div', { parent: body, attrs: { class: 'redgifs-player' }, rect: { left: 0, top: 0, width: 400 * players, height: 300 } });
+        const videos = [];
+        for (let i = 0; i < players; i++) videos.push(mk('video', { parent: card, src: i === 0 ? BLOB : `${BLOB}-${i}`, attrs: i === 0 && videoAttrs ? videoAttrs : {}, rect: { left: 400 * i, top: 0, width: 400, height: 300 } }));
+        const overlay = mk('div', { parent: card, attrs: { class: 'touch-overlay' }, rect: { left: 0, top: 0, width: 400 * players, height: 300 } });
+        const stack = (x) => [overlay, ...videos.filter((v) => v.isConnected && x >= v._rect.left && x <= v._rect.left + v._rect.width), card, body];
+        const doc = {
+          baseURI: PAGE,
+          elementsFromPoint: (x, y) => stack(x),
+          querySelectorAll: (q) => {
+            if (q === 'video') return videos.filter((v) => v.isConnected).concat(card._kids.filter((k) => k.tagName === 'VIDEO' && !videos.includes(k) && k.isConnected));
+            if (/meta/.test(q)) return [{ getAttribute: (k) => (k === 'property' ? 'og:video' : (k === 'content' ? SILENT : null)) }];
+            return [];
+          },
+          querySelector: () => null
+        };
+        return { body, card, videos, overlay, doc };
+      };
+
+      const recordGesture = (doc, target, path, { trusted = true, ageMs = 0 } = {}) => {
+        const listeners = {};
+        const world = vm.createContext({ window: { addEventListener: (t, f) => { listeners[t] = f; }, getComputedStyle: () => ({ backgroundImage: 'none' }) }, document: doc, Date, Set, URL });
+        vm.runInContext(scriptCode, world);
+        listeners.contextmenu({ isTrusted: trusted, type: 'contextmenu', clientX: 50, clientY: 50, composedPath: () => path, target });
+        const rec = vm.runInContext('globalThis.__imageSaverContextTarget', world);
+        if (rec && ageMs) rec.at -= ageMs;
+        return rec;
+      };
+
+      let frameRequests = [];
+      let currentDocId = 'doc-1';
+      const REPLACEMENT = 'https://media.redgifs.com/ReplacementNextClip.mp4';
+      const SECOND = 'https://media.redgifs.com/SecondGestureClip.mp4';
+      const apiCalls = [];
+      const mediaCalls = [];
+      const urlsOf = (hd) => ({ silent: SILENT, hd, sd: SD });
+      const network = (hd = HD, onClipLookup = null) => {
+        apiCalls.length = 0;
+        mediaCalls.length = 0;
+        sandbox.fetch = async (url) => {
+          url = String(url);
+          if (url.startsWith('https://api.redgifs.com/')) {
+            apiCalls.push(url);
+            if (onClipLookup && /v2\/gifs\//.test(url)) onClipLookup();
+            const body = /v2\/auth\/temporary$/.test(url) ? { token: TOKEN } : { gif: { id: ID, hasAudio: true, urls: urlsOf(hd) } };
+            return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(body) };
+          }
+          mediaCalls.push(url);
+          return { ok: true, status: 200, headers: { get: (h) => (h.toLowerCase() === 'content-type' ? 'video/mp4' : '1000') }, body: null };
+        };
+      };
+      // One menu click on the page context (no srcUrl): the injected readers read the clicked frame's record and document
+      // navigate: the frame navigates to a fresh document (one video with its own direct source, no gesture recorded by its script) after the capture was
+      // read and before the frame request is handled; documentIds: the injection result names the admitted document (Chrome reports it);
+      // injection: the fresh document has no script yet, the first request fails and the resolver injects content_redgifs.js into it
+      const menuClick = async ({ built, rec, pageUrl = PAGE, frameUrl = PAGE, redgifsGesture = true, tabId = 4264, navigate = false, documentIds = true, injection = false, laterGesture = false }) => {
+        currentDocId = 'doc-1';
+        let injected = !injection;
+        // the same document: a second player appears and a new trusted selection of it is recorded, without a second save being started
+        const laterSelection = () => {
+          if (built.second) return;
+          const second = mk('video', { parent: built.card, src: SECOND, rect: { left: 0, top: 0, width: 400, height: 300 } });
+          built.second = second;
+          sandbox.setLastContextmenuTarget(second, [second, built.card, built.body]);
+          const recB = recordGesture(built.doc, second, [second, built.card, built.body]);
+          if (recB) { recB.at = (rec ? rec.at : Date.now()) + 1000; sandbox.__imageSaverContextTarget = recB; }
+        };
+        const navigateNow = () => {
+          currentDocId = 'doc-2';
+          const fresh = { tagName: 'VIDEO', currentSrc: REPLACEMENT, src: REPLACEMENT, isConnected: true, getAttribute: () => null, querySelectorAll: () => [] };
+          sandbox.document.querySelectorAll = (q) => (q === 'video' ? [fresh] : []);
+          sandbox.setLastContextmenuTarget(null, []);
+        };
+        sandbox.window.location = frameLocation(pageUrl);
+        sandbox.document.querySelectorAll = built.doc.querySelectorAll;
+        sandbox.document.querySelector = built.doc.querySelector;
+        sandbox.document.elementsFromPoint = built.doc.elementsFromPoint;
+        if (redgifsGesture) sandbox.setLastContextmenuTarget(built.overlay, [built.overlay, built.card, built.body]);
+        frameRequests = [];
+        mockChrome.tabs._msgHandler = async (tid, msg, sendOptions) => {
+          if (msg && msg.action === 'RESOLVE_FRAME_MEDIA') {
+            if (navigate && currentDocId === 'doc-1') navigateNow();
+            if (laterGesture === true) laterSelection();
+            if (sendOptions && sendOptions.documentId && sendOptions.documentId !== currentDocId) throw new Error('No document with id ' + sendOptions.documentId);
+            if (!injected) throw new Error('Could not establish connection. Receiving end does not exist.');
+            frameRequests.push(msg.clickedSrc);
+            return sandbox.resolveFrameRedGifsMediaWithProvider(msg.clickedSrc, { frameId: msg.frameId, requireGesture: msg.requireGesture === true, gestureAt: msg.gestureAt });
+          }
+          return null;
+        };
+        mockChrome.scripting.executeScript = async (opts) => {
+          if (opts.files) {
+            if (opts.target.documentIds && !opts.target.documentIds.includes(currentDocId)) throw new Error('No document with id');
+            injected = true;
+            return [{ result: undefined }];
+          }
+          sandbox.__imageSaverContextTarget = rec;
+          const out = { result: opts.func(...(opts.args || [])) };
+          if (documentIds) out.documentId = 'doc-1';
+          return [out];
+        };
+        sandbox.resetActiveOffscreenTasks(0);
+        mockChrome._badgeHistory = [];
+        const before = downloadedCalls.length;
+        try {
+          await mockChrome.contextMenus._handler({ menuItemId: 'save-image-item', pageUrl, frameUrl, linkUrl: null, frameId: 0 }, { id: tabId, url: pageUrl });
+        } finally {
+          delete sandbox.__imageSaverContextTarget;
+        }
+        return downloadedCalls.slice(before);
+      };
+      const refusedAll = (dl) => dl.length === 0 && frameRequests.length === 0 && apiCalls.length === 0 && mediaCalls.length === 0;
+      const state = () => JSON.stringify({ frameRequests, api: apiCalls.length, media: mediaCalls });
+
+      // 264.1: the proven URL-less player of the reported watch page reaches the existing frame resolver and the provider-declared HD is saved
+      {
+        const built = build();
+        const rec = recordGesture(built.doc, built.overlay, [built.overlay, built.card, built.body]);
+        assert(rec && rec.media && rec.media.kind === 'player' && rec.media.url === null, '264.0: the real capture records the overlay\'s player as a URL-less player');
+        network();
+        const dl = await menuClick({ built, rec });
+        assert(dl.length === 1 && dl[0].url === HD && frameRequests.length === 1 && frameRequests[0] === '' && apiCalls.length === 2 && !mediaCalls.some((u) => u !== HD),
+          '264.1: the proven URL-less player: the frame resolver answers, the audio-bearing HD is downloaded, nothing else of the clip is requested: ' + JSON.stringify({ dl: dl.map((d) => d.url), state: state() }));
+      }
+
+      // 264.2: the exact signed request address of the frame's answer is the download
+      {
+        const built = build();
+        const rec = recordGesture(built.doc, built.overlay, [built.overlay, built.card, built.body]);
+        const SIGNED = `${HD}?sig=a,b&exp=4102444800`;
+        network(SIGNED);
+        const dl = await menuClick({ built, rec });
+        assert(dl.length === 1 && dl[0].url === SIGNED, '264.2: the signed address is downloaded byte for byte: ' + JSON.stringify(dl.map((d) => d.url)));
+      }
+
+      // 264.3: blank space / text next to the player: no selected media, nothing is requested
+      {
+        const built = build();
+        const text = mk('p', { parent: built.body, rect: { left: 0, top: 400, width: 400, height: 40 } });
+        built.doc.elementsFromPoint = () => [text, built.body];
+        const rec = recordGesture(built.doc, text, [text, built.body]);
+        network();
+        const dl = await menuClick({ built, rec, redgifsGesture: false });
+        assert(refusedAll(dl), '264.3: a click on text/blank space selects nothing: ' + state());
+      }
+
+      // 264.4: neighboring players under one overlay: ambiguous, nothing is requested
+      {
+        const built = build({ players: 2 });
+        const rec = recordGesture(built.doc, built.overlay, [built.overlay, built.card, built.body]);
+        network();
+        const dl = await menuClick({ built, rec });
+        assert(refusedAll(dl), '264.4: two players under one layer: no neighbor is chosen: ' + state());
+      }
+
+      // 264.5: the player's source changes (or is replaced) after the gesture: the capture no longer proves it
+      {
+        for (const label of ['source changed', 'source cleared', 'player replaced']) {
+          const built = build();
+          const rec = recordGesture(built.doc, built.overlay, [built.overlay, built.card, built.body]);
+          network();
+          if (label === 'source changed') setSrc(built.videos[0], 'blob:https://www.redgifs.com/264-next-clip');
+          else if (label === 'source cleared') setSrc(built.videos[0], '');
+          else { built.videos[0].remove(); built.videos[0] = mk('video', { parent: built.card, src: BLOB }); }
+          const dl = await menuClick({ built, rec });
+          assert(refusedAll(dl), `264.5 (${label}): refused before any request: ` + state());
+        }
+      }
+
+      // 264.6: a stale gesture and an untrusted event give no selection
+      {
+        const built = build();
+        network();
+        let rec = recordGesture(built.doc, built.overlay, [built.overlay, built.card, built.body], { ageMs: 31000 });
+        let dl = await menuClick({ built, rec });
+        assert(refusedAll(dl), '264.6a: a gesture older than 30 s is stale: ' + state());
+        rec = recordGesture(built.doc, built.overlay, [built.overlay, built.card, built.body], { trusted: false });
+        dl = await menuClick({ built, rec });
+        assert(refusedAll(dl), '264.6b: an event dispatched by the page selects nothing: ' + state());
+      }
+
+      // 264.7: only a RedGIFs frame admits a URL-less player: another site's player (and the same layout on a non-RedGIFs frame) is refused
+      {
+        const built = build();
+        const rec = recordGesture(built.doc, built.overlay, [built.overlay, built.card, built.body]);
+        network();
+        const dl = await menuClick({ built, rec, pageUrl: 'https://video.example.test/watch/orangeworrisomelacewing', frameUrl: 'https://video.example.test/watch/orangeworrisomelacewing', redgifsGesture: false });
+        assert(refusedAll(dl), '264.7: a URL-less player of another site is not admitted, nothing is guessed from an id in the page address: ' + state());
+      }
+
+      // 264.9-264.11: navigation race. The capture proved the player of ONE document; the frame navigates to a fresh document before the request is handled.
+      // The fresh document's sole video (its own direct source) must not be substituted: the request is bound to the admitted document and needs the
+      // frame's own fresh selection proof. Zero requests for the replacement clip, zero downloads.
+      for (const [label, opts] of [
+        ['navigation before the request is handled (document-bound)', { navigate: true }],
+        ['navigation, Chrome reports no document id (selection proof only)', { navigate: true, documentIds: false }],
+        ['navigation and reinjection into the fresh document', { navigate: true, documentIds: false, injection: true }]
+      ]) {
+        const built = build();
+        const rec = recordGesture(built.doc, built.overlay, [built.overlay, built.card, built.body]);
+        network();
+        const dl = await menuClick({ built, rec, ...opts });
+        assert(dl.length === 0 && !mediaCalls.some((u) => u.includes('ReplacementNextClip')) && apiCalls.length === 0,
+          `264.9 (${label}): the fresh document's own video is never substituted: ` + JSON.stringify({ dl: dl.map((d) => d.url), state: state() }));
+      }
+
+      // 264.10-264.12: same-document selection race. The capture proved player A and its save started; before the frame request is handled (or while the
+      // provider is asked) a NEW trusted selection of another player B of the same document is recorded without a second save. The operation stays bound to
+      // the selection it was admitted for: it is refused, B is never saved by it; a later genuine save of B (its own capture, its own click) still works.
+      {
+        const built = build();
+        const rec = recordGesture(built.doc, built.overlay, [built.overlay, built.card, built.body]);
+        network();
+        const dl = await menuClick({ built, rec, laterGesture: true });
+        assert(dl.length === 0 && !mediaCalls.some((u) => u.includes('SecondGestureClip')) && apiCalls.length === 0,
+          '264.10: a later trusted selection of another player never redirects the earlier operation to it: ' + JSON.stringify({ dl: dl.map((d) => d.url), state: state() }));
+
+        const during = build();
+        const recDuring = recordGesture(during.doc, during.overlay, [during.overlay, during.card, during.body]);
+        let later = null;
+        network(HD, () => { if (!later) { later = true; const p = mk('video', { parent: during.card, src: SECOND }); sandbox.setLastContextmenuTarget(p, [p, during.card, during.body]); const r = recordGesture(during.doc, p, [p, during.card, during.body]); if (r) { r.at = recDuring.at + 1000; sandbox.__imageSaverContextTarget = r; } } });
+        const dlDuring = await menuClick({ built: during, rec: recDuring });
+        assert(dlDuring.length === 0 && !mediaCalls.some((u) => u.includes('SecondGestureClip')) && !mediaCalls.includes(HD),
+          '264.11: a new selection during the provider lookup refuses the earlier operation; nothing is downloaded: ' + JSON.stringify({ dl: dlDuring.map((d) => d.url), state: state() }));
+
+        // the same player selected again during the lookup is a new selection too: the earlier operation is bound to the first one
+        const again = build();
+        const recAgain = recordGesture(again.doc, again.overlay, [again.overlay, again.card, again.body]);
+        let reselected = false;
+        network(HD, () => {
+          if (reselected) return;
+          reselected = true;
+          sandbox.setLastContextmenuTarget(again.overlay, [again.overlay, again.card, again.body]);
+          const r = recordGesture(again.doc, again.overlay, [again.overlay, again.card, again.body]);
+          if (r) { r.at = recAgain.at + 1000; sandbox.__imageSaverContextTarget = r; }
+        });
+        const dlAgain = await menuClick({ built: again, rec: recAgain });
+        assert(dlAgain.length === 0 && !mediaCalls.includes(HD),
+          '264.11b: a new selection of the same player during the provider lookup also refuses the earlier operation: ' + JSON.stringify({ dl: dlAgain.map((d) => d.url), state: state() }));
+
+        // a genuine later save of the other player: its own capture, its own click, its declared clip
+        const own = build({ videoAttrs: { 'data-mp4': SECOND } });
+        const recOwn = recordGesture(own.doc, own.overlay, [own.overlay, own.card, own.body]);
+        network();
+        const dlOwn = await menuClick({ built: own, rec: recOwn });
+        assert(dlOwn.length === 1 && dlOwn[0].url === SECOND, '264.12: a genuine save of the other player downloads its own clip: ' + JSON.stringify({ dl: dlOwn.map((d) => d.url), state: state() }));
+      }
+
+      // 264.8: the proven player whose frame declares nothing: the frame cannot answer, so nothing is guessed from the clip id of the page address
+      {
+        const built = build();
+        const baseQuery = built.doc.querySelectorAll;
+        built.doc.querySelectorAll = (q) => (/meta/.test(q) ? [] : baseQuery(q));
+        const rec = recordGesture(built.doc, built.overlay, [built.overlay, built.card, built.body]);
+        network();
+        const dl = await menuClick({ built, rec });
+        assert(dl.length === 0 && frameRequests.length === 1 && !mediaCalls.some((u) => u.includes(FILE)) && apiCalls.length <= 2,
+          '264.8: a frame that cannot answer ends in a refusal: no download and no guessed address of the clip of the page: ' + state());
+      }
+    } finally {
+      mockChrome.tabs._msgHandler = prevTabsHandler;
+      mockChrome.scripting.executeScript = prevExec;
+      sandbox.fetch = prevFetch;
+      sandbox.document.querySelectorAll = prevQueryAll;
+      sandbox.document.querySelector = prevQueryOne;
+      if (prevElementsFromPoint === undefined) delete sandbox.document.elementsFromPoint; else sandbox.document.elementsFromPoint = prevElementsFromPoint;
       sandbox.window.location = prevLocation;
       sandbox.console.warn = prevWarn;
       sandbox.console.log = prevLog;

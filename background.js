@@ -4588,6 +4588,9 @@ function readContextMediaTarget() {
     const age = cap ? Date.now() - cap.at : Infinity;
     const media = cap && cap.media;
     if (!(age >= 0 && age < 30000) || !media || typeof media.check !== 'function' || !media.check()) return null;
+    // A blob/MSE or not-yet-loaded player proven by check() is the selected player without an address: the caller decides whether a provider
+    // frame may resolve it (resolveContextMediaTarget keeps the address-less answer apart from the http(s) ones)
+    if (media.kind === 'player' && !media.url) return { url: '', kind: 'player', gestureAt: cap.at };
     const url = new URL(media.url);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     return { url: url.href, kind: String(media.kind || '') };
@@ -4670,6 +4673,9 @@ async function resolveContextMediaTarget(tabId, frameId) {
     });
     const res = results && results[0] && results[0].result;
     if (res && typeof res.url === 'string' && /^https?:\/\//i.test(res.url)) return res;
+    // the document the capture was read in: the frame request for this player is pinned to it
+    // and the gesture it proved (the capture's timestamp): the frame request is bound to that very selection
+    if (res && res.kind === 'player' && res.url === '') return { url: '', kind: 'player', gestureAt: Number.isFinite(res.gestureAt) ? res.gestureAt : null, documentId: typeof results[0].documentId === 'string' ? results[0].documentId : '' };
   } catch (e) {}
   return null;
 }
@@ -5496,7 +5502,9 @@ async function resolveFrameLocalMedia(options = {}) {
     pageUrl = '',
     linkUrl = null,
     mediaType = 'video',
-    documentId = ''
+    documentId = '',
+    requireGesture = false,
+    gestureAt = null
   } = options;
 
   if (!tabId) {
@@ -5517,7 +5525,7 @@ async function resolveFrameLocalMedia(options = {}) {
     // 1. Try sending message to content script in the owning frame
     response = await chrome.tabs.sendMessage(
       tabId,
-      { action: 'RESOLVE_FRAME_MEDIA', clickedSrc, pageUrl, linkUrl, mediaType, frameId: targetFrameId },
+      { action: 'RESOLVE_FRAME_MEDIA', clickedSrc, pageUrl, linkUrl, mediaType, frameId: targetFrameId, ...(requireGesture ? { requireGesture: true, gestureAt } : {}) },
       sendOptions
     );
   } catch (msgErr) {
@@ -5530,7 +5538,7 @@ async function resolveFrameLocalMedia(options = {}) {
         });
         response = await chrome.tabs.sendMessage(
           tabId,
-          { action: 'RESOLVE_FRAME_MEDIA', clickedSrc, pageUrl, linkUrl, mediaType, frameId: targetFrameId },
+          { action: 'RESOLVE_FRAME_MEDIA', clickedSrc, pageUrl, linkUrl, mediaType, frameId: targetFrameId, ...(requireGesture ? { requireGesture: true, gestureAt } : {}) },
           sendOptions
         );
       } catch (injectErr) {
@@ -7242,7 +7250,7 @@ async function resolveMediaTarget(options = {}) {
       } catch (_) {}
     }
 
-    if (!isDirectRedGifs && typeof extractRedGifsIdFromUrl === 'function') {
+    if (!isDirectRedGifs && !options.gesturePlayer && typeof extractRedGifsIdFromUrl === 'function') {
       const redGifsId = extractRedGifsIdFromUrl(videoUrl) ||
                         extractRedGifsIdFromUrl(mediaDesc.linkUrl) ||
                         extractRedGifsIdFromUrl(linkUrl) ||
@@ -7314,15 +7322,15 @@ async function resolveMediaTarget(options = {}) {
       }
     }
 
-    // Never fetch a blob: URL from the service worker. Resolve in the owning frame:
-    if (videoUrl && videoUrl.startsWith('blob:')) {
+    // Never fetch a blob: URL from the service worker. Resolve in the owning frame (also a gesture-proven player that shows no address):
+    if (options.gesturePlayer === true || (videoUrl && videoUrl.startsWith('blob:'))) {
       const frameId = typeof options.frameId === 'number' ? options.frameId : 0;
       let frameRes = null;
       const hostFromUrl = (u) => {
         try { return new URL(u).hostname; } catch(_) { return ''; }
       };
-      const isReddit = isRedditDomain(hostFromUrl(options.pageUrl || mediaDesc.pageUrl || '')) ||
-                       isRedditDomain(hostFromUrl(options.linkUrl || mediaDesc.linkUrl || ''));
+      const isReddit = options.gesturePlayer !== true && (isRedditDomain(hostFromUrl(options.pageUrl || mediaDesc.pageUrl || '')) ||
+                       isRedditDomain(hostFromUrl(options.linkUrl || mediaDesc.linkUrl || '')));
 
       if (options.tabId) {
         if (isReddit) {
@@ -7335,13 +7343,16 @@ async function resolveMediaTarget(options = {}) {
             mediaType: 'video'
           });
         } else {
+          // A gesture-proven address-less player: the request is pinned to the document the capture was read in and to that document's own fresh
+          // selection (a document the frame navigated to meanwhile answers nothing, and never substitutes its sole player)
           frameRes = await resolveFrameLocalMedia({
             tabId: options.tabId,
             frameId,
             clickedSrc: videoUrl,
             pageUrl: options.pageUrl || mediaDesc.pageUrl,
             linkUrl: options.linkUrl || mediaDesc.linkUrl,
-            mediaType: 'video'
+            mediaType: 'video',
+            ...(options.gesturePlayer === true ? { documentId: options.gestureDocumentId || '', requireGesture: true, gestureAt: options.gestureAt } : {})
           });
         }
       }
@@ -10619,9 +10630,22 @@ async function onContextMenuClicked(info, tab) {
     // The proven kind travels with the URL: a page click has no info.mediaType, so a native <video> under an overlay
     // (possibly an extensionless URL) must enter the video path explicitly. Nothing else about validation changes.
     let gestureKind = '';
+    // A URL-less player (blob/MSE) that the gesture proved is admitted only in a frame of RedGIFs itself, where the frame-local resolver
+    // (content_redgifs.js, with its own gesture proof) answers; no address of the page or of a neighbor is used as the selection.
+    let gesturePlayer = false;
+    let gestureDocumentId = '';
+    let gestureAt = null;
     if (!rawImageUrl && !hasMediaAssociation('', rawLinkUrl)) {
       const gestureMedia = await resolveContextMediaTarget(tab?.id, info.frameId);
-      if (gestureMedia && (!isXPageUrl(info.pageUrl || tab?.url) || gestureMedia.kind === 'img')) {
+      if (gestureMedia && gestureMedia.kind === 'player') {
+        const frameIsRedGifs = isRedGifsUrl(info.frameUrl) || (!info.frameUrl && !info.frameId && isRedGifsUrl(info.pageUrl || tab?.url));
+        if (frameIsRedGifs && tab?.id) {
+          gesturePlayer = true;
+          gestureDocumentId = gestureMedia.documentId || '';
+          gestureAt = gestureMedia.gestureAt;
+          console.log('[Image Saver] Плеер RedGIFs без адреса выбран по жесту (разрешение в кадре)');
+        }
+      } else if (gestureMedia && (!isXPageUrl(info.pageUrl || tab?.url) || gestureMedia.kind === 'img')) {
         rawImageUrl = gestureMedia.url;
         gestureKind = gestureMedia.kind === 'video' ? 'video' : '';
         console.log('[Image Saver] Медиа выбрано по жесту (CSS-фон/overlay):', sanitizeUrlForLog(rawImageUrl));
@@ -10629,7 +10653,7 @@ async function onContextMenuClicked(info, tab) {
     }
 
     // 1. Prevent non-media text/navigation links from falling through to page-level OpenGraph metadata.
-    if (!hasMediaAssociation(rawImageUrl, rawLinkUrl)) {
+    if (!gesturePlayer && !hasMediaAssociation(rawImageUrl, rawLinkUrl)) {
       console.log('[Image Saver] Клик контекстного меню вызван без ассоциации с медиа — отмена разрешения');
       // No proven selected target (blank area, text, caption, a plain navigation link, a container): nothing is
       // resolved, probed or saved, before any provider or generic resolver runs. A click on the page entry or on a
@@ -10643,7 +10667,7 @@ async function onContextMenuClicked(info, tab) {
     }
 
     // 2. Prevent duplicate in-flight resolution/download pipelines for the same normalized source media
-    const dedupeKey = rawImageUrl || rawLinkUrl;
+    const dedupeKey = rawImageUrl || rawLinkUrl || `gesture-player:${tab.id}:${info.frameId ?? 0}`;
     if (inFlightRequests.has(dedupeKey)) {
       console.warn('[Image Saver] Запрос на сохранение данного медиа уже выполняется, игнорируем дубликат:', dedupeKey);
       return;
@@ -10672,7 +10696,7 @@ async function onContextMenuClicked(info, tab) {
                         isRedGifsUrl(rawLinkUrl);
       const isTweetThumb = Boolean(resolveTweetVideoThumbUrl(rawImageUrl)) || Boolean(resolveTweetVideoThumbUrl(rawLinkUrl));
       const isXPoster = isXVideoPosterUrl(rawImageUrl) || isXVideoPosterUrl(rawLinkUrl);
-      let isVideo = info.mediaType === 'video' || gestureKind === 'video' || isDirectVideoUrl(rawImageUrl) || isDirectVideoUrl(rawLinkUrl) || isBlob || isRedGifs || isTweetThumb || isXPoster;
+      let isVideo = info.mediaType === 'video' || gestureKind === 'video' || gesturePlayer || isDirectVideoUrl(rawImageUrl) || isDirectVideoUrl(rawLinkUrl) || isBlob || isRedGifs || isTweetThumb || isXPoster;
       let targetMediaUrl = null;
       let mediaResolution = null;
       await fbStage(op, 'resolving', { expectedType: isVideo ? 'video' : 'image' });
@@ -10759,6 +10783,9 @@ async function onContextMenuClicked(info, tab) {
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
             frameId: info.frameId,
+            gesturePlayer,
+            gestureDocumentId,
+            gestureAt,
             redGifsEmbed: redditInlineInfos.has(info) && info.redditInlineRedGifs ? info.redditInlineRedGifs : undefined
           });
           targetMediaUrl = mediaResolution?.targetUrl;

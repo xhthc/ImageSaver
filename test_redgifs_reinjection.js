@@ -227,6 +227,7 @@ function simulateRightClick(env, target) {
   const timeStamp = 5000;
 
   const mousedownEvent = {
+    isTrusted: true,
     button: 2,
     target,
     composedPath: () => path,
@@ -234,6 +235,7 @@ function simulateRightClick(env, target) {
   };
 
   const contextmenuEvent = {
+    isTrusted: true,
     button: 2,
     target,
     composedPath: () => path,
@@ -456,7 +458,7 @@ runTest('Proof 5: Repeated evaluation preserves captured state and resolves thro
   const responsesCard1 = [];
   const msgCard1 = {
     action: 'RESOLVE_FRAME_MEDIA',
-    clickedSrc: 'blob:https://www.redgifs.com/fake-stream-1',
+    clickedSrc: 'https://media.redgifs.com/FirstClip.mp4',
     frameId: 0
   };
   const sender = { tab: { id: 201 }, frameId: 0 };
@@ -490,7 +492,7 @@ runTest('Proof 5: Repeated evaluation preserves captured state and resolves thro
   const responsesCard2 = [];
   const msgCard2 = {
     action: 'RESOLVE_FRAME_MEDIA',
-    clickedSrc: 'blob:https://www.redgifs.com/fake-stream-2',
+    clickedSrc: 'https://media.redgifs.com/SecondClip.mp4',
     frameId: 0
   };
   for (const listener of env.messageListeners) {

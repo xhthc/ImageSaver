@@ -12,6 +12,8 @@
   let lastContextmenuTarget = null;
   let lastContextmenuPath = [];
   let lastContextmenuTime = 0;
+  // What the gesture could have selected, with the source evidence each player showed at that moment (see snapshotGestureVideos)
+  let lastContextmenuEvidence = null;
 
   // Track the last contextmenu target and composedPath per frame
 
@@ -163,66 +165,282 @@
   ].join(', ');
 
   /**
+   * Checks if an element is currently connected to the active document.
+   */
+  function isConnectedNode(node) {
+    if (!node || typeof node !== 'object') return false;
+    if (typeof node.isConnected === 'boolean') return node.isConnected;
+    if (typeof document !== 'undefined' && typeof document.contains === 'function') {
+      try {
+        return document.contains(node);
+      } catch (_) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Checks if a video element or one of its child sources matches the target URL.
+   */
+  function videoMatchesSrc(video, targetSrc) {
+    if (!video || !targetSrc || typeof targetSrc !== 'string') return false;
+    const clean = targetSrc.trim();
+    if (!clean) return false;
+    if (video.currentSrc === clean || video.src === clean) return true;
+    if (video.querySelectorAll) {
+      try {
+        const sources = Array.from(video.querySelectorAll('source'));
+        for (let i = 0; i < sources.length; i++) {
+          const s = sources[i];
+          const sSrc = s.src || (s.getAttribute && s.getAttribute('src'));
+          if (sSrc === clean) return true;
+        }
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  const MAX_GESTURE_VIDEOS = 50;
+
+  /**
+   * What identifies a player's selection: its document and every source address it shows (its own src/currentSrc and the child sources).
+   */
+  function sourceEvidenceOf(video) {
+    const sources = [];
+    try {
+      if (video && video.querySelectorAll) {
+        for (const s of Array.from(video.querySelectorAll('source'))) {
+          sources.push(String(s.src || (s.getAttribute && s.getAttribute('src')) || ''));
+        }
+      }
+    } catch (_) {}
+    return { ownerDocument: (video && video.ownerDocument) || null, src: String((video && video.src) || ''), currentSrc: String((video && video.currentSrc) || ''), sources };
+  }
+
+  function sameSourceEvidence(a, b) {
+    return a.ownerDocument === b.ownerDocument && a.src === b.src && a.currentSrc === b.currentSrc && a.sources.length === b.sources.length && a.sources.every((u, i) => u === b.sources[i]);
+  }
+
+  /**
+   * Records, at the gesture, every connected player the routes of findClickedVideo can select (the target, players in the composed path,
+   * players of the card containers in the path, of the target's closest card and of its parent) with the sources each one shows then.
+   * A player outside this set (added or recycled later) or one whose sources changed afterwards is not the player the user selected.
+   */
+  function snapshotGestureVideos(target, path) {
+    const videos = new Map();
+    const add = (v) => {
+      if (v && typeof v === 'object' && v.tagName === 'VIDEO' && videos.size < MAX_GESTURE_VIDEOS && isConnectedNode(v)) videos.set(v, sourceEvidenceOf(v));
+    };
+    const addWithin = (container) => {
+      if (!container || !container.querySelectorAll || !isConnectedNode(container)) return;
+      try { for (const v of Array.from(container.querySelectorAll('video'))) add(v); } catch (_) {}
+    };
+    try {
+      add(target);
+      for (const el of Array.isArray(path) ? path : []) {
+        add(el);
+        if (el && typeof el.matches === 'function' && el.matches(PLAYER_CARD_SELECTOR)) addWithin(el);
+      }
+      if (target && typeof target === 'object') {
+        addWithin(typeof target.closest === 'function' ? target.closest(PLAYER_CARD_SELECTOR) : null);
+        addWithin(target.parentElement);
+      }
+    } catch (_) {}
+    return { videos };
+  }
+
+  function captureGesture(target, path) {
+    lastContextmenuTarget = target;
+    lastContextmenuPath = Array.isArray(path) ? path : (target ? [target] : []);
+    lastContextmenuTime = Date.now();
+    lastContextmenuEvidence = snapshotGestureVideos(lastContextmenuTarget, lastContextmenuPath);
+  }
+
+  /**
+   * The selected player is still the one the gesture saw: the same node of the same document with the same source evidence.
+   */
+  function selectionProofHolds(video) {
+    const ev = lastContextmenuEvidence;
+    if (!ev || !ev.videos.has(video)) return false;
+    return sameSourceEvidence(ev.videos.get(video), sourceEvidenceOf(video));
+  }
+
+  function connectedDocumentVideos() {
+    return typeof document !== 'undefined' && document.querySelectorAll ? Array.from(document.querySelectorAll('video')).filter(isConnectedNode) : [];
+  }
+
+  /**
+   * A RedGIFs clip address that is not the player's own source (the embed page, the media file of the clip) proves the request only when it
+   * names this frame's own clip (its location, else its canonical metadata) and the player does not show another clip: either its own direct
+   * address is that clip, or it shows none and it is the only player of the frame. Anything else is another clip's request.
+   */
+  function frameClipProof(video, clickedSrc) {
+    if (typeof clickedSrc !== 'string' || !isRedGifsUrl(clickedSrc)) return false;
+    const idOf = (u) => (extractRedGifsIdFromUrl(u) || '').toLowerCase();
+    const clickedId = idOf(clickedSrc);
+    if (!clickedId) return false;
+    let frameOk = typeof window !== 'undefined' && window.location && isRedGifsUrl(window.location.href) && idOf(window.location.href) === clickedId;
+    if (!frameOk && typeof document !== 'undefined' && document.querySelector) {
+      const meta = document.querySelector('meta[property="og:video"], meta[name="twitter:url"], link[rel="canonical"]');
+      const metaUrl = meta?.getAttribute('content') || meta?.getAttribute('href');
+      frameOk = Boolean(metaUrl) && idOf(metaUrl) === clickedId;
+    }
+    if (!frameOk) return false;
+    const evidence = sourceEvidenceOf(video);
+    const ownIds = [evidence.currentSrc, evidence.src, ...evidence.sources].filter(Boolean).map(idOf).filter(Boolean);
+    if (ownIds.some((id) => id !== clickedId)) return false;
+    if (ownIds.length > 0) return true;
+    const videos = connectedDocumentVideos();
+    return videos.length === 1 && videos[0] === video;
+  }
+
+  /**
+   * Whether the address the menu reported can belong to this player: its own source; an opaque stream URL of a player that shows no direct
+   * address (a stream is the runtime buffer of the selected player; a player that shows a direct address names another asset than a stream
+   * it does not hold, and the unchanged-since-gesture proof is applied separately); or the frame clip identity above.
+   */
+  function admitsClickedSrc(video, clickedSrc) {
+    if (!clickedSrc) return true;
+    if (videoMatchesSrc(video, clickedSrc)) return true;
+    if (typeof clickedSrc === 'string' && clickedSrc.startsWith('blob:')) {
+      const e = sourceEvidenceOf(video);
+      return ![e.src, e.currentSrc, ...e.sources].some((u) => u && !u.startsWith('blob:'));
+    }
+    return frameClipProof(video, clickedSrc);
+  }
+
+  /**
+   * Locates a matching video in a container element without guessing among multiple candidates.
+   */
+  function findMatchingVideoInContainer(container, clickedSrc) {
+    if (!container || !container.querySelectorAll || !isConnectedNode(container)) return null;
+    let videos = [];
+    try {
+      videos = Array.from(container.querySelectorAll('video')).filter(isConnectedNode);
+    } catch (_) {
+      return null;
+    }
+    if (videos.length === 0) return null;
+
+    if (clickedSrc) {
+      const matching = videos.filter(v => videoMatchesSrc(v, clickedSrc));
+      if (matching.length === 1) return matching[0];
+      if (matching.length > 1) return null;
+
+      // No player shows the address: the container's only player may still be the one it names (an opaque stream URL for a player that
+      // shows no direct address, or the frame's clip identity); an address that conflicts with the player(s) is refused
+      if (videos.length === 1 && admitsClickedSrc(videos[0], clickedSrc)) return videos[0];
+      return null;
+    }
+
+    if (videos.length === 1) {
+      return videos[0];
+    }
+    return null;
+  }
+
+  /**
+   * Gesture selection: the player the recent contextmenu gesture points at (direct target, composed path, owning card, parent), refused
+   * when the address the menu reported conflicts with it. The caller applies the unchanged-since-gesture proof.
+   */
+  function selectVideoOfGesture(clickedSrc) {
+    // Revalidate gesture target connectivity
+    if (lastContextmenuTarget && !isConnectedNode(lastContextmenuTarget)) {
+      return null;
+    }
+
+    // 1. Direct VIDEO target
+    if (lastContextmenuTarget && lastContextmenuTarget.tagName === 'VIDEO') {
+      return admitsClickedSrc(lastContextmenuTarget, clickedSrc) ? lastContextmenuTarget : null;
+    }
+
+    // 2. Composed path inspection (innermost to outermost)
+    if (Array.isArray(lastContextmenuPath) && lastContextmenuPath.length > 0) {
+      for (const el of lastContextmenuPath) {
+        if (!el || typeof el !== 'object' || !isConnectedNode(el)) continue;
+
+        if (el.tagName === 'VIDEO') {
+          return admitsClickedSrc(el, clickedSrc) ? el : null;
+        }
+
+        if (el.matches && el.matches(PLAYER_CARD_SELECTOR)) {
+          const match = findMatchingVideoInContainer(el, clickedSrc);
+          if (match) return match;
+          const cardVideos = Array.from(el.querySelectorAll ? el.querySelectorAll('video') : []).filter(isConnectedNode);
+          if (cardVideos.length > 0) {
+            return null;
+          }
+        }
+      }
+    }
+
+    // 3. Fallback from contextmenu target container
+    if (lastContextmenuTarget) {
+      const card = lastContextmenuTarget.closest ? lastContextmenuTarget.closest(PLAYER_CARD_SELECTOR) : null;
+      if (card && isConnectedNode(card)) {
+        const match = findMatchingVideoInContainer(card, clickedSrc);
+        if (match) return match;
+        const cardVideos = Array.from(card.querySelectorAll ? card.querySelectorAll('video') : []).filter(isConnectedNode);
+        if (cardVideos.length > 0) return null;
+      }
+
+      const parent = lastContextmenuTarget.parentElement;
+      if (parent && isConnectedNode(parent)) {
+        const match = findMatchingVideoInContainer(parent, clickedSrc);
+        if (match) return match;
+      }
+    }
+
+    // Recent gesture existed but yielded no valid connected video
+    return null;
+  }
+
+  /**
    * Locates the specific clicked video in the owning frame.
    * Does NOT select the first video globally when multiple cards exist.
+   * Strictly enforces connectivity, container bounds and the selected-target proof: with a recent gesture the player must be the one the
+   * gesture saw, with the sources it showed then, whatever the reported address is (a blob: address does not bypass this).
+   * requireGesture (the background admitted an address-less player of ONE document by its capture): this document's own fresh trusted
+   * selection (within the 30 s the admission allows) is the only proof; a document without one (a fresh document of the frame) never
+   * substitutes its sole player.
    */
-  function findClickedVideo(clickedSrc) {
-    const isRecent = (Date.now() - lastContextmenuTime) < 15000;
+  // The selection the background admitted is the capture of generic content_context_target.js (same isolated world, same frame), identified by its
+  // timestamp: a later gesture of this document replaces that record, so an operation admitted for an earlier selection is never redirected to the later one.
+  function admittedCaptureHolds(gestureAt) {
+    const cap = typeof globalThis !== 'undefined' ? globalThis.__imageSaverContextTarget : null;
+    return Number.isFinite(gestureAt) && Boolean(cap) && cap.at === gestureAt;
+  }
 
-    // 1. Inspect elements from composedPath (handles overlay click-traps, custom player controls)
-    if (isRecent && Array.isArray(lastContextmenuPath) && lastContextmenuPath.length > 0) {
-      for (const el of lastContextmenuPath) {
-        if (!el || typeof el !== 'object') continue;
-        if (el.tagName === 'VIDEO') {
-          return el;
-        }
-        if (el.matches && el.matches(PLAYER_CARD_SELECTOR) && el.querySelector) {
-          const videoInCard = el.querySelector('video');
-          if (videoInCard) return videoInCard;
-        }
-      }
+  function findClickedVideo(clickedSrc, requireGesture = false) {
+    const isRecent = (Date.now() - lastContextmenuTime) < (requireGesture ? 30000 : 15000);
+
+    if (isRecent && (lastContextmenuTarget || (Array.isArray(lastContextmenuPath) && lastContextmenuPath.length > 0))) {
+      const video = selectVideoOfGesture(clickedSrc);
+      return video && selectionProofHolds(video) ? video : null;
     }
 
-    // 2. From contextmenu target if available
-    if (lastContextmenuTarget && isRecent) {
-      if (lastContextmenuTarget.tagName === 'VIDEO') {
-        return lastContextmenuTarget;
-      }
-      // Check real player/card ancestor (without stopping at generic div)
-      const card = lastContextmenuTarget.closest ? lastContextmenuTarget.closest(PLAYER_CARD_SELECTOR) : null;
-      if (card && card.querySelector) {
-        const cardVideo = card.querySelector('video');
-        if (cardVideo) return cardVideo;
-      }
+    if (requireGesture) return null;
 
-      // Check direct children or siblings
-      if (lastContextmenuTarget.querySelector) {
-        const childVideo = lastContextmenuTarget.querySelector('video');
-        if (childVideo) return childVideo;
-      }
-      const parent = lastContextmenuTarget.parentElement;
-      if (parent && parent.querySelector) {
-        const siblingVideo = parent.querySelector('video');
-        if (siblingVideo) return siblingVideo;
-      }
-    }
+    // No recent gesture: document search for the exact source, or the frame's single player named by its clip identity.
+    // Nothing was recorded to prove an opaque stream URL against, so a blob: address must be the player's own source.
+    const videos = connectedDocumentVideos();
 
-    // 3. Exact match by clickedSrc in document
-    const videos = typeof document !== 'undefined' && document.querySelectorAll ? Array.from(document.querySelectorAll('video')) : [];
     if (clickedSrc) {
-      for (const v of videos) {
-        if (v.currentSrc === clickedSrc || v.src === clickedSrc) {
-          return v;
-        }
+      const matching = videos.filter(v => videoMatchesSrc(v, clickedSrc));
+      if (matching.length === 1) return matching[0];
+      if (matching.length > 1) return null;
+
+      if (videos.length === 1 && !(typeof clickedSrc === 'string' && clickedSrc.startsWith('blob:')) && frameClipProof(videos[0], clickedSrc)) {
+        return videos[0];
       }
+      return null;
     }
 
-    // 4. Fallback: single video in frame
     if (videos.length === 1) {
       return videos[0];
     }
 
-    // Multiple videos exist and none matched clicked target -> do NOT guess first video
     return null;
   }
 
@@ -337,35 +555,31 @@
 
   // Attach context menu listeners with positive RedGIFs identification
   if (typeof window !== 'undefined' && window.addEventListener) {
+    // Only a genuine user gesture selects: a page-dispatched event must neither replace the recorded proof nor notify the background
     window.addEventListener('mousedown', (event) => {
-      if (event && event.button === 2) {
-        lastContextmenuTarget = event.target;
-        lastContextmenuPath = typeof event.composedPath === 'function' ? event.composedPath() : [];
-        lastContextmenuTime = Date.now();
+      if (event && event.isTrusted === true && event.button === 2) {
+        captureGesture(event.target, typeof event.composedPath === 'function' ? event.composedPath() : []);
         notifyRedGifsContextMenu(lastContextmenuTarget, lastContextmenuPath, event.timeStamp);
       }
     }, true);
 
     window.addEventListener('contextmenu', (event) => {
-      lastContextmenuTarget = event.target;
-      lastContextmenuPath = typeof event.composedPath === 'function' ? event.composedPath() : [];
-      lastContextmenuTime = Date.now();
+      if (!event || event.isTrusted !== true) return;
+      captureGesture(event.target, typeof event.composedPath === 'function' ? event.composedPath() : []);
       notifyRedGifsContextMenu(lastContextmenuTarget, lastContextmenuPath, event.timeStamp);
     }, true);
   }
 
   /**
-   * Helper to check if a URL matches a videoId case-insensitively.
+   * Helper to check if a URL is a file of the clip `videoId`, case-insensitively. The clip is the media file's own identity (its name without
+   * the -mobile/-silent/-poster rendition suffix, see extractRedGifsIdFromUrl): an id that is only a substring of another id, or appears in
+   * a directory, the host or the query, names no clip.
    */
   function matchesVideoId(candidateUrl, videoId, isSingleVideo) {
     if (!candidateUrl) return false;
     if (videoId) {
-      const urlLower = candidateUrl.toLowerCase();
-      const idLower = videoId.toLowerCase();
-      if (urlLower.includes(idLower)) return true;
       const extracted = extractRedGifsIdFromUrl(candidateUrl);
-      if (extracted && extracted.toLowerCase() === idLower) return true;
-      return false;
+      return Boolean(extracted) && extracted.toLowerCase() === String(videoId).replace(/-(?:mobile|silent|poster)$/i, '').toLowerCase();
     }
     return Boolean(isSingleVideo);
   }
@@ -500,7 +714,9 @@
     const allVideos = (typeof document !== 'undefined' && document.querySelectorAll) ? Array.from(document.querySelectorAll('video')) : [];
     const isSingleVideo = allVideos.length === 1;
 
-    const targetVideo = findClickedVideo(clickedSrc);
+    const requireGesture = options.requireGesture === true;
+    // an operation bound to an admitted selection (requireGesture) answers only while that selection is still the document's latest one
+    const targetVideo = !requireGesture || admittedCaptureHolds(options.gestureAt) ? findClickedVideo(clickedSrc, requireGesture) : null;
 
     if (!targetVideo) {
       inspectedCategories.push('video_discovery');
@@ -707,9 +923,12 @@
           } catch (_) {}
         }
 
-        // B. Regex fallback
+        // B. Regex fallback: the complete address up to its delimiter, query included (it may carry the request's authorization); the
+        // extension and the host are validated on the parsed address, never by where the match happens to end
         if (rawCandidates.length < MAX_COLLECTED_CANDIDATES) {
-          const urlMatches = decoded.match(/https?:\/\/[a-zA-Z0-9_.-]*redgifs\.com\/[^"'\s<>\\]+\.(?:mp4|webm|mov|m4v)/gi) || [];
+          // a quoted address is exactly what the quotes hold; only an unquoted address loses the punctuation of its surrounding syntax
+          const urlMatches = Array.from(decoded.matchAll(/(["'`])(https?:\/\/[a-zA-Z0-9_.-]*redgifs\.com\/[^\s<>\\]*?)\1|(https?:\/\/[a-zA-Z0-9_.-]*redgifs\.com\/[^"'`\s<>\\]+)/gi),
+            (m) => (m[2] !== undefined ? m[2] : m[3].replace(/[)\]};,]+$/, '')));
           for (const rawMatch of urlMatches) {
             if (rawCandidates.length >= MAX_COLLECTED_CANDIDATES) break;
             if (isValidDirectVideoUrl(rawMatch)) {
@@ -877,19 +1096,20 @@
     return clipId;
   }
 
-  async function enrichWithProviderAudio(base, clipId, clickedSrc) {
+  async function enrichWithProviderAudio(base, clipId, clickedSrc, requireGesture = false, gestureAt = null) {
     const evidence = base.candidateAudio || {};
     const hrefBefore = window.location.href;
     const docBefore = typeof document !== 'undefined' ? document : null;
-    const videoBefore = findClickedVideo(clickedSrc);
+    const videoBefore = findClickedVideo(clickedSrc, requireGesture);
     const srcBefore = videoBefore ? (videoBefore.src || '') : '';
     const currentSrcBefore = videoBefore ? (videoBefore.currentSrc || '') : '';
 
     const checkContinuity = () => {
+      if (requireGesture && !admittedCaptureHolds(gestureAt)) return false;
       if (window.location.href !== hrefBefore) return false;
       if (typeof document !== 'undefined' && docBefore && document !== docBefore) return false;
       if (videoBefore) {
-        if (findClickedVideo(clickedSrc) !== videoBefore) return false;
+        if (findClickedVideo(clickedSrc, requireGesture) !== videoBefore) return false;
         if (typeof videoBefore.isConnected === 'boolean' && !videoBefore.isConnected) return false;
         if ((videoBefore.src || '') !== srcBefore) return false;
         if ((videoBefore.currentSrc || '') !== currentSrcBefore) return false;
@@ -936,7 +1156,7 @@
   async function resolveFrameRedGifsMediaWithProvider(clickedSrc = '', options = {}) {
     const base = resolveFrameRedGifsMedia(clickedSrc, options);
     const clipId = providerClipToAsk(base);
-    return clipId ? enrichWithProviderAudio(base, clipId, clickedSrc) : base;
+    return clipId ? enrichWithProviderAudio(base, clipId, clickedSrc, options.requireGesture === true, options.gestureAt) : base;
   }
 
   // Register frame-local message listener
@@ -961,11 +1181,12 @@
           }
         });
         try {
-          const base = resolveFrameRedGifsMedia(message.clickedSrc, { frameId: message.frameId });
+          const requireGesture = message.requireGesture === true;
+          const base = resolveFrameRedGifsMedia(message.clickedSrc, { frameId: message.frameId, requireGesture, gestureAt: message.gestureAt });
           const clipId = providerClipToAsk(base);
           // the answer is immediate unless the provider's audio declaration can change it (only then it is asynchronous)
           if (!clipId) sendResponse(base);
-          else enrichWithProviderAudio(base, clipId, message.clickedSrc).then(sendResponse, failed);
+          else enrichWithProviderAudio(base, clipId, message.clickedSrc, requireGesture, message.gestureAt).then(sendResponse, failed);
         } catch (e) {
           failed(e);
         }
@@ -994,10 +1215,6 @@
     globalThis.MAX_JSON_TRAVERSAL_NODES = MAX_JSON_TRAVERSAL_NODES;
     globalThis.MAX_JSON_DEPTH = MAX_JSON_DEPTH;
     globalThis.MAX_COLLECTED_CANDIDATES = MAX_COLLECTED_CANDIDATES;
-    globalThis.setLastContextmenuTarget = (target, path = []) => {
-      lastContextmenuTarget = target;
-      lastContextmenuPath = Array.isArray(path) ? path : (target ? [target] : []);
-      lastContextmenuTime = Date.now();
-    };
+    globalThis.setLastContextmenuTarget = (target, path = []) => captureGesture(target, path);
   }
 })();
