@@ -752,7 +752,10 @@
 
     const requireGesture = options.requireGesture === true;
     // an operation bound to an admitted selection (requireGesture) answers only while that selection is still the document's latest one
-    const targetVideo = !requireGesture || admittedCaptureHolds(options.gestureAt) ? findClickedVideo(clickedSrc, requireGesture) : null;
+    // an inline Save names its player itself (the live, one-shot target of this document); the menu's gesture proof is never used for it
+    const targetVideo = options.explicit
+      ? (inlineHolds(options.explicit) ? options.explicit.video : null)
+      : (!requireGesture || admittedCaptureHolds(options.gestureAt) ? findClickedVideo(clickedSrc, requireGesture) : null);
 
     if (!targetVideo) {
       inspectedCategories.push('video_discovery');
@@ -1197,21 +1200,23 @@
     };
   }
 
-  async function enrichWithProviderAudio(base, clipId, clickedSrc, requireGesture = false, gestureAt = null) {
+  async function enrichWithProviderAudio(base, clipId, clickedSrc, requireGesture = false, gestureAt = null, explicit = null) {
     const evidence = base.candidateAudio || {};
     const hrefBefore = window.location.href;
     const docBefore = typeof document !== 'undefined' ? document : null;
-    const videoBefore = findClickedVideo(clickedSrc, requireGesture);
+    const selectedNow = () => (explicit ? (inlineHolds(explicit) ? explicit.video : null) : findClickedVideo(clickedSrc, requireGesture));
+    const videoBefore = selectedNow();
     const srcBefore = videoBefore ? (videoBefore.src || '') : '';
     const currentSrcBefore = videoBefore ? (videoBefore.currentSrc || '') : '';
     const posterBefore = videoBefore ? posterKeyOf(videoBefore) : '';
 
     const checkContinuity = () => {
+      if (explicit && !inlineHolds(explicit)) return false;
       if (requireGesture && !admittedCaptureHolds(gestureAt)) return false;
       if (window.location.href !== hrefBefore) return false;
       if (typeof document !== 'undefined' && docBefore && document !== docBefore) return false;
       if (videoBefore) {
-        if (findClickedVideo(clickedSrc, requireGesture) !== videoBefore) return false;
+        if (selectedNow() !== videoBefore) return false;
         if (typeof videoBefore.isConnected === 'boolean' && !videoBefore.isConnected) return false;
         if ((videoBefore.src || '') !== srcBefore) return false;
         if ((videoBefore.currentSrc || '') !== currentSrcBefore) return false;
@@ -1261,8 +1266,273 @@
   async function resolveFrameRedGifsMediaWithProvider(clickedSrc = '', options = {}) {
     const base = resolveFrameRedGifsMedia(clickedSrc, options);
     const clipId = providerClipToAsk(base);
-    return clipId ? enrichWithProviderAudio(base, clipId, clickedSrc, options.requireGesture === true, options.gestureAt) : base;
+    return clipId ? enrichWithProviderAudio(base, clipId, clickedSrc, options.requireGesture === true, options.gestureAt, options.explicit || null) : base;
   }
+
+  // ---- Inline Save control on own-site players (REDGIFS-INLINE-01) ----
+  // Every eligible `.Player` (it owns exactly one video) gets its own real <button> as its last child, so keyboard users reach it in the native tab
+  // order (after the player's own focusable children) without hovering first. The button is hidden (transparent, no pointer events, but focusable) until
+  // the pointer rests on its player or it takes the focus; it never covers anything while hidden. Only the top document of the provider's own site is
+  // eligible (no Reddit document, no embedded /ifr/ player). Mounting, hovering and focusing do no provider or background work. A trusted activation
+  // stores a one-shot target for the live player (node, source and poster evidence, document location) and sends only its token and the player's own
+  // key; the worker then asks this same document to resolve THAT player (RESOLVE_FRAME_MEDIA with inlineToken), so the context-menu capture is neither
+  // read nor written and the player must survive every asynchronous step unchanged.
+  const INLINE = { Z: 2147483000, HOVER_MS: 60, POLL_MS: 250, SCAN_MS: 100, TOKEN_TTL: 30000, MAX_PENDING: 8, MAX_ITEMS: 100, CLICK_GAP: 1500 };
+  const INLINE_TOKEN = /^[a-f0-9]{32}$/;
+  const inl = { items: new Map(), active: null, timer: null, scanTimer: null, poll: null, observer: null, x: 0, y: 0, moved: false, watch: false, pending: new Map() };
+
+  function inlineAllowed() {
+    try {
+      return isProviderOwnOrigin() && window.top === window && !/^\/ifr\//i.test(window.location.pathname);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // The eligible player at a node: the `.Player` that owns exactly one connected video
+  function inlinePlayerOf(node) {
+    try {
+      const owner = node && typeof node.closest === 'function' ? node.closest('.Player') : null;
+      if (!owner || !isConnectedNode(owner)) return null;
+      const videos = Array.from(owner.querySelectorAll('video')).filter(isConnectedNode);
+      return videos.length === 1 ? { owner, video: videos[0] } : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // The eligible player under a point. Whatever lies above it must belong to its own card (.GifPreview or .TapTracker, else the Player itself; a
+  // generic parent proves nothing): an unrelated dialog, menu or navigation layer over the player owns the point, and the hidden player behind it
+  // is never selected. `occluded` tells such a player apart from an empty point
+  function inlinePlayerAt(x, y) {
+    const stack = Array.from(document.elementsFromPoint(x, y)).slice(0, 24);
+    for (let i = 0; i < stack.length; i++) {
+      const player = inlinePlayerOf(stack[i]);
+      if (!player) continue;
+      const card = player.owner.closest('.GifPreview') || player.owner.closest('.TapTracker') || player.owner;
+      const owned = stack.slice(0, i).every((el) => typeof card.contains === 'function' && card.contains(el));
+      return { player: owned ? player : null, occluded: !owned };
+    }
+    return { player: null, occluded: false };
+  }
+
+  // The live player is still the one a control was shown for or a token was issued for: same nodes, same document location, same source and poster evidence
+  function inlineHolds(t) {
+    const p = t && t.video ? inlinePlayerOf(t.video) : null;
+    return Boolean(p && p.owner === t.owner && p.video === t.video && inlineAllowed() && window.location.href === t.href && t.evidence && sameSourceEvidence(t.evidence, sourceEvidenceOf(t.video)));
+  }
+
+  // One-shot: a token resolves one request, once, while its player still holds
+  function takeInlineTarget(token) {
+    const t = typeof token === 'string' && INLINE_TOKEN.test(token) ? inl.pending.get(token) : null;
+    if (!t) return null;
+    inl.pending.delete(token);
+    return Date.now() - t.at <= INLINE.TOKEN_TTL && inlineHolds(t) ? t : null;
+  }
+
+  const inlineRandom = (bytes) => {
+    if (typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') return '';
+    return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  // The refresh interval lives only while a control is visible or a player waits behind a layer
+  function inlineSettle() {
+    if (!inl.active && !inl.watch && inl.poll) { clearInterval(inl.poll); inl.poll = null; }
+  }
+
+  // Hidden = transparent and not hit-testable, still focusable
+  function inlineConceal(item) {
+    item.shown = null;
+    item.host.style.setProperty('opacity', '0');
+    item.host.style.setProperty('pointer-events', 'none');
+    if (inl.active === item) inl.active = null;
+    inlineSettle();
+  }
+
+  function inlineDrop(item) {
+    inlineConceal(item);
+    if (typeof item.host.remove === 'function') item.host.remove();
+    inl.items.delete(item.owner);
+  }
+
+  // Top-left corner of the player, inside the viewport; false when the player is not visibly laid out
+  function inlinePlace(item) {
+    const r = typeof item.owner.getBoundingClientRect === 'function' ? item.owner.getBoundingClientRect() : null;
+    if (!r || !(r.width >= 80 && r.height >= 60) || r.bottom < 0 || r.right < 0 || r.top > window.innerHeight || r.left > window.innerWidth) return false;
+    item.host.style.setProperty('left', `${Math.max(r.left, 0) + 8}px`);
+    item.host.style.setProperty('top', `${Math.max(r.top, 0) + 8}px`);
+    return true;
+  }
+
+  // The one bounded refresh (every 250 ms, only while a control is visible or a player waits behind a layer): a changed or moved player is dropped,
+  // and the pointer's place is judged again, so a layer that appears, goes or changes visibility under a stationary pointer is noticed. The control
+  // the keyboard is on is never taken away by the pointer
+  function inlineTick() {
+    const item = inl.active;
+    if (item && (document.hidden || !item.shown || !inlineHolds(item.shown) || !inlinePlace(item))) inlineConceal(item);
+    inlineEvaluate();
+  }
+
+  // Show the control of one player (hover or focus); at most one control is visible
+  function inlineReveal(item) {
+    const player = inlinePlayerOf(item.owner);
+    if (!player) { inlineDrop(item); return; }
+    if (inl.active && inl.active !== item) inlineConceal(inl.active);
+    // A selection generation is the player with the source and poster it shows now. A changed one (the same node recycled to another clip) is a
+    // request of its own: fresh throttle and duplicate key. The same one, however often the control is hidden and shown, keeps both
+    const evidence = sourceEvidenceOf(player.video);
+    if (!(item.gen && item.gen.video === player.video && sameSourceEvidence(item.gen.evidence, evidence))) {
+      item.gen = { video: player.video, evidence };
+      item.id = inlineRandom(8);
+      item.busyAt = 0;
+    }
+    if (!(item.shown && item.shown.video === player.video && inlineHolds(item.shown))) {
+      item.shown = { video: player.video, owner: item.owner, evidence, href: window.location.href };
+    }
+    if (!inlinePlace(item)) { inlineConceal(item); return; }
+    inl.active = item;
+    item.host.style.setProperty('opacity', '1');
+    item.host.style.setProperty('pointer-events', 'auto');
+    if (!inl.poll) inl.poll = setInterval(inlineTick, INLINE.POLL_MS);
+  }
+
+  function inlineMount(owner) {
+    let item = inl.items.get(owner);
+    if (item) return item;
+    if (inl.items.size >= INLINE.MAX_ITEMS || !inlineRandom(1)) return null;
+    const host = document.createElement('div');
+    host.setAttribute('data-image-saver-inline', 'redgifs');
+    for (const [k, v] of [['position', 'fixed'], ['z-index', String(INLINE.Z)], ['margin', '0'], ['padding', '0'], ['opacity', '0'], ['pointer-events', 'none']]) host.style.setProperty(k, v);
+    const root = typeof host.attachShadow === 'function' ? host.attachShadow({ mode: 'closed' }) : host;
+    const btn = document.createElement('button');
+    btn.setAttribute('type', 'button');
+    btn.setAttribute('aria-label', 'Image Saver: Save this clip');
+    btn.setAttribute('title', 'Image Saver: Save this clip');
+    btn.textContent = 'Save';
+    for (const [k, v] of [['all', 'initial'], ['box-sizing', 'border-box'], ['height', '28px'], ['padding', '0 10px'], ['border-radius', '9999px'],
+      ['border', '1px solid rgba(255,255,255,0.55)'], ['background', 'rgba(15,20,25,0.78)'], ['color', '#fff'], ['cursor', 'pointer'],
+      ['font', '600 12px/1 system-ui, -apple-system, Segoe UI, sans-serif']]) btn.style.setProperty(k, v);
+    for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick', 'touchstart', 'touchend']) {
+      btn.addEventListener(type, (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); });
+    }
+    item = { owner, host, btn, id: inlineRandom(8), shown: null, focused: false, busyAt: 0, busyTimer: null };
+    btn.addEventListener('click', (e) => inlineOnClick(item, e), true);
+    btn.addEventListener('keydown', (e) => inlineOnButtonKey(item, e), true);
+    // visible focus (the reset above removes the browser's ring), and the control follows the focus
+    btn.addEventListener('focus', () => {
+      item.focused = true;
+      btn.style.setProperty('outline', '2px solid #fff');
+      btn.style.setProperty('outline-offset', '2px');
+      inlineReveal(item);
+    });
+    btn.addEventListener('blur', () => {
+      item.focused = false;
+      btn.style.setProperty('outline', 'none');
+      if (!inl.timer) inl.timer = setTimeout(inlineHoverTimer, INLINE.HOVER_MS);
+    });
+    root.appendChild(btn);
+    owner.appendChild(host);
+    inl.items.set(owner, item);
+    return item;
+  }
+
+  // Every eligible player has its control; a recycled, removed or no longer eligible player loses it
+  function inlineScan() {
+    inl.scanTimer = null;
+    try {
+      if (!inlineAllowed()) return;
+      for (const [owner, item] of Array.from(inl.items)) if (!isConnectedNode(owner) || !inlinePlayerOf(owner)) inlineDrop(item);
+      for (const owner of Array.from(document.querySelectorAll('.Player')).slice(0, INLINE.MAX_ITEMS)) if (inlinePlayerOf(owner)) inlineMount(owner);
+      // a page change under a resting pointer (a layer opening or closing, a recycled player) is judged against the pointer's last place
+      if (inl.moved && (!inl.active || !inl.active.focused)) inlineEvaluate();
+    } catch (_) {}
+  }
+
+  const inlineScheduleScan = () => { if (!inl.scanTimer) inl.scanTimer = setTimeout(inlineScan, INLINE.SCAN_MS); };
+
+  function inlineEvaluate() {
+    try {
+      if (document.hidden || !inlineAllowed() || typeof document.elementsFromPoint !== 'function') {
+        inl.watch = false;
+        if (inl.active && !inl.active.focused) inlineConceal(inl.active);
+        return;
+      }
+      const at = inlinePlayerAt(inl.x, inl.y);
+      const item = at.player ? inlineMount(at.player.owner) : null;
+      inl.watch = at.occluded; // a player behind a layer is watched until the layer goes
+      if (inl.active && inl.active.focused && inl.active !== item) return; // the control the keyboard is on stays
+      if (item) inlineReveal(item);
+      else if (inl.active && !inl.active.focused) inlineConceal(inl.active);
+      if (inl.watch && !inl.poll) inl.poll = setInterval(inlineTick, INLINE.POLL_MS);
+    } catch (_) {
+      inl.watch = false;
+      if (inl.active && !inl.active.focused) inlineConceal(inl.active);
+    } finally {
+      inlineSettle(); // every exit: early returns and exceptions included
+    }
+  }
+
+  function inlineHoverTimer() {
+    inl.timer = null;
+    inlineEvaluate();
+  }
+
+  function inlineOnMove(e) {
+    if (!e || (e.pointerType && e.pointerType !== 'mouse') || !inlineAllowed()) return;
+    inl.x = e.clientX;
+    inl.y = e.clientY;
+    inl.moved = true;
+    if (!inl.timer) inl.timer = setTimeout(inlineHoverTimer, INLINE.HOVER_MS);
+  }
+
+  // Escape hides the control and leaves it: the focus is released in place, so the next Tab continues from there
+  function inlineOnButtonKey(item, e) {
+    if (!e || e.key !== 'Escape') return;
+    if (typeof e.preventDefault === 'function') e.preventDefault();
+    inlineConceal(item);
+    if (typeof item.btn.blur === 'function') item.btn.blur();
+  }
+
+  function inlineOnClick(item, e) {
+    if (e) {
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+    }
+    // only a genuine mouse or keyboard activation of the control; a click the page dispatches sends nothing
+    if (!e || e.isTrusted !== true) return;
+    const s = item.shown;
+    if (!s || !inlineHolds(s)) { inlineConceal(item); return; }
+    // a repeated activation of the SAME player inside the gap is one request; another player is a request of its own
+    const now = Date.now();
+    if (now - item.busyAt < INLINE.CLICK_GAP) return;
+    const token = inlineRandom(16);
+    if (!token) return;
+    item.busyAt = now;
+    for (const [k, v] of inl.pending) if (now - v.at > INLINE.TOKEN_TTL) inl.pending.delete(k);
+    while (inl.pending.size >= INLINE.MAX_PENDING) inl.pending.delete(inl.pending.keys().next().value);
+    inl.pending.set(token, { video: s.video, owner: s.owner, evidence: s.evidence, href: s.href, at: now });
+    try {
+      const sent = chrome.runtime.sendMessage({ action: 'REDGIFS_INLINE_SAVE', token, player: item.id });
+      if (sent && typeof sent.catch === 'function') sent.catch(() => {});
+    } catch (_) {
+      inl.pending.delete(token);
+    }
+    item.btn.setAttribute('aria-busy', 'true');
+    if (item.busyTimer) clearTimeout(item.busyTimer);
+    item.busyTimer = setTimeout(() => { item.busyTimer = null; item.btn.removeAttribute('aria-busy'); }, INLINE.CLICK_GAP);
+  }
+
+  // Own site, top document only: nothing at all is registered on a Reddit document or an embedded player
+  try {
+    if (inlineAllowed() && typeof window.addEventListener === 'function') {
+      window.addEventListener('pointermove', inlineOnMove, { capture: true, passive: true });
+      if (typeof MutationObserver === 'function' && typeof document !== 'undefined' && document.documentElement) {
+        inl.observer = new MutationObserver(inlineScheduleScan);
+        inl.observer.observe(document.documentElement, { childList: true, subtree: true });
+      }
+      inlineScheduleScan();
+    }
+  } catch (_) {}
 
   // Register frame-local message listener
   if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
@@ -1287,11 +1557,18 @@
         });
         try {
           const requireGesture = message.requireGesture === true;
-          const base = resolveFrameRedGifsMedia(message.clickedSrc, { frameId: message.frameId, requireGesture, gestureAt: message.gestureAt });
+          let explicit = null;
+          if (message.inlineToken !== undefined) {
+            // an inline Save: only this extension's worker can resolve a token, and a refused token falls back to nothing (never to a gesture)
+            const fromWorker = !sender || (!sender.tab && (!chrome.runtime.id || sender.id === chrome.runtime.id));
+            explicit = fromWorker ? takeInlineTarget(message.inlineToken) : null;
+            if (!explicit) { failed({ message: 'INLINE_TARGET_REFUSED' }); return true; }
+          }
+          const base = resolveFrameRedGifsMedia(message.clickedSrc, { frameId: message.frameId, requireGesture, gestureAt: message.gestureAt, explicit });
           const clipId = providerClipToAsk(base);
           // the answer is immediate unless the provider's audio declaration can change it (only then it is asynchronous)
           if (!clipId) sendResponse(base);
-          else enrichWithProviderAudio(base, clipId, message.clickedSrc, requireGesture, message.gestureAt).then(sendResponse, failed);
+          else enrichWithProviderAudio(base, clipId, message.clickedSrc, requireGesture, message.gestureAt, explicit).then(sendResponse, failed);
         } catch (e) {
           failed(e);
         }
@@ -1321,5 +1598,6 @@
     globalThis.MAX_JSON_DEPTH = MAX_JSON_DEPTH;
     globalThis.MAX_COLLECTED_CANDIDATES = MAX_COLLECTED_CANDIDATES;
     globalThis.setLastContextmenuTarget = (target, path = []) => captureGesture(target, path);
+    globalThis.redgifsInlineState = inl;
   }
 })();

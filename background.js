@@ -5504,7 +5504,8 @@ async function resolveFrameLocalMedia(options = {}) {
     mediaType = 'video',
     documentId = '',
     requireGesture = false,
-    gestureAt = null
+    gestureAt = null,
+    inlineToken = ''
   } = options;
 
   if (!tabId) {
@@ -5525,7 +5526,7 @@ async function resolveFrameLocalMedia(options = {}) {
     // 1. Try sending message to content script in the owning frame
     response = await chrome.tabs.sendMessage(
       tabId,
-      { action: 'RESOLVE_FRAME_MEDIA', clickedSrc, pageUrl, linkUrl, mediaType, frameId: targetFrameId, ...(requireGesture ? { requireGesture: true, gestureAt } : {}) },
+      { action: 'RESOLVE_FRAME_MEDIA', clickedSrc, pageUrl, linkUrl, mediaType, frameId: targetFrameId, ...(requireGesture ? { requireGesture: true, gestureAt } : {}), ...(inlineToken ? { inlineToken } : {}) },
       sendOptions
     );
   } catch (msgErr) {
@@ -5538,7 +5539,7 @@ async function resolveFrameLocalMedia(options = {}) {
         });
         response = await chrome.tabs.sendMessage(
           tabId,
-          { action: 'RESOLVE_FRAME_MEDIA', clickedSrc, pageUrl, linkUrl, mediaType, frameId: targetFrameId, ...(requireGesture ? { requireGesture: true, gestureAt } : {}) },
+          { action: 'RESOLVE_FRAME_MEDIA', clickedSrc, pageUrl, linkUrl, mediaType, frameId: targetFrameId, ...(requireGesture ? { requireGesture: true, gestureAt } : {}), ...(inlineToken ? { inlineToken } : {}) },
           sendOptions
         );
       } catch (injectErr) {
@@ -5568,6 +5569,11 @@ async function resolveFrameLocalMedia(options = {}) {
         }
       }
       const targetState = candidateAudio[validated.url] || 'unknown';
+      // an inline Save must receive a file of the very clip the frame says it resolved
+      if (inlineToken && !(clipId && redGifsClipKey(validated.url) === clipId)) {
+        console.warn('[Image Saver] Inline RedGIFs answer does not name its selected clip: refused');
+        return { success: false, error: 'UNRESOLVED_BLOB_MEDIA', diagnostics: response.diagnostics || {} };
+      }
       return {
         success: true,
         targetUrl: validated.url,
@@ -7352,7 +7358,7 @@ async function resolveMediaTarget(options = {}) {
             pageUrl: options.pageUrl || mediaDesc.pageUrl,
             linkUrl: options.linkUrl || mediaDesc.linkUrl,
             mediaType: 'video',
-            ...(options.gesturePlayer === true ? { documentId: options.gestureDocumentId || '', requireGesture: true, gestureAt: options.gestureAt } : {})
+            ...(options.gesturePlayer === true ? { documentId: options.gestureDocumentId || '', requireGesture: !options.inlineToken, gestureAt: options.gestureAt, inlineToken: options.inlineToken || '' } : {})
           });
         }
       }
@@ -10565,7 +10571,7 @@ async function onContextMenuClicked(info, tab) {
     // bypasses it, and no provider recovery, probe or download runs before it passes.
     const claimsMediaLink = !rawImageUrl && hasMediaAssociation('', rawLinkUrl);
     // An inline Reddit click (UX-11-RD) was proven by the document right before this call; a gesture capture, possibly of another tile, must not decide it.
-    const owner = redditInlineInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '' });
+    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '' });
     if (owner === 'refused' || owner === 'preview') {
       console.warn(owner === 'preview'
         ? '[Image Saver] The selected video is a seek preview, not the media of the post: save refused without requests'
@@ -10635,7 +10641,14 @@ async function onContextMenuClicked(info, tab) {
     let gesturePlayer = false;
     let gestureDocumentId = '';
     let gestureAt = null;
-    if (!rawImageUrl && !hasMediaAssociation('', rawLinkUrl)) {
+    // An own-site inline Save (REDGIFS-INLINE-01): the sending document proves the player itself, bound by a one-shot token and its document id
+    const inlineRedGifs = redgifsInlineInfos.has(info) ? info.redgifsInline : null;
+    let inlineToken = '';
+    if (inlineRedGifs) {
+      gesturePlayer = true;
+      gestureDocumentId = inlineRedGifs.documentId;
+      inlineToken = inlineRedGifs.token;
+    } else if (!rawImageUrl && !hasMediaAssociation('', rawLinkUrl)) {
       const gestureMedia = await resolveContextMediaTarget(tab?.id, info.frameId);
       if (gestureMedia && gestureMedia.kind === 'player') {
         const frameIsRedGifs = isRedGifsUrl(info.frameUrl) || (!info.frameUrl && !info.frameId && isRedGifsUrl(info.pageUrl || tab?.url));
@@ -10667,7 +10680,10 @@ async function onContextMenuClicked(info, tab) {
     }
 
     // 2. Prevent duplicate in-flight resolution/download pipelines for the same normalized source media
-    const dedupeKey = rawImageUrl || rawLinkUrl || `gesture-player:${tab.id}:${info.frameId ?? 0}`;
+    // an inline Save is keyed by the document and the very player it came from: another player's save is a request of its own, a repeat of the same player is a duplicate
+    const dedupeKey = rawImageUrl || rawLinkUrl || (inlineRedGifs
+      ? `gesture-player:${tab.id}:${info.frameId ?? 0}:${inlineRedGifs.documentId}:${inlineRedGifs.player}`
+      : `gesture-player:${tab.id}:${info.frameId ?? 0}`);
     if (inFlightRequests.has(dedupeKey)) {
       console.warn('[Image Saver] Запрос на сохранение данного медиа уже выполняется, игнорируем дубликат:', dedupeKey);
       return;
@@ -10786,6 +10802,7 @@ async function onContextMenuClicked(info, tab) {
             gesturePlayer,
             gestureDocumentId,
             gestureAt,
+            inlineToken,
             redGifsEmbed: redditInlineInfos.has(info) && info.redditInlineRedGifs ? info.redditInlineRedGifs : undefined
           });
           targetMediaUrl = mediaResolution?.targetUrl;
@@ -11378,6 +11395,9 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
 // owner gate and the cursor query: the fresh proof replaces them, and a stale context-menu capture must never decide an inline click.
 // Contract: docs/changes/2026-10-04-ux11-rd-backend.md.
 const redditInlineInfos = new WeakSet();
+const redgifsInlineInfos = new WeakSet();
+const REDGIFS_INLINE_MAX_ACTIVE = 4;
+let redgifsInlineActive = 0;
 const redditInlineBusy = new Set();
 const REDDIT_INLINE_TOKEN = /^[a-f0-9]{32}$/;
 const REDDIT_INLINE_OWNER_ID = /^t3_[a-z0-9]{1,12}$/;
@@ -11602,10 +11622,56 @@ async function handleRedditInlineSaveAll(message, sender) {
   }
 }
 
+// REDGIFS-INLINE-01: the inline Save control of the provider's own site. The content script sends only a one-shot token. The sender must be the
+// extension's own content script in the TOP document of www.redgifs.com (never an embed or another site), the active tab, with a document id; the
+// token travels back to that frame and document (RESOLVE_FRAME_MEDIA), which resolves the exact player it issued it for, so the context-menu capture
+// is never read. The rest is the shared menu pipeline (resolution, verification, folders, download, feedback).
+function redgifsInlineSenderOk(message, sender) {
+  if (!isContentScriptSender(sender) || sender.tab.active !== true || sender.frameId !== 0) return false;
+  if (typeof sender.documentId !== 'string' || !sender.documentId) return false;
+  if (typeof message.token !== 'string' || !/^[a-f0-9]{32}$/.test(message.token)) return false;
+  if (typeof message.player !== 'string' || !/^[a-f0-9]{16}$/.test(message.player)) return false;
+  try {
+    const u = new URL(sender.url);
+    return u.protocol === 'https:' && u.hostname === 'www.redgifs.com' && !/^\/ifr\//i.test(u.pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
+async function handleRedgifsInlineSave(message, sender) {
+  if (!redgifsInlineSenderOk(message, sender)) return;
+  // concurrent duplicates of one player: the shared pipeline's in-flight key (document and player key, see onContextMenuClicked) suppresses a second save
+  const info = {
+    menuItemId: 'save-image-item',
+    pageUrl: sender.url,
+    frameUrl: sender.url,
+    frameId: sender.frameId,
+    mediaType: 'video',
+    redgifsInline: { token: message.token, documentId: sender.documentId, player: message.player }
+  };
+  // at most a few saves resolve at once; one more is a visible failure, never a silent drop
+  if (redgifsInlineActive >= REDGIFS_INLINE_MAX_ACTIVE) {
+    const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, '') });
+    await fbFail(op, { stage: 'resolve', code: 'RATE_LIMIT' });
+    await fbBadgeReporter(op)('ERR', '#ef4444');
+    return;
+  }
+  redgifsInlineActive++;
+  try {
+    redgifsInlineInfos.add(info);
+    await onContextMenuClicked(info, sender.tab);
+  } finally {
+    redgifsInlineActive--;
+  }
+}
+
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender) => {
     if (!message) return;
-    if (message.action === 'REDDIT_INLINE_SAVE') {
+    if (message.action === 'REDGIFS_INLINE_SAVE') {
+      handleRedgifsInlineSave(message, sender).catch((e) => console.warn('[Image Saver] Inline RedGIFs Save failed:', e?.message || e));
+    } else if (message.action === 'REDDIT_INLINE_SAVE') {
       handleRedditInlineSave(message, sender).catch((e) => console.warn('[Image Saver] Inline Reddit Save failed:', e?.message || e));
     } else if (message.action === 'REDDIT_INLINE_SAVE_ALL') {
       handleRedditInlineSaveAll(message, sender).catch((e) => console.warn('[Image Saver] Inline Reddit Save all failed:', e?.message || e));
