@@ -1,0 +1,72 @@
+{
+  "provenance": {
+    "sourceUrl": "https://www.reddit.com/r/ihatethissmug/comments/1wsl6h3/i_hate_this_type_of_reaction_gifmeme/",
+    "observedDate": "2026-10-05",
+    "description": "Observed 8-image gallery on r/ihatethissmug demonstrating larger gallery layout with lazy slides 2 through 8",
+    "observedEntities": [
+      "shreddit-post[post-type=\"gallery\"]",
+      "gallery-carousel[post-id=\"t3_1wsl6h3\"]",
+      "gallery-carousel.shadowRoot -> faceplate-carousel.shadowRoot -> faceplate-pagination-indicator[pages=\"8\"][page-index=\"0\"]",
+      "ul > li[slot=\"page-1\"] ... li[slot=\"page-8\"]"
+    ]
+  },
+  "sanitization": {
+    "redactions": "Removed signed HMAC tokens (s=...), user and tracking attributes; synthetic media keys used for assertions."
+  },
+  "post": {
+    "id": "t3_1wsl6h3",
+    "postType": "gallery",
+    "domain": "reddit.com",
+    "permalink": "/r/ihatethissmug/comments/1wsl6h3/reaction_meme_gallery/",
+    "viewContext": "CommentsPage"
+  },
+  "carousel": {
+    "postId": "t3_1wsl6h3",
+    "permalink": "/r/ihatethissmug/comments/1wsl6h3/reaction_meme_gallery/",
+    "totalPages": 8,
+    "pagesAttr": "8",
+    "pageIndexAttr": "0"
+  },
+  "slides": [
+    {
+      "slot": "page-1",
+      "preview": { "src": "https://preview.redd.it/meme_part_1-v0-v4o9q1fnrash1.jpg?width=640&s=sig1" },
+      "lightbox": { "src": "https://i.redd.it/v4o9q1fnrash1.jpg" }
+    },
+    {
+      "slot": "page-2",
+      "preview": { "src": "", "dataLazySrc": "https://preview.redd.it/meme_part_2-v0-slide2hash.jpg?width=640&s=sig2" },
+      "lightbox": { "src": "https://i.redd.it/slide2hash.jpg" }
+    },
+    {
+      "slot": "page-3",
+      "preview": { "src": "", "dataLazySrc": "https://preview.redd.it/meme_part_3-v0-slide3hash.jpg?width=640&s=sig3" },
+      "lightbox": { "src": "https://i.redd.it/slide3hash.jpg" }
+    },
+    {
+      "slot": "page-4",
+      "preview": { "src": "", "dataLazySrc": "https://preview.redd.it/meme_part_4-v0-slide4hash.jpg?width=640&s=sig4" },
+      "lightbox": { "src": "https://i.redd.it/slide4hash.jpg" }
+    },
+    {
+      "slot": "page-5",
+      "preview": { "src": "", "dataLazySrc": "https://preview.redd.it/meme_part_5-v0-slide5hash.jpg?width=640&s=sig5" },
+      "lightbox": { "src": "https://i.redd.it/slide5hash.jpg" }
+    },
+    {
+      "slot": "page-6",
+      "preview": { "src": "", "dataLazySrc": "https://preview.redd.it/meme_part_6-v0-slide6hash.jpg?width=640&s=sig6" },
+      "lightbox": { "src": "https://i.redd.it/slide6hash.jpg" }
+    },
+    {
+      "slot": "page-7",
+      "preview": { "src": "", "dataLazySrc": "https://preview.redd.it/meme_part_7-v0-slide7hash.jpg?width=640&s=sig7" },
+      "lightbox": { "src": "https://i.redd.it/slide7hash.jpg" }
+    },
+    {
+      "slot": "page-8",
+      "preview": { "src": "", "dataLazySrc": "https://preview.redd.it/meme_part_8-v0-slide8hash.jpg?width=640&s=sig8" },
+      "lightbox": { "src": "https://i.redd.it/slide8hash.jpg" }
+    }
+  ]
+}

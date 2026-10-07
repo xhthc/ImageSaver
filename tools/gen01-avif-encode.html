@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>GEN-01 fixture: AV1 still-picture encoder</title>
+<!-- Fixture tooling only, never loaded by the extension. Open from http://localhost in Chromium (WebCodecs needs a secure
+     context), press the button: each synthetic picture is encoded as ONE AV1 key frame with the browser's own
+     VideoEncoder('av01.0.04M.08') and downloaded as <name>.av1tu. Wrap each file into an AVIF container with
+     node tools/gen01-avif-wrap.js <name>.av1tu tools/gen01-fixtures/avif/<name>.avif <width> <height>
+     (sizes and labels below). See tools/gen01-fixtures/avif/README.md. -->
+<button id="go">Encode and download</button> <pre id="log"></pre>
+<script>
+const SPECS = [
+  ['avif-direct', 240, 160, '#0a8f8f', 'AVIF DIRECT'],
+  ['avif-pic-small', 240, 160, '#7b3fa0', 'AVIF PIC SMALL'],
+  ['avif-pic-large', 480, 320, '#4a1f6e', 'AVIF PIC LARGE'],
+  ['avif-card-one', 480, 320, '#d9731a', 'AVIF ORIGINAL ONE'],
+  ['avif-card-two', 480, 320, '#0f8a6a', 'AVIF ORIGINAL TWO'],
+  ['avif-frame-rel', 480, 320, '#1f4fb0', 'AVIF FRAME REL'],
+  ['avif-lazy', 480, 320, '#b03070', 'AVIF LAZY ORIGINAL'],
+  ['avif-link', 480, 320, '#6b7d1f', 'AVIF LINK ORIGINAL'],
+  ['avif-wrong-rel', 480, 320, '#c0302a', 'AVIF WRONG TOP']
+];
+async function encode(w, h, bg, label) {
+  const c = new OffscreenCanvas(w, h), g = c.getContext('2d');
+  g.fillStyle = bg; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#fff'; g.fillRect(0, 0, w, Math.round(h / 8)); g.fillRect(0, h - Math.round(h / 8), w, Math.round(h / 8));
+  g.font = 'bold ' + Math.round(h / 8) + 'px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = '#fff'; g.fillText(label, w / 2, h / 2);
+  const frame = new VideoFrame(c, { timestamp: 0 });
+  let tu = null;
+  const enc = new VideoEncoder({ output: (chunk) => { tu = new Uint8Array(chunk.byteLength); chunk.copyTo(tu); }, error: (e) => { throw e; } });
+  enc.configure({ codec: 'av01.0.04M.08', width: w, height: h, bitrate: 3000000, framerate: 1, latencyMode: 'quality' });
+  enc.encode(frame, { keyFrame: true }); frame.close(); await enc.flush(); enc.close();
+  return tu;
+}
+document.getElementById('go').onclick = async () => {
+  for (const [name, w, h, bg, label] of SPECS) {
+    const tu = await encode(w, h, bg, label);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([tu])); a.download = name + '.av1tu'; a.click();
+    document.getElementById('log').textContent += name + ' ' + w + 'x' + h + ' ' + tu.length + ' bytes\n';
+  }
+};
+</script>

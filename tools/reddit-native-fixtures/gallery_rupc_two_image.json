@@ -1,0 +1,69 @@
+{
+  "provenance": {
+    "sourceUrl": "https://www.reddit.com/r/RuPC/comments/1wxpi9w/",
+    "observedDate": "2026-10-05",
+    "description": "Observed 2-image gallery on r/RuPC in both post page and feed views",
+    "observedEntities": [
+      "shreddit-post[post-type=\"gallery\"]",
+      "gallery-carousel[post-id=\"t3_1wxpi9w\"]",
+      "gallery-carousel.shadowRoot -> faceplate-carousel.shadowRoot -> faceplate-pagination-indicator[pages=\"2\"][page-index=\"0\"]",
+      "ul > li[slot=\"page-1\"] and li[slot=\"page-2\"]",
+      "li > img.post-background-image-filter[alt=\"\"] (backdrop)",
+      "li > figure > img.non-lightboxed-content.media-lightbox-img (preview with SEO slug)",
+      "li > figure > div.lightboxed-content.hidden > img.media-lightbox-img (i.redd.it full image)"
+    ]
+  },
+  "sanitization": {
+    "redactions": "Removed signed HMAC tokens (s=...), timestamps, tracking IDs and cookies; synthetic media keys used for test assertions."
+  },
+  "post": {
+    "id": "t3_1wxpi9w",
+    "postType": "gallery",
+    "domain": "reddit.com",
+    "permalink": "/r/RuPC/comments/1wxpi9w/dns_hardware_post/",
+    "viewContext": "CommentsPage"
+  },
+  "carousel": {
+    "postId": "t3_1wxpi9w",
+    "permalink": "/r/RuPC/comments/1wxpi9w/dns_hardware_post/",
+    "totalPages": 2,
+    "pagesAttr": "2",
+    "pageIndexAttr": "0"
+  },
+  "slides": [
+    {
+      "slot": "page-1",
+      "backdrop": {
+        "alt": "",
+        "src": "https://preview.redd.it/dns_part_1_slug-v0-5yxioaa8eith1.jpg?width=600&format=pjpg&auto=webp&s=sig1"
+      },
+      "preview": {
+        "alt": "r/RuPC - DNS hardware photo 1",
+        "src": "https://preview.redd.it/dns_part_1_slug-v0-5yxioaa8eith1.jpg?width=600&format=pjpg&auto=webp&s=sig1",
+        "percentEncodedSrc": "https://preview.redd.it/%D0%BA%D0%B0%D0%BA-%D0%B2%D1%8B-%D0%BE%D1%82%D0%BD%D0%BE%D1%81%D0%B8%D1%82%D0%B5%D1%81%D1%8C-%D0%BA-dns-v0-5yxioaa8eith1.jpg?width=600&format=pjpg&auto=webp&s=sig1"
+      },
+      "lightbox": {
+        "alt": "r/RuPC - DNS hardware photo 1",
+        "src": "https://i.redd.it/5yxioaa8eith1.jpg"
+      }
+    },
+    {
+      "slot": "page-2",
+      "backdrop": {
+        "alt": "",
+        "src": "",
+        "dataLazySrc": "https://preview.redd.it/dns_part_2_slug-v0-flwbdfc8eith1.jpg?width=554&format=pjpg&auto=webp&s=sig2"
+      },
+      "preview": {
+        "alt": "r/RuPC - DNS hardware photo 2",
+        "src": "",
+        "dataLazySrc": "https://preview.redd.it/dns_part_2_slug-v0-flwbdfc8eith1.jpg?width=554&format=pjpg&auto=webp&s=sig2",
+        "percentEncodedDataLazySrc": "https://preview.redd.it/%D0%BA%D0%B0%D0%BA-%D0%B2%D1%8B-%D0%BE%D1%82%D0%BD%D0%BE%D1%81%D0%B8%D1%82%D0%B5%D1%81%D1%8C-%D0%BA-dns-v0-flwbdfc8eith1.jpg?width=554&format=pjpg&auto=webp&s=sig2"
+      },
+      "lightbox": {
+        "alt": "r/RuPC - DNS hardware photo 2",
+        "src": "https://i.redd.it/flwbdfc8eith1.jpg"
+      }
+    }
+  ]
+}

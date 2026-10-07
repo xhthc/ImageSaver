@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>popup startup measurement (page preview)</title>
+</head>
+<body>
+  <!-- Development only. Loads a page N times in a same-origin iframe (HTTP cache disabled by the preview server) and records
+       the time from the start of its navigation until its first paint and until its first result row exists. It measures the
+       page in an ordinary tab with a mocked chrome API: NOT the extension popup, NOT Chromium's popup window start.
+       Usage: /ui/preview/measure.html?url=/popup/quick.html%3Fscenario%3Dmixed&n=15 -->
+  <pre id="out">running…</pre>
+  <script>
+    (async () => {
+      const q = new URLSearchParams(location.search)
+      const url = q.get('url') || '/popup/quick.html?scenario=mixed'
+      const n = Number(q.get('n') || 15)
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const med = (a) => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)] }
+      const runs = []
+      for (let i = 0; i < n; i++) {
+        const f = document.createElement('iframe')
+        f.style.cssText = 'width:360px;height:600px;border:0'
+        document.body.appendChild(f)
+        await new Promise((resolve) => { f.onload = resolve; f.src = url })
+        const w = f.contentWindow
+        const t0 = Date.now()
+        while (w.__listShownAt === undefined && Date.now() - t0 < 5000) await sleep(5)
+        await sleep(30)
+        const paint = w.performance.getEntriesByType('paint').find((p) => p.name === 'first-contentful-paint')
+        const nav = w.performance.getEntriesByType('navigation')[0]
+        runs.push({ listShown: w.__listShownAt, fcp: paint ? paint.startTime : null, dcl: nav ? nav.domContentLoadedEventEnd : null })
+        f.remove()
+      }
+      const pick = (k) => runs.map((r) => r[k]).filter((v) => typeof v === 'number')
+      const result = { url, n, listShownMedianMs: med(pick('listShown')), listShownMinMs: Math.min(...pick('listShown')), listShownMaxMs: Math.max(...pick('listShown')), fcpMedianMs: med(pick('fcp')), dclMedianMs: med(pick('dcl')) }
+      window.__result = result
+      document.getElementById('out').textContent = JSON.stringify(result, null, 2)
+    })()
+  </script>
+</body>
+</html>

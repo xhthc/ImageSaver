@@ -1,0 +1,11 @@
+{
+  "project": "Image Saver",
+  "new_repository": "https://github.com/xhthc/ImageSaver",
+  "imported_at_local_date": "2026-10-07",
+  "source_repository": "https://github.com/xhthc/image-saver-extension",
+  "source_commit": "d1f60a926efcc52caadc1d5f1c31c21a84cd4214",
+  "manifest_version": "2.0.0.24",
+  "selection_reason": "Integrated old remote main, verified against the supplied source archive and live remote main. This is a recovery baseline, not a new release or a claim of browser acceptance.",
+  "provided_test_zip_source_commit": "7925fe16ecd4383618712767a4a29e00d3633e74",
+  "note": "The supplied test ZIP precedes this integrated source, despite having the same manifest version. Historical reports, machine-local agent configuration, dependencies and worktrees are excluded from the new working tree. Runtime and generated popup files are imported unchanged."
+}

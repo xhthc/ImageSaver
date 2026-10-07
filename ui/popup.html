@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ru" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Image Saver: история и настройки</title>
+  </head>
+  <body>
+    <!-- Full extension page (built from ui/src; the output in popup/ is committed). Sections: history, saving,
+         notifications, embed. The classic scripts below are the shared extension libraries (folder rules and the
+         feedback schema also used by background.js); they run before the module bundle. -->
+    <div id="root"></div>
+    <script src="../lib/folder_path.js"></script>
+    <script src="../lib/feedback.js"></script>
+    <script type="module" src="/src/full-main.tsx"></script>
+  </body>
+</html>

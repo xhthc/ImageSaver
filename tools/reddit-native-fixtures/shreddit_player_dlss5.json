@@ -1,0 +1,58 @@
+{
+  "provenance": {
+    "sourceUrl": "https://www.reddit.com/r/pcmasterrace/comments/1wchzc1/dlss_5_breaking_containment/",
+    "observedDate": "2026-10-05",
+    "description": "Observed Shreddit video player with HLSPlaylist src, packaged-media-json declarations and CMAF preview",
+    "observedEntities": [
+      "shreddit-post[id=\"t3_1wchzc1\"][post-type=\"video\"][domain=\"v.redd.it\"][content-href=\"https://v.redd.it/6pyz5eyptooh1\"]",
+      "shreddit-player[post-id=\"t3_1wchzc1\"][src=\"https://v.redd.it/6pyz5eyptooh1/HLSPlaylist.m3u8?...\"][preview=\"https://v.redd.it/6pyz5eyptooh1/CMAF_96.mp4\"][packaged-media-json=\"...\"]",
+      "shreddit-player.shadowRoot -> video[src=\"https://v.redd.it/6pyz5eyptooh1/HLSPlaylist.m3u8?...\"]"
+    ]
+  },
+  "sanitization": {
+    "redactions": "Removed signed HMAC tokens (s=...), auth tickets (a=...), and metrics; synthetic signed tokens used."
+  },
+  "post": {
+    "id": "t3_1wchzc1",
+    "postType": "video",
+    "domain": "v.redd.it",
+    "contentHref": "https://v.redd.it/6pyz5eyptooh1",
+    "permalink": "/r/pcmasterrace/comments/1wchzc1/dlss_5_breaking_containment/"
+  },
+  "player": {
+    "src": "https://v.redd.it/6pyz5eyptooh1/HLSPlaylist.m3u8?f=sd&v=2&a=auth_token_sig",
+    "preview": "https://v.redd.it/6pyz5eyptooh1/CMAF_96.mp4",
+    "poster": "https://external-preview.redd.it/dlss5_poster-v0-dXV2bDZidnB0b29oMTRITizmS8MfXv5_QNC4F0IGUfdQeJrL45a2xo9FYdVF.png?width=640&crop=smart&format=pjpg&auto=webp&s=sig_poster",
+    "packagedMediaJson": {
+      "playbackMp4s": {
+        "duration": 36,
+        "permutations": [
+          {
+            "source": {
+              "dimensions": { "height": 220, "width": 392 },
+              "url": "https://packaged-media.redd.it/6pyz5eyptooh1/pb/m2-res_220p.mp4?m=DASHPlaylist.mpd&var=sgpssan&v=1&e=1791187200&s=sig220p",
+              "videoCodec": "H264"
+            }
+          },
+          {
+            "source": {
+              "dimensions": { "height": 360, "width": 640 },
+              "url": "https://packaged-media.redd.it/6pyz5eyptooh1/pb/m2-res_360p.mp4?m=DASHPlaylist.mpd&var=sgpssan&v=1&e=1791187200&s=sig360p",
+              "videoCodec": "H264"
+            }
+          },
+          {
+            "source": {
+              "dimensions": { "height": 720, "width": 1280 },
+              "url": "https://packaged-media.redd.it/6pyz5eyptooh1/pb/m2-res_720p.mp4?m=DASHPlaylist.mpd&var=sgpssan&v=1&e=1791187200&s=sig720p",
+              "videoCodec": "H264"
+            }
+          }
+        ]
+      }
+    },
+    "shadowVideo": {
+      "src": "https://v.redd.it/6pyz5eyptooh1/HLSPlaylist.m3u8?f=sd&v=2&a=auth_token_sig"
+    }
+  }
+}

@@ -1,0 +1,1847 @@
+// test_ux_feedback.js - focused regression tests for UX-02 / UX-04 (download feedback + bug reports).
+// Runs the production background.js and lib/feedback*.js in vm sandboxes, and the page controllers of ui/src/core (the code
+// behind popup/*.html) against the production background, with mocked Chrome APIs. The React rendering is covered by
+// test_ui_render.js. Evidence boundary: Node mocks only - no Chromium, no real notifications or clipboard.
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const { pathToFileURL } = require('url');
+
+const ROOT = __dirname;
+const read = (p) => fs.readFileSync(path.resolve(ROOT, p), 'utf8');
+const bgCode = read('background.js') + `
+globalThis.__exports = { executeMediaDownload, executeMediaPlan, createCandidateGroup, adaptCandidateToGroup,
+  earlyTerminalDownloadStates, getUnseenFailureCount, restoreOrClearBadge, fbBegin, fbStage, fbFail, fbAttach, fbCancel,
+  executeXTweetVideoGifDownload, executeRedditGifDownload };`;
+
+let passed = 0;
+let failed = 0;
+function assert(cond, name) {
+  if (cond) { passed++; console.log(`[PASS] ${name}`); } else { failed++; console.error(`[FAIL] ${name}`); }
+}
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+// ---------------------------------------------------------------------------------------------------
+// Environment: production background.js + mocked Chrome
+// ---------------------------------------------------------------------------------------------------
+function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications = false } = {}) {
+  const env = {
+    downloadCalls: [],
+    searchCalls: [],
+    notifications: [],
+    notificationClears: [],
+    shown: [],
+    badge: { text: '' },
+    nextId: 5000,
+    downloadsDb: downloadsDb || new Map(),   // id -> chrome.downloads item
+    failNextDownloads: 0,
+    failNotificationCreate: false,
+    failSessionSet: false,
+    failLocalGet: false,
+    convertResponse: { success: true, blobUrl: 'blob:chrome-extension://testid/00000000-aaaa-bbbb-cccc-1234567890ab', contentType: 'image/gif', size: 2048, frames: 15, duration: 1 },
+    convertGate: null,
+    downloadListeners: [],
+    messageListeners: [],
+    notificationClickListeners: [],
+    tabsMsgHandler: null,
+    createdTabs: [],
+    fetchImpl: null,
+    session: { ...session },
+    local: { ...local }
+  };
+
+  const area = (store, flags) => ({
+    get: async (keys) => {
+      if (flags.get && flags.get()) throw new Error('STORAGE_GET_FAILED');
+      if (typeof keys === 'string') return { [keys]: store()[keys] };
+      if (Array.isArray(keys)) return Object.fromEntries(keys.map((k) => [k, store()[k]]));
+      if (keys && typeof keys === 'object') return Object.fromEntries(Object.keys(keys).map((k) => [k, store()[k] !== undefined ? store()[k] : keys[k]]));
+      return { ...store() };
+    },
+    set: async (items) => {
+      if (flags.set && flags.set()) throw new Error('STORAGE_SET_FAILED');
+      Object.assign(store(), JSON.parse(JSON.stringify(items)));
+    },
+    remove: async (keys) => { for (const k of [].concat(keys)) delete store()[k]; }
+  });
+
+  const chrome = {
+    runtime: {
+      id: 'testid',
+      lastError: null,
+      getURL: (p) => `chrome-extension://testid/${p}`,
+      getManifest: () => ({ version: '2.0.0' }),
+      onInstalled: { addListener() {} },
+      onStartup: { addListener() {} },
+      onMessage: { addListener: (cb) => env.messageListeners.push(cb) },
+      getContexts: async () => [],
+      sendMessage: async (msg) => {
+        if (msg && (msg.action === 'CONVERT_X_TWEET_VIDEO_TO_GIF' || msg.action === 'CONVERT_REDDIT_VIDEO_TO_GIF')) {
+          env.lastConvertMessage = msg;
+          if (env.convertGate) await env.convertGate;
+          return typeof env.convertResponse === 'function' ? env.convertResponse(msg) : env.convertResponse;
+        }
+        return null;
+      }
+    },
+    offscreen: { createDocument: async () => {}, closeDocument: async () => {} },
+    action: {
+      setBadgeText: async ({ text }) => { env.badge.text = text; },
+      setBadgeBackgroundColor: async () => {}
+    },
+    declarativeNetRequest: { getDynamicRules: async () => [], updateDynamicRules: async () => {} },
+    contextMenus: {
+      removeAll: (cb) => cb && cb(),
+      create() {},
+      update: (id, p, cb) => cb && cb(),
+      refresh() {},
+      onClicked: { addListener: (cb) => { env.contextMenuHandler = cb; } },
+      onShown: { addListener() {} }
+    },
+    tabs: {
+      onActivated: { addListener() {} },
+      onUpdated: { addListener() {} },
+      sendMessage: async (tabId, msg) => (env.tabsMsgHandler ? env.tabsMsgHandler(tabId, msg) : null),
+      create: async (opts) => { env.createdTabs.push(opts); return { id: 1 }; }
+    },
+    scripting: { executeScript: async () => [{ result: null }] },
+    downloads: {
+      onChanged: { addListener: (cb) => env.downloadListeners.push(cb) },
+      download: (options, cb) => {
+        env.downloadCalls.push(options);
+        if (env.failNextDownloads > 0) {
+          env.failNextDownloads--;
+          throw new Error('Download failed: NETWORK_FAILED');
+        }
+        const id = env.nextId++;
+        if (!env.downloadsDb.has(id)) env.downloadsDb.set(id, { id, state: 'in_progress', fileSize: 0, totalBytes: 0, bytesReceived: 0, exists: true });
+        if (typeof cb === 'function') cb(id);
+        return Promise.resolve(id);
+      },
+      search: async (query) => {
+        env.searchCalls.push(query);
+        const item = query && env.downloadsDb.get(query.id);
+        return item ? [JSON.parse(JSON.stringify(item))] : [];
+      },
+      show: (id) => env.shown.push(id)
+    },
+    storage: {
+      session: area(() => env.session, { set: () => env.failSessionSet }),
+      local: area(() => env.local, { get: () => env.failLocalGet, set: () => env.failLocalWrite })
+    }
+  };
+  if (!noNotifications) {
+    chrome.notifications = {
+      create: async (id, opts) => {
+        if (env.failNotificationCreate) throw new Error('NOTIFICATIONS_BLOCKED');
+        env.notifications.push({ id, opts });
+        return id;
+      },
+      clear: (id) => env.notificationClears.push(id),
+      onClicked: { addListener: (cb) => env.notificationClickListeners.push(cb) }
+    };
+  }
+  env.chrome = chrome;
+
+  const sandbox = {
+    chrome,
+    console: { log() {}, warn() {}, error() {} },
+    URL, URLSearchParams, setTimeout, clearTimeout, AbortController,
+    fetch: async (url) => {
+      if (env.fetchImpl) return env.fetchImpl(String(url));
+      const u = String(url);
+      return { ok: true, status: 200, headers: { get: (h) => (h.toLowerCase() === 'content-type' ? (/\.mp4|format=mp4/.test(u) ? 'video/mp4' : 'image/jpeg') : '1048576') } };
+    },
+    window: { location: { href: '', host: '', pathname: '/' }, addEventListener() {} },
+    document: { elementsFromPoint: () => [], querySelectorAll: () => [], querySelector: () => null, getElementById: () => null, createElement: () => ({ addEventListener() {}, removeAttribute() {}, load() {} }) }
+  };
+  sandbox.importScripts = (file) => vm.runInContext(read(file), sandbox);
+  vm.createContext(sandbox);
+  vm.runInContext(bgCode, sandbox);
+  env.sandbox = sandbox;
+  env.x = sandbox.__exports;
+  env.tracker = sandbox.feedbackTracker;
+
+  env.emitDownload = async (delta) => { for (const l of env.downloadListeners) await l(delta); };
+  env.finish = async (id, { state = 'complete', error = null, fileSize = 12345 } = {}) => {
+    const item = env.downloadsDb.get(id);
+    if (item) { item.state = state; item.fileSize = fileSize; item.error = error || undefined; }
+    await env.emitDownload({ id, state: { current: state, previous: 'in_progress' }, ...(error ? { error: { current: error } } : {}) });
+    await env.tracker.flush();
+  };
+  env.click = async (info, tab) => { await env.contextMenuHandler(info, tab || { id: 7, url: info.pageUrl }); await env.tracker.flush(); };
+  env.records = async () => env.tracker.list();
+  env.last = async () => (await env.tracker.list())[0];
+  env.ready = async () => { await env.tracker.ready(); await env.tracker.flush(); };
+  return env;
+}
+
+const imageClick = (n, page = 'https://example.com/gallery/1') => ({ menuItemId: 'save-image-item', srcUrl: `https://example.com/i/${n}.jpg`, pageUrl: page, mediaType: 'image' });
+const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
+
+(async () => {
+  const FBLib = (() => { const sb = { URL }; vm.createContext(sb); vm.runInContext(read('lib/feedback.js'), sb); return sb.ImageSaverFeedback; })();
+  const coreMod = (name) => import(pathToFileURL(path.resolve(ROOT, 'ui/src/core', name)).href);
+  const { createFeedbackList } = await coreMod('feedbackList.js');
+  const { createHistory } = await coreMod('history.js');
+  const { createSettings } = await coreMod('settings.js');
+  const present = await coreMod('present.js');
+
+  // =================================================================================================
+  console.log('\n--- 1. Pure helpers: redaction, classification, schema ---');
+  {
+    const t = FBLib.sanitizeText;
+    const dirty = 'GET https://cdn.example.com/a.jpg?X-Amz-Signature=abc123&token=SECRET#frag failed at C:\\Users\\Ivan Petrov\\Pictures\\a.png and /home/ivan/.config/x Bearer abcdefghijklmnop cookie=sessionid=ZZZZ ' + 'A'.repeat(60) + '<script>alert(1)</script>';
+    const clean = t(dirty, 400);
+    assert(!/SECRET|abc123|frag|Ivan|Petrov|ivan|abcdefghijklmnop|ZZZZ|AAAAAAAAAA|https?:/.test(clean), '1a: sanitizeText removes URLs, signed params, fragments, local paths, tokens, cookies, opaque blobs');
+    assert(t('x'.repeat(500), 50).length <= 50 && t('a\u202eb\u0000c\u2028d').indexOf('\u202e') === -1, '1b: sanitizeText bounds length and strips control/bidi characters');
+    const p = FBLib.safeUrlParts('https://Video.TwImg.com:8443/ext/tweet_video/ABC.MP4?token=SECRET#frag');
+    assert(p.host === 'video.twimg.com' && p.ext === '.mp4' && JSON.stringify(p).indexOf('SECRET') === -1 && JSON.stringify(p).indexOf('tweet_video') === -1, '1c: safeUrlParts keeps only host and extension');
+    assert(FBLib.safeUrlParts('blob:chrome-extension://x/uuid').host === '' && FBLib.safeUrlParts('javascript:alert(1)').scheme === '' && FBLib.safeUrlParts('ftp://x.com/a.jpg').host === '', '1d: blob/javascript/ftp URLs retain no host');
+    assert(FBLib.normalizeCode('NOT_FOUND') === 'NOT_FOUND' && FBLib.normalizeCode('Error: https://x.com/?token=1') === '' && FBLib.normalizeCode('<img src=x onerror=alert(1)>') === '' && FBLib.normalizeCode('HTTP 403 Forbidden') === '', '1e: normalizeCode accepts only machine-code-like tokens (no message text, no HTML)');
+    assert(FBLib.normalizeStatus(403) === 403 && FBLib.normalizeStatus('403') === null && FBLib.normalizeStatus(99) === null && FBLib.normalizeStatus(NaN) === null, '1f: normalizeStatus accepts only real numeric HTTP statuses');
+    const c = FBLib.classifyFailure;
+    assert(c({ status: 404 }) === 'not_found' && c({ code: 'NOT_FOUND' }) === 'not_found' && c({ status: 410 }) === 'not_found', '1g: classify: confirmed absence');
+    assert(c({ status: 403 }) === 'auth' && c({ code: 'AUTH_REQUIRED' }) === 'auth' && c({ downloadError: 'SERVER_FORBIDDEN' }) === 'auth', '1h: classify: auth/access');
+    assert(c({ status: 429 }) === 'rate_limited' && c({ code: 'RATE_LIMIT' }) === 'rate_limited', '1i: classify: rate limit');
+    assert(c({ downloadError: 'NETWORK_FAILED' }) === 'network' && c({ code: 'NETWORK_TIMEOUT' }) === 'network', '1j: classify: network/timeout');
+    assert(c({ code: 'NON_IMAGE' }) === 'invalid_content' && c({ code: 'MIME_NOT_VERIFIED' }) === 'invalid_content', '1k: classify: invalid content/MIME');
+    assert(c({ stage: 'convert', code: 'X' }) === 'conversion_failed' && c({ stage: 'download', downloadError: 'FILE_NO_SPACE' }) === 'download_interrupted', '1l: classify: conversion failure and download interruption');
+    assert(c({ stage: 'verify' }) === 'unknown' && c({ code: 'AMBIGUOUS_OWNER' }) === 'ambiguous_ownership', '1m: classify: unknown stays unknown; ambiguous ownership recognized');
+    assert(c({ stage: 'verify', code: 'FAILED with HTTP 503' }) === 'unknown', '1n: no HTTP status is invented from message text');
+    const hostile = FBLib.sanitizeRecord({ id: 'op-abcdef', createdAt: 5, state: 'complete', site: '<b>x</b>', sourceHost: 'evil.com/path?token=1', output: { type: 'gif', ext: '.exe', evidence: 'verified_mime', mime: 'text/html', sizeBytes: -5 }, failure: { code: '<script>', status: 'abc', category: '__proto__' }, extra: { password: 'hunter2' } });
+    assert(hostile.site === '' && hostile.sourceHost === '' && hostile.output.ext === '' && hostile.output.mime === '' && hostile.output.sizeBytes === null && hostile.failure.category === 'unknown' && hostile.failure.code === '' && hostile.failure.status === null && !('extra' in hostile), '1o: sanitizeRecord is an allowlist (hostile/unknown fields dropped)');
+    assert(FBLib.sanitizeRecord({ id: '../../x', createdAt: 5 }) === null && FBLib.sanitizeRecord(null) === null, '1p: sanitizeRecord rejects malformed ids and non-objects');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 2. Real completion vs a returned download ID (production handler) ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    await env.click(imageClick('a1'));
+    let r = await env.last();
+    assert(env.downloadCalls.length === 1 && r.state === 'saving' && r.downloadId !== null, '2a: a returned download ID leaves the operation in "saving", not success');
+    assert(env.notifications.length === 0, '2b: no notification before the download actually completes');
+    await env.finish(r.downloadId);
+    r = await env.last();
+    assert(r.state === 'complete' && env.notifications.length === 1 && env.notifications[0].opts.silent === true, '2c: completion event -> complete + one silent success notification');
+    assert(r.output.sizeBytes === 12345 && r.output.sizeKind === 'measured', '2d: size is the measured size of the saved file (downloads.search fileSize)');
+    assert(r.output.type === 'pic' && r.output.ext === '.jpg', '2e: output type/extension come from the actual saved filename');
+    assert(r.output.evidence !== 'verified_mime' || r.output.mime === 'image/jpeg', '2f: a MIME is shown only with verified evidence');
+    assert(/example\.com/.test(env.notifications[0].opts.title) && !/https?:|\?/.test(env.notifications[0].opts.title + env.notifications[0].opts.message), '2g: notification names the site and contains no URL');
+    await env.finish(r.downloadId);
+    await env.emitDownload({ id: r.downloadId, state: { current: 'complete' } });
+    await env.tracker.flush();
+    assert(env.notifications.length === 1 && (await env.records()).length === 1, '2h: repeated terminal events are idempotent (one notification, one record)');
+    await env.emitDownload({ id: r.downloadId, state: { current: 'interrupted' }, error: { current: 'NETWORK_FAILED' } });
+    await env.tracker.flush();
+    r = await env.last();
+    assert(r.state === 'complete' && env.notifications.length === 1, '2i: a stale conflicting terminal event does not rewrite a finished operation');
+    assert(env.searchCalls.every((q) => Object.keys(q).length === 1 && Number.isInteger(q.id)), '2j: downloads.search is only ever called for extension-owned download IDs');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 3. Pre-download failures (production handler) ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    env.fetchImpl = async () => ({ ok: false, status: 429, headers: { get: () => '' } });
+    await env.click(imageClick('rl1'));
+    let r = await env.last();
+    assert(env.downloadCalls.length === 0 && ['failed'].includes(r.state), '3a: HTTP 429 before download -> failed, no download');
+    assert(r.failure.category === 'rate_limited', '3b: HTTP 429 observed before download -> rate_limited');
+    assert(env.notifications.length === 1 && env.notifications[0].opts.silent === false && env.notifications[0].opts.priority === 1, '3c: failure produces a (non-silent) notification');
+    assert(r.failure.status === 429 && r.failure.stage === 'resolve', '3d: the observed numeric status 429 is recorded with its stage');
+
+    const env2 = makeEnv();
+    await env2.ready();
+    env2.fetchImpl = async () => ({ ok: false, status: 403, headers: { get: () => '' } });
+    await env2.click(imageClick('au1'));
+    const r2 = await env2.last();
+    assert(r2.state === 'failed' && r2.downloadId === null && env2.downloadCalls.length === 0 && r2.failure.category === 'auth' && r2.failure.status === 403, '3e: HTTP 403 before download -> failed/auth with the observed status and no download id');
+
+    const env3 = makeEnv();
+    await env3.ready();
+    await env3.click({ menuItemId: 'save-image-item', srcUrl: 'blob:https://example.com/abc-123', pageUrl: 'https://example.com/p', mediaType: 'video' });
+    const r3 = await env3.last();
+    assert(r3 && r3.state === 'failed' && r3.failure.category === 'unresolved' && r3.failure.status === null, '3f: unresolved blob -> "unresolved", status not observed (never 404 from the internal default)');
+    assert(r3.sourceHost === '' && JSON.stringify(r3).indexOf('abc-123') === -1, '3g: blob URL identity is not retained');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 4. Conversion: states, failure, success (X and Reddit) ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    env.tabsMsgHandler = async (tabId, msg) => (msg.action === 'GET_X_MEDIA_AT_CURSOR' ? { type: 'x_tweet_video', url: 'https://video.twimg.com/tweet_video/CV1.mp4' } : null);
+    let release;
+    env.convertGate = new Promise((res) => { release = res; });
+    const pending = env.contextMenuHandler({ menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/u/status/1' }, { id: 8, url: 'https://x.com/u/status/1' });
+    await tick(); await tick(); await tick();
+    await env.tracker.flush();
+    let r = await env.last();
+    assert(r && r.state === 'converting' && r.conversion === 'x_tweet_video_gif', '4a: observable "converting" state during X animation conversion');
+    release();
+    await pending;
+    await env.tracker.flush();
+    r = await env.last();
+    assert(r.state === 'saving' && r.output.type === 'gif' && r.output.evidence === 'converted_output' && r.output.frames === 15, '4b: a finished conversion is "saving", not success; frames measured by the encoder');
+    assert(env.notifications.length === 0 && r.output.sizeKind === 'measured' && r.output.sizeBytes === 2048, '4c: conversion alone sends no notification; blob size is measured');
+    await env.finish(r.downloadId, { fileSize: 2100 });
+    r = await env.last();
+    assert(r.state === 'complete' && r.output.sizeBytes === 2100 && env.notifications.length === 1, '4d: only the completed download is success; size updated to the saved file');
+    assert(/GIF/.test(env.notifications[0].opts.message) && /MP4/.test(env.notifications[0].opts.message), '4e: notification states output type and conversion');
+    assert(!env.session[env.tracker.STORAGE_KEY] || JSON.stringify(env.session[env.tracker.STORAGE_KEY]).indexOf('blob:') === -1, '4f: Blob URLs are never persisted in diagnostics');
+    assert(env.lastConvertMessage && env.lastConvertMessage.pageUrl === undefined && env.lastConvertMessage.feedbackOp === undefined, '4g: feedback context is not sent to the offscreen document');
+
+    const envF = makeEnv();
+    await envF.ready();
+    envF.tabsMsgHandler = env.tabsMsgHandler;
+    envF.convertResponse = { success: false, error: 'GIF encoder exploded at https://x.com/?token=SECRET' };
+    await envF.contextMenuHandler({ menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/u/status/2' }, { id: 8, url: 'https://x.com/u/status/2' });
+    await envF.tracker.flush();
+    const rf = await envF.last();
+    assert(rf.state === 'failed' && rf.failure.stage === 'convert' && rf.failure.category === 'conversion_failed' && envF.downloadCalls.length === 0, '4h: conversion failure -> failed at stage convert, no download');
+    assert(rf.failure.code === '' && JSON.stringify(rf).indexOf('SECRET') === -1 && envF.notifications.length === 1, '4i: raw error text is not stored; failure is notified');
+
+    const envR = makeEnv();
+    await envR.ready();
+    await envR.click({ menuItemId: 'save-image-item', srcUrl: 'https://preview.redd.it/anim9.gif?format=mp4&s=abcdef', pageUrl: 'https://www.reddit.com/r/gifs/comments/9/', mediaType: 'video' });
+    const rr = await envR.last();
+    assert(rr.conversion === 'reddit_animation_gif' && rr.state === 'saving' && rr.site === 'reddit', '4j: Reddit GIF-as-MP4 conversion tracked with its owning site');
+    await envR.finish(rr.downloadId, { state: 'interrupted', error: 'NETWORK_FAILED' });
+    const rr2 = await envR.last();
+    assert(rr2.state === 'interrupted' && rr2.failure.category === 'network' && envR.notifications.length === 1, '4k: Reddit conversion followed by an interrupted download -> interrupted/network, notified');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 5. Interrupted and cancelled downloads ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    await env.click(imageClick('i1'));
+    await env.click(imageClick('i2'));
+    await env.click(imageClick('i3'));
+    const recs = await env.records();
+    const [c, b, a] = recs; // newest first: i3, i2, i1
+    await env.finish(a.downloadId, { state: 'interrupted', error: 'SERVER_FORBIDDEN' });
+    await env.finish(b.downloadId, { state: 'interrupted', error: 'USER_CANCELED' });
+    await env.finish(c.downloadId, { state: 'interrupted', error: 'FILE_NO_SPACE' });
+    const after = await env.records();
+    const byId = Object.fromEntries(after.map((r) => [r.downloadId, r]));
+    assert(byId[a.downloadId].state === 'interrupted' && byId[a.downloadId].failure.category === 'auth' && byId[a.downloadId].failure.downloadError === 'SERVER_FORBIDDEN', '5a: SERVER_FORBIDDEN -> interrupted/auth with the Chrome code');
+    assert(byId[b.downloadId].state === 'cancelled' && byId[b.downloadId].failure.category === 'cancelled', '5b: USER_CANCELED -> cancelled');
+    assert(byId[c.downloadId].state === 'interrupted' && byId[c.downloadId].failure.category === 'download_interrupted', '5c: other interruption -> download_interrupted');
+    assert(env.notifications.length === 2, '5d: cancelled downloads are not notified; real failures are (2 of 3)');
+    await env.x.restoreOrClearBadge();
+    assert((await env.sandbox.getUnseenFailureCount()) === 2 && env.badge.text === '!', '5e: unseen failures keep a persistent "!" badge even without notifications');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 6. Fallback after a recoverable primary failure ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    const op = await env.x.fbBegin({ pageUrl: 'https://example.com/g/1', sourceUrl: 'https://example.com/img/primary.gif', site: 'example.com' });
+    const group = env.x.createCandidateGroup({
+      id: 'fb_1', provider: 'generic', tier: 'unknown', source: 'initial_src',
+      variants: [{ url: 'https://example.com/img/primary.gif', expectedExtension: '.gif' }], metadata: { contentType: 'image/gif', mediaType: 'gif' }
+    });
+    env.failNextDownloads = 1; // primary download call fails, emergency fallback succeeds
+    const res = await env.x.executeMediaDownload({ targetImageUrl: 'https://example.com/img/primary.gif', rawImageUrl: 'https://example.com/img/fallback.png', settings, mediaPlan: group, pageUrl: 'https://example.com/g/1', feedbackOp: op });
+    await env.tracker.flush();
+    let r = await env.last();
+    assert(res.success === true && r.state === 'saving' && r.fallback === true && env.notifications.length === 0, '6a: recoverable primary failure + successful fallback -> no final failure');
+    assert(r.output.type === 'pic' && r.output.evidence === 'filename_hint' && r.output.mime === '' && r.output.sizeBytes === null, '6b: fallback is "unverified/filename hint" - no inherited primary GIF evidence, no MIME, no size');
+    await env.finish(r.downloadId);
+    r = await env.last();
+    assert(r.state === 'complete' && env.notifications.length === 1 && /не оригинал/.test(FBLib.summarize(r).lines.join(' ')), '6c: fallback completion is reported as a non-original unverified file');
+
+    const env2 = makeEnv();
+    await env2.ready();
+    const op2 = await env2.x.fbBegin({ pageUrl: 'https://example.com/g/1', sourceUrl: 'https://example.com/img/p.gif', site: 'example.com' });
+    const group2 = env2.x.createCandidateGroup({ id: 'fb_2', provider: 'generic', tier: 'unknown', source: 'initial_src', variants: [{ url: 'https://example.com/img/p.gif', expectedExtension: '.gif' }], metadata: {} });
+    env2.failNextDownloads = 2; // primary AND fallback calls fail
+    let threw = false;
+    try { await env2.x.executeMediaDownload({ targetImageUrl: 'https://example.com/img/p.gif', rawImageUrl: 'https://example.com/img/f.png', settings, mediaPlan: group2, pageUrl: 'https://example.com/g/1', feedbackOp: op2 }); } catch (_) { threw = true; }
+    await env2.tracker.flush();
+    const r2 = await env2.last();
+    assert(threw && r2.state === 'failed' && r2.failure.stage === 'save' && env2.notifications.length === 1, '6d: when the fallback also fails, the operation fails once (stage save) and is notified once');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 7. Concurrency, early terminal events, unknown IDs ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    await Promise.all([env.click(imageClick('c1')), env.click(imageClick('c2')), env.click(imageClick('c3'))]);
+    const recs = await env.records();
+    assert(recs.length === 3 && new Set(recs.map((r) => r.id)).size === 3 && new Set(recs.map((r) => r.downloadId)).size === 3, '7a: concurrent operations get distinct correlation IDs and download IDs');
+    const ids = recs.map((r) => r.downloadId).sort((x, y) => y - x);
+    await env.finish(ids[0]);
+    await env.finish(ids[2], { state: 'interrupted', error: 'NETWORK_FAILED' });
+    await env.finish(ids[1]);
+    const after = await env.records();
+    const states = Object.fromEntries(after.map((r) => [r.downloadId, r.state]));
+    assert(states[ids[0]] === 'complete' && states[ids[1]] === 'complete' && states[ids[2]] === 'interrupted', '7b: out-of-order terminal events settle the matching operations only');
+    assert(env.notifications.length === 3, '7c: exactly one notification per finished operation');
+    const before = (await env.records()).length;
+    await env.emitDownload({ id: 99999, state: { current: 'complete' } });
+    await env.emitDownload({ id: 424242, state: { current: 'interrupted' }, error: { current: 'NETWORK_FAILED' } });
+    await env.tracker.flush();
+    assert((await env.records()).length === before && env.notifications.length === 3, '7d: terminal events for unrelated (non-extension) downloads are ignored');
+
+    const envE = makeEnv();
+    await envE.ready();
+    const nextId = envE.nextId;
+    envE.sandbox.earlyTerminalDownloadStates.set(nextId, { state: 'complete', errorCode: null, timestamp: Date.now() });
+    envE.downloadsDb.set(nextId, { id: nextId, state: 'complete', fileSize: 777, exists: true });
+    await envE.click(imageClick('e1'));
+    const re = await envE.last();
+    assert(re.state === 'complete' && re.output.sizeBytes === 777 && envE.notifications.length === 1, '7e: a terminal event that arrived before the download ID was registered completes the operation once');
+
+    const envD = makeEnv();
+    await envD.ready();
+    envD.tabsMsgHandler = async () => ({ type: 'image', url: 'https://pbs.twimg.com/media/DUP?format=jpg&name=orig' });
+    let hold;
+    envD.fetchImpl = (u) => new Promise((res) => { hold = () => res({ ok: true, status: 200, headers: { get: (h) => (h.toLowerCase() === 'content-type' ? 'image/jpeg' : '100') } }); });
+    const info = { menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/u/status/3' };
+    const p1 = envD.contextMenuHandler(info, { id: 8, url: info.pageUrl });
+    await tick(); await tick(); await tick();
+    await envD.contextMenuHandler(info, { id: 8, url: info.pageUrl });
+    await envD.tracker.flush();
+    assert((await envD.records()).length === 1, '7f: a duplicate in-flight request does not leave an orphan operation');
+    hold && hold();
+    await p1;
+  }
+
+  // =================================================================================================
+  console.log('\n--- 8. Service-worker restart recovery and stale mappings ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    await env.click(imageClick('r1'));
+    await env.click(imageClick('r2'));
+    await env.click(imageClick('r3'));
+    await env.click(imageClick('r4'));
+    const [r4, r3, r2, r1] = await env.records();
+    const orphan = await env.x.fbBegin({ pageUrl: 'https://example.com/p', sourceUrl: 'https://example.com/z.jpg', site: 'example.com' }); // never reached a download
+    const gone = r4;
+    // Chrome-side outcomes while the worker was dead:
+    env.downloadsDb.get(r1.downloadId).state = 'complete'; env.downloadsDb.get(r1.downloadId).fileSize = 4321;
+    env.downloadsDb.get(r2.downloadId).state = 'interrupted'; env.downloadsDb.get(r2.downloadId).error = 'SERVER_FORBIDDEN';
+    // r3 still in progress; r4's download record vanished:
+    env.downloadsDb.delete(gone.downloadId);
+    const persisted = JSON.parse(JSON.stringify(env.session));
+    const env2 = makeEnv({ session: persisted, downloadsDb: env.downloadsDb });
+    await env2.ready();
+    const rec = Object.fromEntries((await env2.records()).map((r) => [r.id, r]));
+    assert(rec[r1.id].state === 'complete' && rec[r1.id].output.sizeBytes === 4321, '8a: restart reconciles a saving operation whose download completed (existing ID used)');
+    assert(rec[r2.id].state === 'interrupted' && rec[r2.id].failure.category === 'auth', '8b: restart reconciles an interrupted download');
+    assert(rec[r3.id].state === 'saving', '8c: an in-progress download stays "saving" until its event arrives');
+    assert(rec[gone.id].state === 'failed' && rec[gone.id].failure.category === 'outcome_unknown', '8d: a missing download record is reported as unknown outcome, never as success');
+    assert(rec[orphan].state === 'failed' && rec[orphan].failure.category === 'worker_restarted', '8e: an operation that never reached a download is reported as interrupted by the restart');
+    assert(env2.downloadCalls.length === 0, '8f: recovery never re-downloads');
+    await env2.finish(r3.downloadId);
+    const after = Object.fromEntries((await env2.records()).map((r) => [r.id, r]));
+    assert(after[r3.id].state === 'complete', '8g: a later event after restart completes the recovered mapping');
+    const n = env2.notifications.length;
+    const env3 = makeEnv({ session: JSON.parse(JSON.stringify(env2.session)), downloadsDb: env2.downloadsDb });
+    await env3.ready();
+    assert(env3.notifications.length === 0 && n >= 1, '8h: operations already notified are not notified again after another restart');
+    const stale = (await env3.records()).find((r) => r.id === r1.id);
+    await env3.emitDownload({ id: stale.downloadId, state: { current: 'interrupted' }, error: { current: 'NETWORK_FAILED' } });
+    await env3.tracker.flush();
+    assert(((await env3.records()).find((r) => r.id === r1.id)).state === 'complete', '8i: a stale event for an already-terminal operation is ignored');
+    const tampered = JSON.parse(JSON.stringify(env2.session));
+    tampered[env.tracker.STORAGE_KEY].ops.push({ id: '../../evil', createdAt: 1 }, 'garbage', { id: 'op-zzzzzz', createdAt: 5, state: 'complete', output: { sizeBytes: 'big' }, password: 'x' });
+    const env4 = makeEnv({ session: tampered, downloadsDb: env2.downloadsDb });
+    await env4.ready();
+    const list4 = await env4.records();
+    assert(!list4.some((r) => r.id === '../../evil') && list4.every((r) => !('password' in r)), '8j: corrupted/tampered persisted records are sanitized or dropped');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 9. Storage, notification and clipboard failures never change the download ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    env.failNotificationCreate = true;
+    await env.click(imageClick('n1'));
+    let r = await env.last();
+    await env.finish(r.downloadId);
+    r = await env.last();
+    assert(env.downloadCalls.length === 1 && r.state === 'complete', '9a: notification API errors do not affect the download or the record');
+
+    const env2 = makeEnv({ noNotifications: true });
+    await env2.ready();
+    await env2.click(imageClick('n2'));
+    const r2 = await env2.last();
+    await env2.finish(r2.downloadId, { state: 'interrupted', error: 'NETWORK_FAILED' });
+    assert((await env2.last()).state === 'interrupted' && (await env2.sandbox.getUnseenFailureCount()) === 1, '9b: without a notifications API the failure is still stored and flagged');
+
+    const env3 = makeEnv();
+    await env3.ready();
+    env3.failSessionSet = true;
+    await env3.click(imageClick('n3'));
+    assert(env3.downloadCalls.length === 1 && (await env3.last()).state === 'saving', '9c: storage write failures do not abort or duplicate the download');
+
+    const env4 = makeEnv({ local: { notifySuccess: false } });
+    await env4.ready();
+    await env4.click(imageClick('n4'));
+    await env4.click(imageClick('n5'));
+    const [b, a] = await env4.records();
+    await env4.finish(a.downloadId);
+    await env4.finish(b.downloadId, { state: 'interrupted', error: 'NETWORK_FAILED' });
+    assert(env4.notifications.length === 1 && env4.notifications[0].opts.silent === false, '9d: with routine success notifications off, success is silent in the UI but failures still notify');
+    assert((await env4.records()).some((r) => r.state === 'complete'), '9e: the successful save is still listed');
+
+    const env5 = makeEnv();
+    await env5.ready();
+    await env5.click(imageClick('n6'));
+    const r5 = await env5.last();
+    env5.failLocalGet = true; // the notifier cannot read the preference at completion time
+    await env5.finish(r5.downloadId);
+    assert((await env5.last()).state === 'complete' && env5.notifications.length === 1, '9f: a failing preference read keeps the documented default (success notification) and does not break feedback');
+
+    const env7 = makeEnv();
+    await env7.ready();
+    env7.failLocalGet = true; // settings cannot be read by the handler itself
+    await env7.click(imageClick('n7'));
+    const r7 = await env7.last();
+    assert(env7.downloadCalls.length === 0 && r7.state === 'failed' && r7.downloadId === null && env7.notifications.length === 1, '9h: an exception inside the production handler fails the operation visibly (no download, one notification)');
+
+    const env6 = makeEnv();
+    await env6.ready();
+    const ids = [];
+    for (let i = 0; i < 7; i++) { await env6.click(imageClick('b' + i)); }
+    for (const rr of await env6.records()) await env6.finish(rr.downloadId);
+    assert(env6.notifications.length <= 4 && (await env6.records()).filter((r) => r.state === 'complete').length === 7, '9g: a burst of successes is throttled to at most 4 notifications (all remain listed)');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 10. Privacy of persisted diagnostics, bounds and retention ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    const signed = 'https://cdn.example.com/private/user42/secret-name.jpg?X-Amz-Signature=SIGSECRET&token=TOKSECRET#fragSECRET';
+    await env.click({ menuItemId: 'save-image-item', srcUrl: signed, pageUrl: 'https://example.com/u/user42/post/9?session=PAGESECRET', mediaType: 'image' });
+    const r = await env.last();
+    await env.finish(r.downloadId);
+    const stored = JSON.stringify(env.session[env.tracker.STORAGE_KEY]);
+    assert(!/SIGSECRET|TOKSECRET|fragSECRET|PAGESECRET|user42|private|X-Amz|\?|#/.test(stored), '10a: persisted state contains no paths, queries, fragments, signed parameters or tokens (only the saved basename, by design)');
+    assert(!/blob:|data:/.test(stored), '10b: no Blob/data URLs in persisted diagnostics');
+    assert(stored.length < 4000, '10c: persisted state stays small');
+    assert(Object.keys(env.local).every((k) => k !== env.tracker.STORAGE_KEY), '10d: diagnostics live in session storage only (not persisted across browser restarts)');
+
+    const FB = FBLib;
+    let t = 1000;
+    const store = {};
+    const tr = vm.runInContext('globalThis', (() => { const s = { console }; vm.createContext(s); vm.runInContext(read('lib/feedback.js'), s); vm.runInContext(read('lib/feedback_tracker.js'), s); return s; })());
+    const mk = (now) => tr.ImageSaverFeedbackTracker.createTracker({
+      storage: { get: async (k) => store[k], set: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); } },
+      now: () => now.v, genId: (() => { let n = 0; return () => 'op-' + (++n) + 'abcde'; })(),
+      getDownloadItem: async () => null, peekEarlyTerminal: () => undefined, notify: async () => {}, log: () => {}
+    });
+    const clock = { v: Date.now() };
+    const tracker = mk(clock);
+    for (let i = 0; i < 30; i++) { const id = await tracker.begin({ pageUrl: 'https://example.com/', sourceUrl: 'https://example.com/a.jpg', site: 'example.com' }); await tracker.fail(id, { stage: 'resolve', code: 'NOT_FOUND' }); }
+    assert((await tracker.list()).length === FB.LIMITS.maxOps, '10e: record count is bounded (oldest terminal evicted)');
+    clock.v += FB.LIMITS.retentionMs + 1000;
+    const id2 = await tracker.begin({ pageUrl: 'https://example.com/', sourceUrl: 'https://example.com/b.jpg', site: 'example.com' });
+    const kept = await tracker.list();
+    assert(kept.length === 1 && kept[0].id === id2, '10f: terminal records older than the retention window are evicted');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 11. Bug report: preview, bounds, redaction, malicious text ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    env.fetchImpl = async () => ({ ok: false, status: 403, headers: { get: () => '' } });
+    await env.click(imageClick('rep1'));
+    const rec = await env.last();
+    const evil = '<img src=x onerror=alert(1)> https://evil.example/?token=NOTESECRET C:\\Users\\Ivan\\a.png ' + 'Z'.repeat(5000);
+    const report = FBLib.buildReport(rec, { notes: evil, env: { version: '2.0.0', browser: 'Chromium 126' }, now: 1700000000000 });
+    assert(report.length <= FBLib.LIMITS.report && report.startsWith('Image Saver bug report'), '11a: report is bounded and starts with a title');
+    assert(!/NOTESECRET|Ivan|ZZZZZZZZ|https?:\/\//.test(report), '11b: user notes are redacted (URLs, local paths, opaque strings) and bounded');
+    assert(/correlation_id: op-/.test(report) && /extension_version: 2\.0\.0/.test(report) && /browser: Chromium 126/.test(report) && /timestamp: 2023-/.test(report), '11c: report has version, browser (when reliable), timestamp and correlation ID');
+    assert(/http_status: (not observed|403)/.test(report) && /source_host: example\.com/.test(report) && !/example\.com\/i\//.test(report), '11d: status is observed-or-"not observed"; only the safe host is included');
+    assert(/failing_stage: /.test(report) && /type_evidence: unknown/.test(report) && /expected_outcome: /.test(report) && /actual_outcome: /.test(report), '11e: report has stage, type evidence and expected/actual outcome');
+    assert(!/browser:/.test(FBLib.buildReport(rec, { env: { version: '2.0.0' } })) && /extension_version: unknown/.test(FBLib.buildReport(rec, { env: { version: '<b>' } })), '11f: browser is omitted when unavailable; a malformed version is not echoed');
+    const fakeHostile = Object.assign({}, rec, { site: '"><script>', failure: Object.assign({}, rec.failure, { code: '<script>alert(1)</script>' }), extra: 'x' });
+    const rh = FBLib.buildReport(fakeHostile, {});
+    assert(!/<script|alert\(1\)/.test(rh), '11g: report is generated from the allowlisted record only (hostile fields dropped)');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 12. UI boundary: the page controllers with the production background ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    env.fetchImpl = async () => ({ ok: false, status: 403, headers: { get: () => '' } });
+    await env.click(imageClick('ui1'));
+    env.fetchImpl = null;
+    await env.click(imageClick('ui2'));
+    const okRec = await env.last();
+    await env.finish(okRec.downloadId);
+
+    const clipboard = { texts: [], fail: false, writeText: async (t) => { if (clipboard.fail) throw new Error('DENIED'); clipboard.texts.push(t); } };
+    const sentActions = [];
+    const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
+    const uiChrome = {
+      runtime: {
+        getManifest: () => ({ version: '2.0.0' }),
+        getURL: (p) => `chrome-extension://testid/${p}`,
+        sendMessage: (msg) => new Promise((resolve) => {
+          sentActions.push(msg.action);
+          let responded = false;
+          for (const l of env.messageListeners) { const keep = l(msg, extSender, (resp) => { responded = true; resolve(resp); }); if (keep === true || responded) break; }
+          if (!responded) setTimeout(() => resolve(undefined), 0);
+        })
+      },
+      storage: { local: { get: async (d) => ({ ...d, ...env.local }), set: async (v) => { if (env.failLocalSet) throw new Error('QUOTA'); Object.assign(env.local, v); } } },
+      tabs: { create: (o) => env.createdTabs.push(o) }
+    };
+    const navi = { clipboard, userAgentData: { brands: [{ brand: 'Not A Brand', version: '99' }, { brand: 'Chromium', version: '126' }] } };
+    // The page behavior is the controller of ui/src/core; its React rendering (roles, clipboard UI, expansion) is covered by test_ui_render.js.
+    const list = createFeedbackList({ chrome: uiChrome, FB: FBLib, navigator: navi }, { limit: 5, openFull: true });
+    await list.start();
+    const ls = list.store.getState();
+    const rowsText = ls.records.map((r) => { const p = present.rowParts(FBLib, r); return p.name ? `${p.name} ${p.meta}` : p.legacy; }).join('\n');
+    assert(ls.status === 'ready' && /Сохранено/.test(rowsText) && /Не удалось|Нужен доступ|Причина не определена/.test(rowsText), '12a: popup lists the recent results from the background tracker');
+    const uiSrc = fs.readdirSync(path.resolve(ROOT, 'ui/src/components/app')).map((f) => read(`ui/src/components/app/${f}`)).join('\n') + read('ui/src/core/feedbackList.js');
+    assert(!/dangerouslySetInnerHTML|innerHTML/.test(uiSrc), '12b: the UI renders through text nodes only (no HTML injection)');
+    assert((await env.sandbox.getUnseenFailureCount()) === 0 && sentActions.includes('FEEDBACK_MARK_SEEN'), '12c: viewing the list acknowledges failures (badge cleared)');
+    assert(env.badge.text !== '!', '12d: toolbar "!" badge is cleared after the failure was viewed');
+
+    const failedRec = ls.records.find((r) => present.hasReport(r));
+    const rep0 = present.buildReportText(FBLib, failedRec, '', { version: list.env.version, browser: list.env.browser });
+    assert(rep0.startsWith('Image Saver bug report') && /browser: Chromium 126/.test(rep0) && FBLib.LIMITS.notes === 500, '12e: details build a report (with browser only when reliable) and notes are bounded');
+    const rep1 = present.buildReportText(FBLib, failedRec, 'save fails <b>bold</b> https://x.test/?token=NOTE123', { version: list.env.version, browser: list.env.browser });
+    assert(/user_notes: save fails/.test(rep1) && !/NOTE123|https?:/.test(rep1), '12f: reproduction notes enter the report and are redacted');
+    await present.copyText(rep1, navi);
+    assert(clipboard.texts.length === 1 && clipboard.texts[0] === rep1, '12g: the report reaches the clipboard only through an explicit copy of exactly the previewed text');
+    clipboard.fail = true;
+    let copyFailed = false;
+    try { await present.copyText(rep1, navi); } catch (_) { copyFailed = true; }
+    assert(copyFailed && clipboard.texts.length === 1, '12h: a clipboard failure propagates, so the UI can report it truthfully and select the text for manual copy');
+    assert(/Автоматический повтор не выполняется/.test(present.RETRY_HINT) && !present.hasReport(ls.records.find((r) => r.state === 'complete')) && !/>\s*(Повторить|Retry)/i.test(read('ui/src/components/app/result-details.tsx')), '12i: no automatic/blind retry control; the manual retry boundary is explained');
+
+    const settingsCtl = createSettings({ chrome: uiChrome, FolderPath: {}, setTimeout: () => 0, clearTimeout() {} });
+    await settingsCtl.setNotifySuccess(false);
+    assert(env.local.notifySuccess === false, '12j: the routine-success preference persists immediately');
+    env.failLocalSet = true;
+    await settingsCtl.setNotifySuccess(true);
+    assert(settingsCtl.store.getState().notify.checked === false && /Не удалось сохранить настройку/.test(settingsCtl.store.getState().notify.error) && env.local.notifySuccess === false, '12k: a storage failure reverts the preference and is reported');
+    env.failLocalSet = false;
+
+    await list.openFull(ls.records[0]);
+    assert(env.createdTabs.length === 1 && env.createdTabs[0].url === `chrome-extension://testid/popup/popup.html?op=${encodeURIComponent(ls.records[0].id)}#history`, '12l: the full page (history section, that operation) opens only after an explicit action');
+
+    // Message API: sender validation
+    let denied = null;
+    const l = env.messageListeners.find(() => true);
+    for (const listener of env.messageListeners) listener({ action: 'FEEDBACK_LIST' }, { id: 'testid', url: 'https://evil.example/page', tab: { id: 1 } }, (r) => { denied = r; });
+    assert(denied && denied.success === false && denied.error === 'FORBIDDEN', '12m: content-script/web senders cannot read feedback records');
+    let foreign = null;
+    for (const listener of env.messageListeners) listener({ action: 'FEEDBACK_LIST' }, { id: 'other', url: 'chrome-extension://other/x.html' }, (r) => { foreign = r; });
+    assert(foreign && foreign.success === false, '12n: other extensions cannot read feedback records');
+
+    // Load failure shows an error instead of throwing
+    const brokenChrome = Object.assign({}, uiChrome, { runtime: Object.assign({}, uiChrome.runtime, { sendMessage: async () => { throw new Error('NO_WORKER'); } }) });
+    const broken = createFeedbackList({ chrome: brokenChrome, FB: FBLib, navigator: navi }, { limit: 5 });
+    await broken.start();
+    assert(broken.store.getState().status === 'error' && /Не удалось загрузить результаты/.test(broken.store.getState().error), '12o: a messaging failure is shown as text, the page keeps working');
+
+    // Unknown metadata renders honestly
+    const unknownRec = FBLib.sanitizeRecord({ id: 'op-unknown1', createdAt: Date.now(), state: 'complete' });
+    const s = FBLib.summarize(unknownRec).lines.join('\n');
+    assert(/сайт неизвестен/.test(s) && /тип неизвестен/.test(s) && /размер неизвестен/.test(s) && !/подтвержд/.test(s), '12p: unknown site/type/size stay "unknown" and nothing is claimed as verified');
+    const estimated = FBLib.sanitizeRecord({ id: 'op-estimate', createdAt: Date.now(), state: 'complete', site: 'x', output: { type: 'video', ext: '.mp4', evidence: 'filename_hint', sizeBytes: 5242880, sizeKind: 'estimated' } });
+    const es = FBLib.summarize(estimated).lines.join('\n');
+    assert(/оценка по заголовкам/.test(es) && /не подтвержд/.test(es) && !/измерено/.test(es), '12q: header estimates and filename hints are labelled as such, not as measured/verified');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 13. Notification click handling (explicit user action) ---');
+  {
+    const env = makeEnv();
+    await env.ready();
+    await env.click(imageClick('k1'));
+    await env.click(imageClick('k2'));
+    const [b, a] = await env.records();
+    await env.finish(a.downloadId);
+    await env.finish(b.downloadId, { state: 'interrupted', error: 'NETWORK_FAILED' });
+    const click = async (id) => { for (const l of env.notificationClickListeners) await l(id); };
+    await click('imgsaver:' + a.id);
+    await click('imgsaver:' + b.id);
+    await click('someone-else:1');
+    await click('imgsaver:../../x');
+    assert(env.shown.length === 1 && env.shown[0] === a.downloadId, '13a: clicking a success reveals only the extension-owned file');
+    assert(env.createdTabs.length === 1 && env.createdTabs[0].url === `chrome-extension://testid/popup/popup.html?op=${encodeURIComponent(b.id)}#history`, '13b: clicking a failure opens the full page at that operation (history section); foreign IDs are ignored');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 14. Static contract: permissions, pages, no remote code ---');
+  {
+    const manifest = JSON.parse(read('manifest.json'));
+    assert(manifest.permissions.includes('notifications') && !manifest.permissions.includes('tabs') && !manifest.permissions.includes('history') && !manifest.permissions.includes('clipboardWrite'), '14a: only the narrow "notifications" permission was added (no tabs/history/clipboard permissions)');
+    assert(manifest.manifest_version === 3 && JSON.stringify(manifest.host_permissions) === JSON.stringify(['http://*/*', 'https://*/*']) && manifest.background.service_worker === 'background.js', '14b: MV3, host permissions and service worker are unchanged');
+    assert(!manifest.content_scripts.some((c) => (c.js || []).some((f) => /feedback/.test(f))), '14c: no feedback code is injected into web pages');
+    const popupHtml = read('popup/quick.html');
+    const detailsHtml = read('popup/popup.html');
+    assert(/<script src="\.\.\/lib\/feedback\.js"><\/script>/.test(popupHtml) && /id="root"/.test(popupHtml) && /type="module"/.test(popupHtml), '14d: the compact popup loads the shared feedback library and its bundle and has its mount point');
+    assert(/id="root"/.test(detailsHtml) && /<ResultsList compact=\{false\}/.test(read('ui/src/components/app/full-app.tsx')) && !/<script[^>]+src="https?:/.test(popupHtml + detailsHtml) && !/\son\w+=/.test(popupHtml + detailsHtml), '14e: the full page exists; no remote scripts or inline handlers (MV3 CSP)');
+    assert(fs.existsSync(path.resolve(ROOT, 'icons/notification.png')) && fs.readFileSync(path.resolve(ROOT, 'icons/notification.png')).slice(1, 4).toString() === 'PNG', '14f: notification icon is packaged');
+    const fbSources = read('lib/feedback.js') + read('lib/feedback_tracker.js') + read('ui/src/core/feedbackList.js') + read('ui/src/core/history.js');
+    assert(!/\binnerHTML\b|\beval\(|new Function|document\.write|\bfetch\(|XMLHttpRequest|sendBeacon|\.createIssue|api\.github\.com/.test(fbSources.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')), '14g: feedback code has no innerHTML/eval and no network or issue-creation calls');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 15. Event/ID race: terminal event before the download ID is attached ---');
+  {
+    // Chrome item is already terminal and the REAL onChanged listener starts before downloads.download
+    // hands back the ID; the listener is then held on its storage lookup while the handler attaches.
+    const raceRun = async (terminal, { duplicate = false } = {}) => {
+      const env = makeEnv();
+      await env.ready();
+      let release;
+      const gate = new Promise((res) => { release = res; });
+      const origGet = env.chrome.storage.session.get;
+      env.chrome.storage.session.get = async (key) => {
+        if (typeof key === 'string' && key.startsWith('active_dl_blob_')) await gate;
+        return origGet(key);
+      };
+      let emitted;
+      env.chrome.downloads.download = (options, cb) => {
+        env.downloadCalls.push(options);
+        const id = env.nextId++;
+        env.downloadsDb.set(id, { id, state: terminal.state, error: terminal.error, fileSize: 999, exists: true });
+        emitted = env.emitDownload({ id, state: { current: terminal.state, previous: 'in_progress' }, ...(terminal.error ? { error: { current: terminal.error } } : {}) });
+        if (typeof cb === 'function') cb(id);
+        return Promise.resolve(id);
+      };
+      const click = env.contextMenuHandler(imageClick('race'), { id: 7, url: 'https://example.com/gallery/1' });
+      for (let i = 0; i < 40; i++) await tick();
+      release();
+      await click;
+      await emitted;
+      await env.tracker.flush();
+      if (duplicate) {
+        const id = env.nextId - 1;
+        await env.emitDownload({ id, state: { current: terminal.state } });
+        await env.emitDownload({ id, state: { current: terminal.state } });
+        await env.tracker.flush();
+      }
+      return env;
+    };
+
+    const ec = await raceRun({ state: 'complete' });
+    const rc = await ec.last();
+    assert(rc.state === 'complete' && rc.output.sizeBytes === 999 && ec.notifications.length === 1 && ec.downloadCalls.length === 1, '15a: complete event before/during attachment -> complete, exactly one notification, one download call');
+    assert(ec.searchCalls.every((q) => Object.keys(q).join() === 'id'), '15b: reconciliation looked up only the extension-owned download ID');
+    assert(!ec.sandbox.earlyTerminalDownloadStates.has(ec.nextId - 1), '15c: no stale early-terminal cache entry is left behind');
+
+    const ei = await raceRun({ state: 'interrupted', error: 'NETWORK_FAILED' });
+    const ri = await ei.last();
+    assert(ri.state === 'interrupted' && ri.failure.downloadError === 'NETWORK_FAILED' && ei.notifications.length === 1 && ei.downloadCalls.length === 1, '15d: interrupted event before/during attachment -> interrupted, one failure notification, one download call');
+
+    const ed = await raceRun({ state: 'complete' }, { duplicate: true });
+    assert((await ed.records()).length === 1 && ed.notifications.length === 1, '15e: duplicated terminal events after settlement produce no second result or notification');
+
+    const eu = await raceRun({ state: 'interrupted', error: 'USER_CANCELED' });
+    assert((await eu.last()).state === 'cancelled' && eu.notifications.length === 0, '15f: a cancel during attachment settles as cancelled (no toast)');
+
+    const en = makeEnv();
+    await en.ready();
+    await en.click(imageClick('later'));
+    const pending = await en.last();
+    assert(pending.state === 'saving' && en.notifications.length === 0, '15g: an in-progress download is not settled by the owned-ID lookup');
+    await en.finish(pending.downloadId);
+    assert((await en.last()).state === 'complete' && en.notifications.length === 1 && en.downloadCalls.length === 1, '15h: ordinary later completion still settles once');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 16. Failure status provenance (NOT_FOUND, observed vs defaulted statuses) ---');
+  {
+    const run = async (plan) => {
+      const env = makeEnv();
+      await env.ready();
+      env.sandbox.resolveOriginalMediaPlan = async () => env.x.adaptCandidateToGroup(plan);
+      await env.click(imageClick('nf'));
+      const rec = await env.last();
+      const summary = FBLib.summarize(rec);
+      const report = FBLib.buildReport(rec, { env: { version: '2.0.0' } });
+      const toast = env.notifications.length ? `${env.notifications[0].opts.title} ${env.notifications[0].opts.message}` : '';
+      return { env, rec, summary, report, toast, all: `${summary.explanation} ${summary.lines.join(' ')} ${report} ${toast}` };
+    };
+    const base = { url: 'https://example.com/a.jpg', source: 'initial_src', error: 'NOT_FOUND' };
+
+    for (const st of [404, 410]) {
+      const r = await run({ ...base, _verificationStatus: st });
+      assert(r.rec.state === 'failed' && r.rec.failure.category === 'not_found' && r.rec.failure.status === st && r.env.downloadCalls.length === 0, `16a-${st}: observed ${st} is kept with category not_found and no download`);
+      assert(r.summary.explanation.includes(`HTTP ${st}`) && r.summary.lines.includes(`HTTP-статус: ${st}`) && new RegExp(`http_status: ${st}`).test(r.report), `16b-${st}: details and copied report show the observed status ${st}`);
+    }
+
+    const r500 = await run({ ...base, _verificationStatus: 500 });
+    assert(r500.rec.failure.status === 500 && r500.rec.failure.category === 'server_error', '16c: observed 500 is kept and is NOT classified as "file absent"');
+    assert(!/404\/410|подтвердил, что файл отсутствует/.test(r500.all) && r500.summary.explanation.includes('HTTP 500') && r500.toast.includes('Ошибка сервера'), '16d: 500 notification, details and report make no 404/410 absence claim');
+
+    const rNone = await run({ ...base });
+    assert(rNone.rec.failure.category === 'not_found' && rNone.rec.failure.status === null, '16e: NOT_FOUND without any status stays not_found with status unknown');
+    assert(!/404|410/.test(rNone.all) && rNone.summary.lines.includes('HTTP-статус: не наблюдался') && /http_status: not observed/.test(rNone.report) && rNone.summary.explanation.includes('не наблюдался'), '16f: no HTTP claim in notification, details or report; status shown as "not observed"');
+
+    const rSyn = await run({ ...base, _verificationStatus: 404, _verificationStatusObserved: false });
+    assert(rSyn.rec.failure.status === null && !/HTTP 404|HTTP-статус: 404|http_status: 404/.test(rSyn.all), '16g: a pipeline-default status (marked unobserved) is not reported as an observation');
+
+    const rCtr = await run({ ...base, _verificationStatus: 200 });
+    assert(rCtr.rec.failure.status === 200 && rCtr.rec.failure.category !== 'not_found' && !/404\/410/.test(rCtr.all), '16h: contradictory evidence (NOT_FOUND with HTTP 200) is not presented as confirmed absence');
+
+    assert(FBLib.classifyFailure({ stage: 'download', code: 'NETWORK_FAILED' }) === 'network' && FBLib.classifyFailure({ code: 'NOT_FOUND' }) === 'not_found' && FBLib.classifyFailure({ code: 'NOT_FOUND', status: 500 }) === 'server_error' && FBLib.categoryText('not_found', null).explanation.indexOf('HTTP 4') === -1, '16i: network failure stays network; NOT_FOUND alone makes no numeric claim');
+
+    // Real resolver path: an authoritative video whose probe reports no status (404 is the pipeline default).
+    const envP = makeEnv();
+    await envP.ready();
+    envP.fetchImpl = async () => { throw new Error('NETWORK down'); };
+    await envP.click({ menuItemId: 'save-image-item', srcUrl: 'https://example.com/v/clip.mp4', pageUrl: 'https://example.com/p', mediaType: 'video' });
+    const rp = await envP.last();
+    assert(rp && rp.state === 'failed' && rp.downloadId === null && envP.downloadCalls.length === 0 && !/HTTP 404/.test(FBLib.summarize(rp).explanation), '16j: a probe network failure on the production path never yields an invented HTTP 404 explanation');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 17. UX-03 history: recording, bounds, restart, clearing, post links, UI ---');
+  {
+    const hEnv = (o = {}) => makeEnv({ ...o, local: { historyEnabled: true, ...(o.local || {}) } });
+    const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
+    const ask = (env, action, sender = extSender) => new Promise((resolve) => {
+      let responded = false;
+      for (const l of env.messageListeners) { const keep = l({ action }, sender, (r) => { responded = true; resolve(r); }); if (keep === true || responded) break; }
+      if (!responded) setTimeout(() => resolve(undefined), 0);
+    });
+    const hist = async (env) => (await ask(env, 'HISTORY_LIST')).records;
+    const synth = (n, extra = {}) => ({ id: `op-hist${String(n).padStart(4, '0')}`, createdAt: Date.now() - 1000, updatedAt: Date.now() - 1000 + n, state: 'complete', ...extra });
+
+    // pure post-link validation
+    const P = FBLib.safePostUrl;
+    assert(P('https://x.com/user_1/status/123456?s=20&t=abc#frag') === 'https://x.com/user_1/status/123456' && P('https://twitter.com/a/status/9/photo/1') === 'https://x.com/a/status/9' && P('https://x.com/i/status/77') === 'https://x.com/i/status/77', '17a: owning-post link is canonicalised (query, fragment and extra path dropped)');
+    assert(['http://x.com/a/status/1', 'https://x.com.evil.com/a/status/1', 'https://evil.com/x.com/a/status/1', 'https://user:pw@x.com/a/status/1', 'https://x.com:444/a/status/1', 'javascript:alert(1)', 'https://x.com/a', 'https://x.com/home', 'https://example.com/post/1', '', null, 5].every((u) => P(u) === ''), '17b: unknown providers, lookalike hosts, credentials, non-status pages and junk give no link (never guessed)');
+
+    // recording from the real handlers
+    const env = hEnv();
+    await env.ready();
+    await env.click(imageClick('h1'));
+    const first = await env.last();
+    assert((await hist(env)).length === 0, '17c: an in-progress (saving) operation is not in history');
+    await env.finish(first.downloadId);
+    env.fetchImpl = async () => ({ ok: false, status: 403, headers: { get: () => '' } });
+    await env.click(imageClick('h2'));
+    env.fetchImpl = null;
+    await env.click(imageClick('h3'));
+    const third = (await env.records()).find((r) => r.state === 'saving');
+    await env.finish(third.downloadId, { state: 'interrupted', error: 'USER_CANCELED' });
+    await env.tracker.flush();
+    const h = await hist(env);
+    assert(h.length === 3 && h[0].state === 'cancelled' && h[1].state === 'failed' && h[2].state === 'complete', '17d: complete, failed and cancelled operations are recorded newest-first');
+    assert(h[2].output.sizeBytes === 12345 && h[1].failure.category === 'auth' && h[1].failure.status === 403, '17e: entries keep measured size and the observed failure evidence');
+    assert(JSON.stringify(env.local.imageSaverHistoryV1).indexOf('http') === -1 && JSON.stringify(env.local.imageSaverHistoryV1).indexOf('.jpg?') === -1, '17f: persisted history holds no URLs (source/signed/blob)');
+    const before = (await hist(env)).length;
+    await env.emitDownload({ id: third.downloadId, state: { current: 'complete' } });
+    await env.tracker.flush();
+    assert((await hist(env)).length === before, '17g: repeated terminal events do not duplicate an entry');
+
+    // restart recovery without duplicates and without re-download
+    const env2 = hEnv({ local: env.local, session: env.session, downloadsDb: env.downloadsDb });
+    await env2.ready();
+    assert((await hist(env2)).length === 3 && env2.downloadCalls.length === 0, '17h: history survives a worker restart without re-downloading');
+    const envR = hEnv();
+    await envR.ready();
+    await envR.click(imageClick('r1'));
+    const pend = await envR.last();
+    envR.downloadsDb.get(pend.downloadId).state = 'complete';
+    envR.downloadsDb.get(pend.downloadId).fileSize = 4242;
+    const envR2 = hEnv({ local: envR.local, session: envR.session, downloadsDb: envR.downloadsDb });
+    await envR2.ready();
+    const hr = await hist(envR2);
+    assert(hr.length === 1 && hr[0].state === 'complete' && hr[0].output.sizeBytes === 4242 && envR2.downloadCalls.length === 0, '17i: an operation finished while the worker was down is recorded once after reconciliation');
+    const envR3 = hEnv({ local: envR2.local, session: envR2.session, downloadsDb: envR2.downloadsDb });
+    await envR3.ready();
+    assert((await hist(envR3)).length === 1, '17j: a second restart does not duplicate it');
+
+    // bounds, retention, concurrency
+    const envB = hEnv();
+    await envB.ready();
+    for (let i = 0; i < 60; i++) await envB.sandbox.feedbackHistory.record(synth(i));
+    const hb = await hist(envB);
+    assert(hb.length === 50 && hb[0].id === 'op-hist0059' && hb[49].id === 'op-hist0010', '17k: history is capped at 50 entries (oldest evicted first)');
+    const old = synth(900, { updatedAt: Date.now() - 8 * 24 * 3600 * 1000, createdAt: Date.now() - 9 * 24 * 3600 * 1000 });
+    envB.local.imageSaverHistoryV1.entries.push(JSON.parse(JSON.stringify(old)));
+    assert(!(await hist(envB)).some((e) => e.id === 'op-hist0900'), '17l: entries older than 7 days are not returned');
+    const envC = hEnv();
+    await envC.ready();
+    await Promise.all(Array.from({ length: 12 }, (_, i) => envC.sandbox.feedbackHistory.record(synth(100 + i))));
+    assert((await hist(envC)).length === 12, '17m: concurrent updates lose no entries');
+    await envC.sandbox.feedbackHistory.record(synth(100, { state: 'failed', failure: { stage: 'download', category: 'network', code: '', status: null, downloadError: '' } }));
+    const hc = await hist(envC);
+    assert(hc.length === 12 && hc.find((e) => e.id === 'op-hist0100').state === 'failed', '17n: re-recording the same operation updates it instead of adding another');
+    assert(!(await envC.sandbox.feedbackHistory.record({ id: 'op-hist9999', createdAt: 5, state: 'saving' })) && !(await envC.sandbox.feedbackHistory.record({ evil: true })), '17o: non-terminal and malformed records are rejected');
+
+    // enable/disable
+    const envD = hEnv({ local: { historyEnabled: false } });
+    await envD.ready();
+    await envD.click(imageClick('d1'));
+    await envD.finish((await envD.last()).downloadId);
+    assert((await hist(envD)).length === 0 && (await envD.last()).state === 'complete' && envD.notifications.length === 1, '17p: with history disabled nothing is recorded; the save and its notification are unaffected');
+    envD.local.historyEnabled = true;
+    await envD.click(imageClick('d2'));
+    await envD.finish((await envD.last()).downloadId);
+    assert((await hist(envD)).length === 1, '17q: re-enabling resumes recording (earlier saves are not back-filled)');
+    envD.local.historyEnabled = false;
+    assert((await hist(envD)).length === 1, '17r: disabling keeps the existing entries until the user clears them');
+
+    // clearing
+    const envK = hEnv();
+    await envK.ready();
+    for (let i = 0; i < 5; i++) await envK.sandbox.feedbackHistory.record(synth(200 + i));
+    envK.failLocalWrite = true;
+    const failedClear = await ask(envK, 'HISTORY_CLEAR');
+    envK.failLocalWrite = false;
+    assert(failedClear.success === false && (await hist(envK)).length === 5, '17s: a failed clear is reported as failure and nothing is claimed deleted');
+    const okClear = await ask(envK, 'HISTORY_CLEAR');
+    assert(okClear.success === true && okClear.records.length === 0 && envK.local.imageSaverHistoryV1.entries.length === 0, '17t: clearing empties the store');
+
+    // history storage failure never changes the download
+    const envF = hEnv();
+    await envF.ready();
+    envF.failLocalWrite = true;
+    await envF.click(imageClick('f1'));
+    await envF.finish((await envF.last()).downloadId);
+    assert((await envF.last()).state === 'complete' && envF.downloadCalls.length === 1 && envF.notifications.length === 1, '17u: a history write failure does not affect the download or its notification');
+
+    // message boundary
+    const forged = await ask(env, 'HISTORY_LIST', { id: 'testid', url: 'https://x.com/home' });
+    const foreign = await ask(env, 'HISTORY_CLEAR', { id: 'other', url: 'chrome-extension://other/x.html' });
+    assert(forged.success === false && forged.error === 'FORBIDDEN' && foreign.success === false && (await hist(env)).length === 3, '17v: history messages are accepted from extension pages only; a forged clear deletes nothing');
+
+    // owning-post link through the X handler
+    const envX = hEnv();
+    await envX.ready();
+    envX.tabsMsgHandler = async () => ({ type: 'image', url: 'https://pbs.twimg.com/media/PX1?format=jpg&name=orig', postUrl: 'https://x.com/someone/status/5550001?s=20#x' });
+    const xi = { menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/home' };
+    await envX.contextMenuHandler(xi, { id: 8, url: xi.pageUrl });
+    await envX.tracker.flush();
+    await envX.finish((await envX.last()).downloadId);
+    const hx = await hist(envX);
+    assert(hx.length === 1 && hx[0].postUrl === 'https://x.com/someone/status/5550001', '17w: the X handler records the verified owning-post link (canonical, no query/fragment)');
+    assert(!/media\/|format=/.test(JSON.stringify(envX.local.imageSaverHistoryV1)), '17x: the media URL is still not stored');
+    const envX2 = hEnv();
+    await envX2.ready();
+    envX2.tabsMsgHandler = async () => ({ type: 'image', url: 'https://pbs.twimg.com/media/PX2?format=jpg&name=orig', postUrl: 'https://evil.example/x.com/a/status/1' });
+    await envX2.contextMenuHandler(xi, { id: 8, url: xi.pageUrl });
+    await envX2.tracker.flush();
+    await envX2.finish((await envX2.last()).downloadId);
+    assert((await hist(envX2))[0].postUrl === '' && (await hist(env))[0].postUrl === '', '17y: an unverifiable post reference leaves the link unknown (also for generic saves)');
+
+    // UI boundary (the controller of ui/src/core; the React rendering is covered by test_ui_render.js)
+    const clipboard = { texts: [], fail: false, writeText: async (t) => { if (clipboard.fail) throw new Error('DENIED'); clipboard.texts.push(t); } };
+    const sent = [];
+    const uiChrome = {
+      runtime: {
+        getManifest: () => ({ version: '2.0.0' }),
+        sendMessage: (msg) => { sent.push(msg.action); return ask(envX, msg.action); }
+      },
+      storage: { local: { get: async (d) => ({ ...d, ...envX.local }), set: async (v) => { if (envX.failUiSet) throw new Error('QUOTA'); Object.assign(envX.local, v); } } }
+    };
+    envX.fetchImpl = async () => ({ ok: false, status: 429, headers: { get: () => '' } });
+    await envX.click(imageClick('ui429'));
+    await envX.tracker.flush();
+    const navi = { clipboard, userAgentData: { brands: [{ brand: 'Chromium', version: '126' }] } };
+    const hctl = createHistory({ chrome: uiChrome, FB: FBLib });
+    await hctl.start();
+    const hs = () => hctl.store.getState();
+    assert(hs().status === 'ready' && hs().records.length === 2 && sent.includes('HISTORY_LIST'), '17z: the history section lists recorded operations');
+    const uiSrc17 = read('ui/src/components/app/history-panel.tsx') + read('ui/src/components/app/result-details.tsx') + read('ui/src/core/history.js');
+    assert(!/dangerouslySetInnerHTML|innerHTML/.test(uiSrc17), '17aa: history UI renders through text nodes only (no HTML injection)');
+    const okRec = hs().records.find((r) => r.state === 'complete');
+    const postHref = present.postUrlOf(FBLib, okRec);
+    assert(postHref === 'https://x.com/someone/status/5550001' && /rel="noopener noreferrer"/.test(read('ui/src/components/app/result-details.tsx')) && /target="_blank"/.test(read('ui/src/components/app/result-details.tsx')), '17ab: the post link is a validated https anchor (noopener, rendered only from the validated URL)');
+    await present.copyText(postHref, navi);
+    assert(clipboard.texts[0] === 'https://x.com/someone/status/5550001', '17ac: copy-link writes exactly the validated link');
+    clipboard.fail = true;
+    let linkCopyFailed = false;
+    try { await present.copyText(postHref, navi); } catch (_) { linkCopyFailed = true; }
+    assert(linkCopyFailed && /Не удалось скопировать ссылку/.test(read('ui/src/components/app/result-details.tsx')), '17ad: a clipboard failure propagates and the UI reports it truthfully');
+    const failRec = hs().records.find((r) => r !== okRec);
+    assert(present.postUrlOf(FBLib, failRec) === '' && /неизвестна/.test(read('ui/src/components/app/result-details.tsx')) && present.hasReport(failRec), '17ae: unknown post says so (no invented link) and a failed entry still offers the bug report');
+    await hctl.setEnabled(false);
+    assert(envX.local.historyEnabled === false, '17af: the history preference is persisted');
+    envX.failUiSet = true;
+    await hctl.setEnabled(true);
+    assert(hs().enabled === false && /Не удалось сохранить настройку/.test(hs().prefError), '17ag: a preference save failure reverts the switch and says so');
+    envX.failUiSet = false;
+    envX.failLocalWrite = true;
+    await hctl.clear();
+    assert(/данные не удалены/.test(hs().error) && hs().records.length === 2, '17ah: a failed clear leaves the list and says nothing was deleted');
+    envX.failLocalWrite = false;
+    await hctl.clear();
+    assert(hs().clearStatus === 'История очищена.' && hs().records.length === 0, '17ai: a successful clear empties the list');
+
+    // static contract
+    const detailsHtml = read('popup/popup.html');
+    const historySrc = (read('ui/src/core/history.js') + read('ui/src/components/app/history-panel.tsx')).replace(/\/\/.*$/gm, '');
+    assert(/id="root"/.test(detailsHtml) && /<HistoryPanel \/>/.test(read('ui/src/components/app/full-app.tsx')) && !/innerHTML|eval\(|fetch\(|sendBeacon/.test(historySrc), '17aj: history is mounted on the details page; no innerHTML/network use');
+    const manifest = JSON.parse(read('manifest.json'));
+    assert(JSON.stringify([...manifest.permissions].sort()) === JSON.stringify(['contextMenus', 'declarativeNetRequest', 'downloads', 'notifications', 'offscreen', 'scripting', 'storage']), '17ak: history adds no permission (unchanged from UX-02/UX-04)');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 18. UX-03 corrections: explicit opt-in, 7-day retention, durable clear boundary, persistent pruning ---');
+  {
+    const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
+    const ask = (env, action) => new Promise((resolve) => {
+      let responded = false;
+      for (const l of env.messageListeners) { const keep = l({ action }, extSender, (r) => { responded = true; resolve(r); }); if (keep === true || responded) break; }
+      if (!responded) setTimeout(() => resolve(undefined), 0);
+    });
+    const hist = async (env) => (await ask(env, 'HISTORY_LIST')).records;
+    const stored = (env) => (env.local.imageSaverHistoryV1 && env.local.imageSaverHistoryV1.entries) || [];
+    const DAY = 24 * 3600 * 1000;
+    const synth = (n, extra = {}) => ({ id: `op-corr${String(n).padStart(4, '0')}`, createdAt: Date.now() - 2000, updatedAt: Date.now() - 1000, state: 'complete', ...extra });
+    const saveOne = async (env, n) => { await env.click(imageClick(n)); const r = await env.last(); await env.finish(r.downloadId); return env.last(); };
+
+    // 1. explicit opt-in
+    const eMissing = makeEnv();
+    await eMissing.ready();
+    const rm = await saveOne(eMissing, 'o1');
+    assert(rm.state === 'complete' && eMissing.notifications.length === 1 && (await hist(eMissing)).length === 0 && !eMissing.local.imageSaverHistoryV1, '18a: a missing preference records nothing (history is opt-in) while the save and notification work');
+    for (const bad of ['true', 1, null, {}, 'yes']) {
+      const e = makeEnv({ local: { historyEnabled: bad } });
+      await e.ready();
+      await saveOne(e, 'o2');
+      assert((await hist(e)).length === 0, `18b: malformed preference ${JSON.stringify(bad)} does not authorize recording`);
+    }
+    const eUnread = makeEnv({ local: { historyEnabled: true } });
+    await eUnread.ready();
+    await eUnread.click(imageClick('o3'));
+    eUnread.failLocalGet = true;
+    await eUnread.finish((await eUnread.last()).downloadId);
+    eUnread.failLocalGet = false;
+    assert((await eUnread.last()).state === 'complete' && eUnread.downloadCalls.length === 1 && (await hist(eUnread)).length === 0, '18c: an unreadable preference does not authorize recording; the download is unaffected');
+    const eOn = makeEnv({ local: { historyEnabled: true } });
+    await eOn.ready();
+    await saveOne(eOn, 'o4');
+    eOn.local.historyEnabled = false;
+    await saveOne(eOn, 'o5');
+    const ho = await hist(eOn);
+    assert(ho.length === 1, '18d: explicit opt-in records; after switching off new saves are not recorded and the existing entry stays accessible');
+    assert(JSON.stringify(FBLib && 1) && read('ui/src/core/history.js').indexOf('=== true') !== -1 && /\{ \[ENABLED_KEY\]: false \}/.test(read('ui/src/core/history.js')), '18e: the UI default and the enabled test are opt-in (false by default, === true)');
+    const mkUi = async (env, getFails) => {
+      const chromeApi = {
+        runtime: { getManifest: () => ({ version: '2.0.0' }), sendMessage: (m) => ask(env, m.action) },
+        storage: { local: { get: async (d) => { if (getFails) throw new Error('UNREADABLE'); return { ...d, ...env.local }; }, set: async (v) => { Object.assign(env.local, v); } } }
+      };
+      const ctl = createHistory({ chrome: chromeApi, FB: FBLib });
+      await ctl.start();
+      return ctl;
+    };
+    const domDefault = await mkUi(makeEnv());
+    assert(domDefault.store.getState().enabled === false, '18f: with no stored preference the UI shows history as off');
+    const domBroken = await mkUi(makeEnv(), true);
+    assert(domBroken.store.getState().enabled === false && /считается выключенной/.test(domBroken.store.getState().prefError), '18g: an unreadable preference is not shown as enabled and the user is told');
+
+    // 2 + 4. seven-day retention, persistent pruning
+    const eR = makeEnv({ local: { historyEnabled: true } });
+    await eR.ready();
+    eR.local.imageSaverHistoryV1 = { v: 1, entries: [
+      synth(1, { updatedAt: Date.now() - (7 * DAY - 60000), createdAt: Date.now() - 7 * DAY }),
+      synth(2, { updatedAt: Date.now() - (7 * DAY + 60000), createdAt: Date.now() - 8 * DAY }),
+      synth(3, { updatedAt: Date.now() - 6 * DAY, createdAt: Date.now() - 6 * DAY })
+    ], clearedAt: 0 };
+    const ids = (await hist(eR)).map((e) => e.id).sort();
+    assert(ids.join() === 'op-corr0001,op-corr0003', '18h: the 7-day boundary keeps an entry 1 minute inside and drops one 1 minute outside');
+    assert(stored(eR).every((e) => e.id !== 'op-corr0002') && stored(eR).length === 2, '18i: the expired entry is physically removed from storage by list()');
+    const eI = makeEnv({ local: { historyEnabled: true, imageSaverHistoryV1: { v: 1, entries: [synth(10, { updatedAt: Date.now() - 9 * DAY, createdAt: Date.now() - 9 * DAY }), ...Array.from({ length: 55 }, (_, i) => synth(100 + i, { updatedAt: Date.now() - 1000 + i }))], clearedAt: 0 } } });
+    for (let i = 0; i < 12; i++) await tick();
+    assert(stored(eI).length === 50 && !stored(eI).some((e) => e.id === 'op-corr0010'), '18j: worker start prunes expired and surplus entries in storage without any new download');
+    const eP = makeEnv({ local: { historyEnabled: true, imageSaverHistoryV1: { v: 1, entries: [synth(20, { updatedAt: Date.now() - 9 * DAY, createdAt: Date.now() - 9 * DAY })], clearedAt: 0 } } });
+    eP.failLocalWrite = true;
+    const listed = await ask(eP, 'HISTORY_LIST');
+    assert(listed.success === true && listed.records.length === 0 && listed.pruneFailed === true && stored(eP).length === 1, '18k: a failed cleanup is reported (pruneFailed) while expired data stays hidden');
+    eP.failLocalWrite = false;
+    const rp = await saveOne(eP, 'p1');
+    assert(rp.state === 'complete' && stored(eP).every((e) => e.id !== 'op-corr0020') && stored(eP).length === 1, '18l: a later successful write also removes the expired entry; saving was never affected');
+    assert(/7 дней/.test(read('ui/src/components/app/history-panel.tsx')) && /7 дней/.test(present.STATS_SCOPE_NOTE) && !/30/.test(read('lib/feedback_history.js').replace(/\/\/.*$/gm, '')) && /RETENTION_MS = 7 \*/.test(read('lib/feedback_history.js')), '18m: retention is 7 days in code and UI text');
+
+    // 3. durable clear boundary
+    const eC = makeEnv({ local: { historyEnabled: true } });
+    await eC.ready();
+    await eC.click(imageClick('c1'));
+    const c1 = await eC.last();
+    eC.failSessionSet = true;
+    await eC.finish(c1.downloadId);
+    eC.failSessionSet = false;
+    assert((await hist(eC)).length === 1 && eC.session.imageSaverFeedbackV1.ops.some((o) => o.state === 'saving'), '18n: setup - history recorded the result while the persisted session record is still "saving"');
+    const clr = await ask(eC, 'HISTORY_CLEAR');
+    assert(clr.success === true && clr.records.length === 0 && eC.local.imageSaverHistoryV1.clearedAt > 0, '18o: clear succeeds and persists a clear boundary');
+    const eC2 = makeEnv({ local: eC.local, session: eC.session, downloadsDb: eC.downloadsDb });
+    await eC2.ready();
+    assert((await hist(eC2)).length === 0 && eC2.downloadCalls.length === 0 && stored(eC2).length === 0, '18p: after a restart the stale session record cannot resurrect the cleared operation (no re-download)');
+    assert(eC2.session.imageSaverFeedbackV1.ops.some((o) => o.id === c1.id && o.state === 'complete'), '18q: session feedback is still reconciled (not erased) and the download state is unchanged');
+    await new Promise((r) => setTimeout(r, 5));
+    await saveOne(eC2, 'c2');
+    const eC3 = makeEnv({ local: eC2.local, session: eC2.session, downloadsDb: eC2.downloadsDb });
+    await eC3.ready();
+    assert((await hist(eC3)).length === 1 && (await hist(eC3))[0].id !== c1.id, '18r: an operation started after the clear is recorded and survives restarts');
+
+    // pending writes around a clear
+    const eQ = makeEnv({ local: { historyEnabled: true } });
+    await eQ.ready();
+    const before = Array.from({ length: 5 }, (_, i) => eQ.sandbox.feedbackHistory.record(synth(300 + i)));
+    const clearing = eQ.sandbox.feedbackHistory.clear();
+    const lateOld = eQ.sandbox.feedbackHistory.record(synth(310)); // started before the clear, finishes after it
+    await Promise.all([...before, clearing, lateOld]);
+    assert((await hist(eQ)).length === 0 && (await lateOld) === false, '18s: writes queued before the clear are wiped and a pre-clear operation finishing later is rejected');
+    await new Promise((r) => setTimeout(r, 5));
+    assert((await eQ.sandbox.feedbackHistory.record(synth(320, { createdAt: Date.now(), updatedAt: Date.now() }))) === true && (await hist(eQ)).length === 1, '18t: an operation created after the clear is recorded');
+
+    // failed boundary persistence
+    const eF = makeEnv({ local: { historyEnabled: true } });
+    await eF.ready();
+    await saveOne(eF, 'f1');
+    eF.failLocalWrite = true;
+    const bad = await ask(eF, 'HISTORY_CLEAR');
+    eF.failLocalWrite = false;
+    assert(bad.success === false && (await hist(eF)).length === 1 && !eF.local.imageSaverHistoryV1.clearedAt, '18u: if the clear boundary cannot be persisted the clear fails, nothing is claimed cleared and entries remain');
+    const dom = await mkUi(eF);
+    eF.failLocalWrite = true;
+    await dom.clear();
+    eF.failLocalWrite = false;
+    assert(/данные не удалены/.test(dom.store.getState().error) && dom.store.getState().records.length === 1, '18v: the UI reports the failed clear truthfully');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 19. Identifiable file names in results and history ---');
+  {
+    const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
+    const ask = (env, action) => new Promise((resolve) => {
+      let responded = false;
+      for (const l of env.messageListeners) { const keep = l({ action }, extSender, (r) => { responded = true; resolve(r); }); if (keep === true || responded) break; }
+      if (!responded) setTimeout(() => resolve(undefined), 0);
+    });
+    const hEnv = (o = {}) => makeEnv({ ...o, local: { historyEnabled: true, ...(o.local || {}) } });
+    const baseOf = (p) => String(p).split(/[\\/]/).pop();
+    const B = FBLib.safeBasename;
+
+    // pure basename extraction
+    assert(B('C:\\Users\\Ivan\\Downloads\\SavedImages\\a b.jpg') === 'a b.jpg' && B('/home/ivan/Downloads/x/pic.png') === 'pic.png' && B('SavedImages/danbooru/pic/123.webp') === '123.webp' && B('plain.gif') === 'plain.gif' && B('D:/dir with space/файл 猫.mp4') === 'файл 猫.mp4', '19a: basename extraction for Windows, POSIX and mixed separators keeps ordinary Unicode');
+    assert(['', '.', '..', 'C:\\dir\\', '/home/u/', null, undefined, 5, {}].every((v) => B(v) === ''), '19b: nothing usable (directories, dots, junk) gives an empty name, never a path');
+    const evil = B('a\u202eb\u0000c\u2028d.jpg');
+    assert(evil === 'a_b_c_d.jpg' && !/[\u0000-\u001f\u202a-\u202e\u2028\u2029]/.test(evil), '19c: control and bidirectional characters are neutralised');
+    const long = B(`${'я'.repeat(400)}.jpeg`);
+    assert(long.length <= 120 && long.endsWith('.jpeg') && long.includes('…'), '19d: an over-long name is bounded and keeps its extension');
+    assert(!/[\\/]/.test(B('https://evil.example/path/img.jpg')) && !/[\\/]/.test(B('..\\..\\x/evil.png')), '19e: no separator survives in a basename');
+    const rec = FBLib.sanitizeRecord({ id: 'op-legacy01', createdAt: 5, updatedAt: 6, state: 'complete', filename: 'C:\\x\\y\\z.png', filenameKind: 'weird' });
+    assert(rec.filename === 'z.png' && rec.filenameKind === 'intended', '19f: schema stores a basename only and normalises an unknown kind to "intended"');
+    const legacy = FBLib.sanitizeRecord({ id: 'op-legacy02', createdAt: 5, updatedAt: 6, state: 'complete', site: 'example.com', output: { type: 'pic', ext: '.jpg' } });
+    assert(legacy.filename === '' && legacy.filenameKind === '', '19g: records without a name stay valid (legacy)');
+
+    // requested vs actual (collision rename) through the production handler
+    const env = hEnv();
+    await env.ready();
+    await env.click(imageClick('name1'));
+    let r = await env.last();
+    const requested = baseOf(env.downloadCalls[0].filename);
+    assert(r.state === 'saving' && r.filename === requested && r.filenameKind === 'intended' && /\.jpg$/.test(r.filename), '19h: before completion the requested basename is recorded as "intended"');
+    assert(env.downloadCalls[0].filename.includes('/') && !/[\\/]/.test(r.filename) && JSON.stringify(env.session.imageSaverFeedbackV1).indexOf('SavedImages') === -1, '19i: the requested path had directories, but only the basename is persisted');
+    const ui = { ImageSaverFeedbackUI: { rowParts: (rec) => present.rowParts(FBLib, rec), filenameLine: present.filenameLine } };
+    const parts = ui.ImageSaverFeedbackUI.rowParts(r);
+    assert(parts.name === requested && /запланировано, не подтверждено/.test(parts.meta) && !/Сохранено/.test(parts.name), '19j: an unconfirmed name is labelled as intended and is the main row text');
+    env.downloadsDb.get(r.downloadId).filename = `C:\\Users\\Ivan\\Downloads\\SavedImages\\${requested.replace('.jpg', '')} (1).jpg`; // Chrome renamed it (collision)
+    await env.finish(r.downloadId);
+    r = await env.last();
+    assert(r.state === 'complete' && r.filename === `${requested.replace('.jpg', '')} (1).jpg` && r.filenameKind === 'actual', '19k: the actual DownloadItem name (collision rename) replaces the requested one, basename only');
+    assert(!/запланировано/.test(ui.ImageSaverFeedbackUI.rowParts(r).meta) && /фактическое/.test(ui.ImageSaverFeedbackUI.filenameLine(r)), '19l: an actual name carries no intended caveat');
+    assert(env.searchCalls.every((q) => Object.keys(q).join() === 'id' && Number.isInteger(q.id)), '19m: only extension-owned download IDs are looked up');
+
+    // POSIX Save As path and missing filename
+    const env2 = hEnv();
+    await env2.ready();
+    await env2.click(imageClick('name2'));
+    const r2 = await env2.last();
+    env2.downloadsDb.get(r2.downloadId).filename = '/home/ivan/Pictures/my saved/кот 猫.jpg';
+    await env2.finish(r2.downloadId);
+    assert((await env2.last()).filename === 'кот 猫.jpg' && (await env2.last()).filenameKind === 'actual', '19n: a POSIX Save As path is reduced to its basename');
+    const env3 = hEnv();
+    await env3.ready();
+    await env3.click(imageClick('name3'));
+    const r3 = await env3.last();
+    await env3.finish(r3.downloadId); // item has no filename field
+    const r3d = await env3.last();
+    assert(r3d.state === 'complete' && r3d.filename === baseOf(env3.downloadCalls[0].filename) && r3d.filenameKind === 'intended', '19o: when Chrome reports no filename the intended name is kept and stays labelled as such');
+
+    // interrupted keeps the intended name; failures before naming keep a useful summary
+    const env4 = hEnv();
+    await env4.ready();
+    await env4.click(imageClick('name4'));
+    const r4 = await env4.last();
+    env4.downloadsDb.get(r4.downloadId).filename = 'C:\\Users\\Ivan\\Downloads\\partial.crdownload';
+    await env4.finish(r4.downloadId, { state: 'interrupted', error: 'NETWORK_FAILED' });
+    const r4d = await env4.last();
+    assert(r4d.state === 'interrupted' && r4d.filenameKind === 'intended' && r4d.filename === baseOf(env4.downloadCalls[0].filename), '19p: an interrupted download keeps the requested name (not presented as the saved file)');
+    const env5 = hEnv();
+    await env5.ready();
+    env5.fetchImpl = async () => ({ ok: false, status: 403, headers: { get: () => '' } });
+    await env5.click(imageClick('name5'));
+    const r5 = await env5.last();
+    const p5 = ui.ImageSaverFeedbackUI.rowParts(r5);
+    assert(r5.filename === '' && p5.name === '' && /Нужен доступ|auth|доступ/i.test(p5.legacy) && /example\.com/.test(p5.legacy), '19q: a failure before naming keeps the previous useful summary (title, site)');
+
+    // converted GIF and fallback names
+    const envX = hEnv();
+    await envX.ready();
+    envX.tabsMsgHandler = async (tabId, msg) => (msg.action === 'GET_X_MEDIA_AT_CURSOR' ? { type: 'x_tweet_video', url: 'https://video.twimg.com/tweet_video/CV1.mp4' } : null);
+    await envX.contextMenuHandler({ menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/u/status/1' }, { id: 8, url: 'https://x.com/u/status/1' });
+    await envX.tracker.flush();
+    const rx = await envX.last();
+    assert(rx.filename === baseOf(envX.downloadCalls[0].filename) && /\.gif$/.test(rx.filename) && !/\.mp4$/.test(rx.filename) && rx.filenameKind === 'intended', '19r: a converted GIF shows its output .gif name, not the source MP4 name');
+    envX.downloadsDb.get(rx.downloadId).filename = 'C:\\Users\\Ivan\\Downloads\\SavedImages\\x\\gif\\CV1 (2).gif';
+    await envX.finish(rx.downloadId);
+    assert((await envX.last()).filename === 'CV1 (2).gif' && (await envX.last()).filenameKind === 'actual', '19s: the converted file reports its actual name after completion');
+    const envR = hEnv();
+    await envR.ready();
+    await envR.click({ menuItemId: 'save-image-item', srcUrl: 'https://preview.redd.it/anim9.gif?format=mp4&s=abcdef', pageUrl: 'https://www.reddit.com/r/gifs/comments/9/', mediaType: 'video' });
+    const rr = await envR.last();
+    assert(/\.gif$/.test(rr.filename) && rr.filename === baseOf(envR.downloadCalls[0].filename), '19t: a Reddit conversion also records its own GIF name');
+
+    const envF = hEnv();
+    await envF.ready();
+    const op = await envF.x.fbBegin({ pageUrl: 'https://example.com/g/1', sourceUrl: 'https://example.com/img/primary.gif', site: 'example.com' });
+    const group = envF.x.createCandidateGroup({ id: 'fb_n', provider: 'generic', tier: 'unknown', source: 'initial_src', variants: [{ url: 'https://example.com/img/primary.gif', expectedExtension: '.gif' }], metadata: { contentType: 'image/gif', mediaType: 'gif' } });
+    envF.failNextDownloads = 1;
+    await envF.x.executeMediaDownload({ targetImageUrl: 'https://example.com/img/primary.gif', rawImageUrl: 'https://example.com/img/fallback.png', settings, mediaPlan: group, pageUrl: 'https://example.com/g/1', feedbackOp: op });
+    await envF.tracker.flush();
+    const rf = await envF.last();
+    assert(rf.fallback === true && rf.filename === baseOf(envF.downloadCalls[envF.downloadCalls.length - 1].filename) && /fallback|\.png/.test(rf.filename) && !/primary/.test(rf.filename), '19u: a fallback result uses its own file name, not the primary one');
+
+    // history, reports, notifications, hostile names, rendering
+    const envH = hEnv();
+    await envH.ready();
+    await envH.click(imageClick('hist1'));
+    const rh = await envH.last();
+    envH.downloadsDb.get(rh.downloadId).filename = `C:\\Users\\Secret Person\\Downloads\\${'長'.repeat(300)}\u202e.jpg`;
+    await envH.finish(rh.downloadId);
+    const hres = await ask(envH, 'HISTORY_LIST');
+    const he = hres.records[0];
+    const stored = JSON.stringify(envH.local.imageSaverHistoryV1) + JSON.stringify(envH.session.imageSaverFeedbackV1);
+    assert(he.filename.length <= 120 && he.filename.endsWith('_.jpg') === false && /\.jpg$/.test(he.filename) && !/Secret Person|Users|[\\\\]{2}/.test(stored), '19v: hostile/long names are bounded and persisted history/session hold no directory path');
+    assert(he.filenameKind === 'actual', '19w: the history keeps the filename kind');
+    assert(env.notifications.length === 1 && !(env.notifications[0].opts.title + env.notifications[0].opts.message).includes(requested.replace(/\.[a-z]+$/, '')) && !envH.notifications.some((n) => (n.opts.title + n.opts.message).indexOf(he.filename.slice(0, 5)) !== -1), '19x: file names are not placed in desktop notifications');
+    const failedRec = { ...he, state: 'failed', failure: { stage: 'download', category: 'download_interrupted', code: '', status: null, downloadError: 'NETWORK_FAILED' } };
+    const report = FBLib.buildReport(failedRec, { notes: 'x', env: { version: '2.0.0' } });
+    assert(report.indexOf(he.filename) === -1 && report.indexOf(he.filename.slice(0, 8)) === -1 && !/filename/i.test(report), '19y: file names never appear in a copied bug report');
+
+    const chromeApi = { runtime: { getManifest: () => ({ version: '2.0.0' }), sendMessage: (m) => ask(envH, m.action) }, storage: { local: { get: async (d) => ({ ...d, ...envH.local }), set: async () => {} } } };
+    const hctl = createHistory({ chrome: chromeApi, FB: FBLib });
+    await hctl.start();
+    const hrecs = hctl.store.getState().records;
+    assert(hrecs.length === 1 && present.rowParts(FBLib, hrecs[0]).name === he.filename, '19z: the history row shows the basename as the main text');
+    assert(present.filenameLine(hrecs[0]).includes(he.filename), '19aa: expanded details show the complete sanitized name');
+    const rowSrc = read('ui/src/components/app/result-row.tsx');
+    const detSrc = read('ui/src/components/app/result-details.tsx');
+    assert(/block truncate[^"]*" data-slot="name"/.test(rowSrc) && /min-w-0 flex-1/.test(rowSrc) && /break-all/.test(detSrc) && /break-words/.test(detSrc), '19ab: long names are truncated in rows (ellipsis) and wrap in details, so they cannot widen the popup');
+    const chromeP = { runtime: { getManifest: () => ({ version: '2.0.0' }), getURL: (p) => p, sendMessage: (m) => ask(envH, m.action) }, storage: { local: { get: async (d) => ({ ...d, ...envH.local }), set: async () => {} } }, tabs: { create() {} } };
+    const plist = createFeedbackList({ chrome: chromeP, FB: FBLib, navigator: {} }, { limit: 5 });
+    await plist.start();
+    assert(present.rowParts(FBLib, plist.store.getState().records[0]).name === he.filename, '19ac: the popup recent-results list uses the same basename as main text');
+    assert(JSON.stringify(Object.keys(he).sort()).indexOf('"downloadObject"') === -1 && !('url' in he) && !('path' in he), '19ad: no raw download object, URL or path field exists on a record');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 20. File names: URL/Blob/data input is rejected, never turned into a name ---');
+  {
+    const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
+    const ask = (env, action) => new Promise((resolve) => {
+      let responded = false;
+      for (const l of env.messageListeners) { const keep = l({ action }, extSender, (r) => { responded = true; resolve(r); }); if (keep === true || responded) break; }
+      if (!responded) setTimeout(() => resolve(undefined), 0);
+    });
+    const B = FBLib.safeBasename;
+    const hEnv = (o = {}) => makeEnv({ ...o, local: { historyEnabled: true, ...(o.local || {}) } });
+    const urls = [
+      'https://cdn.example.com/image.jpg?token=SECRET#fragment',
+      'http://cdn.example.com/a/b/image.jpg?X-Amz-Signature=SIGSECRET',
+      'HTTPS://CDN.EXAMPLE.COM/image.jpg?token=SECRET',
+      '  \n https://cdn.example.com/image.jpg?token=SECRET',
+      'blob:https://example.com/private-id',
+      'blob:null/private-id',
+      'data:image/png;base64,iVBORw0KGgoSECRET',
+      'javascript:alert(1)//x.jpg',
+      'file:///C:/Users/Ivan/secret.jpg',
+      'ftp://host/dir/name.png',
+      `https://cdn.example.com/${'a/'.repeat(700)}image.jpg?token=SECRET#frag`
+    ];
+    assert(urls.every((u) => B(u) === ''), '20a: HTTP/HTTPS (signed query/fragment), Blob, data, javascript, file and long URLs are rejected whole by safeBasename');
+    assert(urls.every((u) => { const r = FBLib.sanitizeRecord({ id: 'op-url00001', createdAt: 5, updatedAt: 6, state: 'complete', filename: u, filenameKind: 'actual' }); return r.filename === '' && r.filenameKind === '' && !/SECRET|private-id|image\.jpg|secret\.jpg|frag/.test(JSON.stringify(r)); }), '20b: sanitizeRecord retains no URL-derived name or secret (kind reset too)');
+    const kept = {
+      'C:\\Users\\Ivan\\Pictures\\a b.png': 'a b.png',
+      'C:/Users/Ivan/x.png': 'x.png',
+      'C://odd/drive/y.png': 'y.png',
+      '\\\\server\\share\\dir\\f.jpg': 'f.jpg',
+      '/home/ivan/Downloads/f.webp': 'f.webp',
+      'D:\\файлы\\кот 猫.gif': 'кот 猫.gif',
+      'note:x.png': 'note:x.png',
+      'plain name.mp4': 'plain name.mp4'
+    };
+    assert(Object.entries(kept).every(([input, want]) => B(input) === want), '20c: Windows drive paths, UNC, POSIX paths and ordinary Unicode/colon names still yield their basename');
+    assert(!/SECRET/.test(B(`${'x'.repeat(2000)}https://cdn.example.com/image.jpg?token=SECRET`)) || B(`${'x'.repeat(2000)}https://cdn.example.com/image.jpg?token=SECRET`).length <= 120, '20d: a non-URL string is still bounded');
+
+    // production tracker: a URL reported as DownloadItem.filename never becomes the name
+    const env = hEnv();
+    await env.ready();
+    await env.click(imageClick('u1'));
+    const r = await env.last();
+    const requested = String(env.downloadCalls[0].filename).split(/[\\/]/).pop();
+    env.downloadsDb.get(r.downloadId).filename = 'https://cdn.example.com/image.jpg?token=SECRET#fragment';
+    await env.finish(r.downloadId);
+    const done = await env.last();
+    assert(done.state === 'complete' && done.filename === requested && done.filenameKind === 'intended', '20e: a URL in DownloadItem.filename is ignored; the intended name stays, labelled as such');
+    const storedAll = JSON.stringify(env.session.imageSaverFeedbackV1) + JSON.stringify(env.local.imageSaverHistoryV1);
+    assert(!/SECRET|fragment|cdn\.example\.com\/image/.test(storedAll), '20f: no URL-derived secret is persisted in session feedback or history');
+
+    // rejected input at attach time: the unnamed summary is kept
+    const env2 = hEnv();
+    await env2.ready();
+    const op = await env2.x.fbBegin({ pageUrl: 'https://example.com/p', sourceUrl: 'https://example.com/a.jpg', site: 'example.com' });
+    await env2.x.fbAttach(op, 777, { filename: 'blob:https://example.com/private-id' });
+    await env2.tracker.flush();
+    const r2 = await env2.last();
+    assert(r2.filename === '' && r2.filenameKind === '', '20g: a Blob/URL name offered at attach time is dropped');
+    await env2.finish(777, { state: 'interrupted', error: 'NETWORK_FAILED' });
+    const parts = present.rowParts(FBLib, await env2.last());
+    assert(parts.name === '' && /example\.com/.test(parts.legacy) && parts.legacy.length > 5, '20h: the rejected-name record keeps the useful unnamed summary (title, site)');
+
+    // persistent history: record() and raw stored entries
+    const envH = hEnv();
+    await envH.ready();
+    const base = { createdAt: Date.now() - 2000, updatedAt: Date.now() - 1000, state: 'complete', filenameKind: 'actual' };
+    await envH.sandbox.feedbackHistory.record({ ...base, id: 'op-histurl1', filename: 'https://cdn.example.com/image.jpg?token=SECRET#fragment' });
+    await envH.sandbox.feedbackHistory.record({ ...base, id: 'op-histurl2', filename: 'blob:https://example.com/private-id' });
+    await envH.sandbox.feedbackHistory.record({ ...base, id: 'op-histok001', filename: 'C:\\Users\\Ivan\\Downloads\\good name.jpg' });
+    const stored = JSON.stringify(envH.local.imageSaverHistoryV1);
+    assert(!/SECRET|private-id|fragment|Users/.test(stored), '20i: history.record() persists no URL-derived name or directory');
+    envH.local.imageSaverHistoryV1.entries.push({ ...base, id: 'op-histraw1', filename: 'https://cdn.example.com/legacy.jpg?token=SECRET' });
+    const listed = await ask(envH, 'HISTORY_LIST');
+    const byId = Object.fromEntries(listed.records.map((e) => [e.id, e]));
+    assert(byId['op-histurl1'].filename === '' && byId['op-histurl2'].filename === '' && byId['op-histraw1'].filename === '' && byId['op-histok001'].filename === 'good name.jpg', '20j: stored/loaded history entries are re-sanitized: URL names empty, genuine paths reduced to the basename');
+    assert(!/SECRET|legacy\.jpg/.test(JSON.stringify(envH.local.imageSaverHistoryV1)), '20k: persistent pruning/rewrite also drops a URL-derived name from previously stored data');
+  }
+
+  // =================================================================================================
+  console.log('\n--- 21. UX-06: an open page follows the production tracker and history (completion, failure, cancellation) ---');
+  {
+    const env = makeEnv({ local: { historyEnabled: true } });
+    await env.ready();
+    // The mock storage areas do not emit change events; chrome.storage.onChanged does in a browser. Emit them from the real writes.
+    const listeners = [];
+    const wrap = (areaName, area) => {
+      const base = area.set;
+      area.set = async (items) => {
+        await base(items);
+        const changes = {};
+        for (const k of Object.keys(items)) changes[k] = { newValue: items[k] };
+        for (const cb of listeners.slice()) cb(changes, areaName);
+      };
+    };
+    wrap('session', env.chrome.storage.session);
+    wrap('local', env.chrome.storage.local);
+    const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
+    const uiChrome = {
+      runtime: {
+        getManifest: () => ({ version: '2.0.0' }),
+        getURL: (p) => `chrome-extension://testid/${p}`,
+        sendMessage: (msg) => new Promise((resolve) => {
+          let responded = false;
+          for (const l of env.messageListeners) { const keep = l(msg, extSender, (resp) => { responded = true; resolve(resp); }); if (keep === true || responded) break; }
+          if (!responded) setTimeout(() => resolve(undefined), 0);
+        })
+      },
+      storage: {
+        local: { get: async (d) => ({ ...d, ...env.local }), set: async (v) => { Object.assign(env.local, v); } },
+        onChanged: { addListener: (cb) => { listeners.push(cb); }, removeListener: (cb) => { const i = listeners.indexOf(cb); if (i >= 0) listeners.splice(i, 1); } }
+      },
+      tabs: { create: async () => ({ id: 1 }) }
+    };
+    const settleUi = async () => { for (let i = 0; i < 12; i++) await new Promise((r) => setTimeout(r, 0)); };
+    const list = createFeedbackList({ chrome: uiChrome, FB: FBLib, navigator: {} }, { limit: 5 });
+    const hist = createHistory({ chrome: uiChrome, FB: FBLib });
+    await list.start();
+    await hist.start();
+    assert(list.store.getState().records.length === 0 && hist.store.getState().records.length === 0 && listeners.length === 2, '21a: the page starts empty with one subscription per list');
+
+    // a save begins: the open list shows it without reopening
+    await env.click(imageClick('live1'));
+    await settleUi();
+    const first = list.store.getState().records[0];
+    assert(list.store.getState().records.length === 1 && (first.state === 'saving' || first.state === 'resolving') && first.id, '21b: a save that starts while the page is open appears in the list (in progress)');
+    // completion
+    await env.finish(first.downloadId);
+    await settleUi();
+    const done = list.store.getState().records[0];
+    assert(done.id === first.id && done.state === 'complete' && list.store.getState().records.length === 1, '21c: the completion updates the same result in place');
+    assert(hist.store.getState().records.length === 1 && hist.stats().success === 1, '21d: with history on, the finished operation appears in the history and its statistics');
+    // failure
+    env.fetchImpl = async () => ({ ok: false, status: 403, headers: { get: () => '' } });
+    await env.click(imageClick('live2'));
+    env.fetchImpl = null;
+    await settleUi();
+    const failed = list.store.getState().records[0];
+    assert(failed.state === 'failed' && list.store.getState().unreadIds.includes(failed.id), '21e: a failure appears at once, marked as new');
+    assert((await env.sandbox.getUnseenFailureCount()) === 0 && env.badge.text !== '!', '21f: it was acknowledged because the list is visible: the toolbar "!" badge is cleared');
+    // cancellation
+    await env.click(imageClick('live3'));
+    await settleUi();
+    const pending = list.store.getState().records[0];
+    await env.finish(pending.downloadId, { state: 'interrupted', error: 'USER_CANCELED' });
+    await settleUi();
+    assert(list.store.getState().records[0].id === pending.id && list.store.getState().records[0].state === 'cancelled', '21g: a cancellation updates the result');
+    assert(hist.store.getState().records.length === 3 && hist.stats().cancelled === 1 && hist.stats().failed === 1, '21h: the history and its statistics follow the failure and the cancellation');
+    // clear
+    await list.clear();
+    await settleUi();
+    assert(list.store.getState().records.length === 0, '21i: clearing the completed results empties the open list');
+    await hist.clear();
+    await settleUi();
+    assert(hist.store.getState().records.length === 0 && hist.store.getState().clearStatus === 'История очищена.', '21j: clearing the history empties it');
+
+    // a hidden list shows a failure but keeps it unacknowledged until it is shown (the visible list of the first part is closed)
+    list.dispose(); hist.dispose();
+    assert(listeners.length === 0, '21ja: closing the visible list and the history removes their subscriptions');
+    const hiddenList = createFeedbackList({ chrome: uiChrome, FB: FBLib, navigator: {} }, { limit: 5, visible: false });
+    await hiddenList.start();
+    env.fetchImpl = async () => ({ ok: false, status: 403, headers: { get: () => '' } });
+    await env.click(imageClick('live4'));
+    env.fetchImpl = null;
+    await settleUi();
+    assert(hiddenList.store.getState().records[0].state === 'failed' && (await env.sandbox.getUnseenFailureCount()) >= 1, '21k: a failure that arrives while the panel is hidden is rendered and stays unacknowledged (the badge stays)');
+    hiddenList.setVisible(true);
+    await settleUi();
+    assert((await env.sandbox.getUnseenFailureCount()) === 0, '21l: showing the panel acknowledges it');
+
+    // closing the page ends the updates
+    hiddenList.dispose();
+    assert(listeners.length === 0, '21m: closing the page removes every subscription');
+    const sends = [];
+    const baseSend = uiChrome.runtime.sendMessage;
+    uiChrome.runtime.sendMessage = (m) => { sends.push(m.action); return baseSend(m); };
+    await env.click(imageClick('live5'));
+    await settleUi();
+    assert(sends.length === 0, '21n: a closed page makes no more requests');
+  }
+
+
+  // =================================================================================================
+  console.log('\n--- 22. Durable explanation of the animation duration policy (reason, measured duration, threshold) ---');
+  {
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js', 'lib/feedback_history.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const FB = ctx.ImageSaverFeedback;
+    const REASON = 'animation_duration_limit';
+    const mem = () => { const store = {}; return { store, area: { get: async (k) => store[k], set: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); } } }; };
+    const mkTracker = (m, extra = {}) => ctx.ImageSaverFeedbackTracker.createTracker(Object.assign({
+      storage: m.area, now: () => 1700000000000, genId: (() => { let n = 0; return () => 'op-' + (++n) + 'abcdef'; })(),
+      getDownloadItem: async () => undefined, peekEarlyTerminal: () => undefined, notify: async () => {}, log: () => {}
+    }, extra));
+    const mkNotifier = (sink, { notifySuccess = true, lang = 'en' } = {}) => ctx.ImageSaverFeedbackTracker.createNotifier({
+      getPrefs: async () => ({ notifySuccess }), notifications: { create: async (id, o) => { sink.push({ id, o }); return id; } }, iconUrl: 'icon.png', lang
+    });
+    const policyPatch = (d = 35, t = 30) => ({ conversion: 'none', reason: REASON, durationSec: d, thresholdSec: t,
+      output: { type: 'video', ext: '.mp4', evidence: 'verified_mime', mime: 'video/mp4', durationSec: d, reason: REASON, thresholdSec: t } });
+    const baseRec = (extra = {}) => Object.assign({ id: 'op-1abcdef', createdAt: 1700000000000, updatedAt: 1700000000000, state: 'complete', site: 'reddit.com' }, extra);
+
+    // schema: the allowlisted reason and the bounded numbers survive sanitization, record-level and in the output
+    const ok = FB.sanitizeRecord(baseRec({ reason: REASON, durationSec: 35.25, thresholdSec: 30, output: { type: 'video', ext: '.mp4', evidence: 'verified_mime', mime: 'video/mp4', durationSec: 35.25, reason: REASON, thresholdSec: 30 } }));
+    assert(ok.reason === REASON && ok.durationSec === 35.25 && ok.thresholdSec === 30 && ok.output.reason === REASON && ok.output.thresholdSec === 30 && ok.output.durationSec === 35.25, '22a: sanitizeRecord keeps the allowlisted reason, the measured duration and the threshold (record and output)');
+    assert(JSON.stringify(FB.sanitizeRecord(JSON.parse(JSON.stringify(ok)))) === JSON.stringify(ok), '22b: a JSON round trip of the sanitized record is stable');
+    const hostile = ['https://evil.example/?token=SECRET', '<script>alert(1)</script>', REASON + ' https://evil.example/x', 'ANIMATION_DURATION_LIMIT', { toString() { return REASON; } }, ['animation_duration_limit'], 'C:\\Users\\Ivan\\x', 'x'.repeat(5000)];
+    for (const h of hostile) {
+      const r = FB.sanitizeRecord(baseRec({ reason: h, output: { reason: h } }));
+      assert(r.reason === '' && r.output.reason === '' && !/evil|script|Ivan|SECRET/.test(JSON.stringify(r)), '22c: an arbitrary reason is never persisted: ' + String(h).slice(0, 30));
+    }
+    for (const bad of [NaN, Infinity, -Infinity, -1, 1e12, '35', null, {}, [35]]) {
+      const r = FB.sanitizeRecord(baseRec({ reason: REASON, durationSec: bad, thresholdSec: bad, output: { durationSec: bad, thresholdSec: bad } }));
+      assert(r.durationSec === null && r.thresholdSec === null && r.output.durationSec === null && r.output.thresholdSec === null, '22d: an invalid duration/threshold is not persisted: ' + String(typeof bad === 'object' ? JSON.stringify(bad) : bad));
+    }
+
+    // presentation: the choice is explained while the record is live and after completion, never from invalid or inconsistent data
+    const liveRec = FB.sanitizeRecord(baseRec({ state: 'saving', reason: REASON, durationSec: 35, thresholdSec: 30, output: { type: 'video', ext: '.mp4', evidence: 'verified_mime', mime: 'video/mp4', durationSec: 35 } }));
+    const doneRec = FB.sanitizeRecord(baseRec({ reason: REASON, durationSec: 35, thresholdSec: 30, output: { type: 'video', ext: '.mp4', evidence: 'verified_mime', mime: 'video/mp4', durationSec: 35 } }));
+    const policyLine = (rec) => FB.summarize(rec).lines.find((l) => /лимита GIF/.test(l)) || '';
+    assert(/35 с/.test(policyLine(liveRec)) && /30 с/.test(policyLine(liveRec)) && /MP4/.test(policyLine(liveRec)), '22e: summarize explains the policy choice while the record is live (saving)');
+    assert(/35 с/.test(policyLine(doneRec)) && /MP4/.test(policyLine(doneRec)), '22f: summarize explains the policy choice for the completed record (results and history, notifications or not)');
+    for (const [name, rec] of [
+      ['no reason', FB.sanitizeRecord(baseRec({ durationSec: 35, thresholdSec: 30 }))],
+      ['duration below the threshold', FB.sanitizeRecord(baseRec({ reason: REASON, durationSec: 20, thresholdSec: 30 }))],
+      ['duration exactly at the threshold', FB.sanitizeRecord(baseRec({ reason: REASON, durationSec: 30, thresholdSec: 30 }))],
+      ['another threshold', FB.sanitizeRecord(baseRec({ reason: REASON, durationSec: 35, thresholdSec: 15 }))],
+      ['no duration', FB.sanitizeRecord(baseRec({ reason: REASON, thresholdSec: 30 }))],
+      ['failed download', FB.sanitizeRecord(baseRec({ state: 'failed', reason: REASON, durationSec: 35, thresholdSec: 30, failure: { stage: 'download', category: 'unknown' } }))]
+    ]) assert(policyLine(rec) === '' && (name === 'failed download' || FB.durationLimitOf(rec) === null), '22g: no policy explanation for: ' + name);
+
+    // tracker: patches are validated too (an invalid patch is ignored and never erases a valid value)
+    {
+      const m = mem();
+      const t = mkTracker(m);
+      const id = await t.begin({ site: 'reddit.com', sourceUrl: 'https://preview.redd.it/a.gif?s=1', pageUrl: 'https://www.reddit.com/' });
+      await t.stage(id, 'saving', { reason: 'https://evil.example/?token=SECRET', durationSec: NaN, thresholdSec: '30', output: { reason: '<script>', durationSec: Infinity, thresholdSec: -5 } });
+      let rec = await t.get(id);
+      assert(rec.reason === '' && rec.durationSec === null && rec.thresholdSec === null && rec.output.reason === '' && !/evil|script|SECRET/.test(JSON.stringify(m.store)), '22h: an invalid stage patch is not stored or persisted');
+      await t.stage(id, 'saving', policyPatch(35, 30));
+      await t.stage(id, 'saving', { reason: 'nonsense', durationSec: 'x', thresholdSec: NaN });
+      rec = await t.get(id);
+      assert(rec.reason === REASON && rec.durationSec === 35 && rec.thresholdSec === 30 && rec.output.reason === REASON, '22i: a valid patch is stored and a later invalid one does not erase it');
+      const id2 = await t.begin({ site: 'reddit.com' });
+      await t.attachDownload(id2, 7102, { reason: 'bad reason', durationSec: -3, thresholdSec: 1e99, output: { reason: 'x' } });
+      const rec2 = await t.get(id2);
+      assert(rec2.reason === '' && rec2.durationSec === null && rec2.thresholdSec === null, '22j: an invalid attachDownload patch is ignored');
+    }
+
+    // worker restart before completion: reason, duration and threshold survive hydration and reconciliation; the notice follows completion
+    for (const [lang, title, message] of [
+      ['en', 'MP4 saved without conversion', 'This animation exceeds the 30-second GIF limit. The source video was saved as MP4.'],
+      ['ru', 'MP4 сохранён без конвертации', 'Длительность анимации превышает 30 секунд. Исходное видео сохранено как MP4.']
+    ]) {
+      const m = mem();
+      const first = mkTracker(m);
+      const id = await first.begin({ site: 'reddit.com', sourceUrl: 'https://preview.redd.it/long.gif?s=SIG', pageUrl: 'https://www.reddit.com/r/x/' });
+      await first.stage(id, 'converting', { conversion: 'reddit_animation_gif', expectedType: 'gif' });
+      await first.stage(id, 'saving', policyPatch(35, 30));
+      await first.attachDownload(id, 7201, { filename: 'long.mp4' });
+      await first.flush();
+      const before = await first.get(id);
+      assert(before.state === 'saving' && before.reason === REASON && before.threshold === undefined && before.thresholdSec === 30 && before.durationSec === 35, '22k [' + lang + ']: before the restart the live record carries reason 35 s / threshold 30 s');
+      const notes = [];
+      const second = mkTracker(m, { getDownloadItem: async () => ({ state: 'complete', filename: 'C:\\Users\\u\\Downloads\\long.mp4', fileSize: 4096 }), notify: mkNotifier(notes, { lang }) });
+      await second.ready();
+      await second.flush();
+      const after = await second.get(id);
+      assert(after.state === 'complete' && after.reason === REASON && after.durationSec === 35 && after.thresholdSec === 30 && after.output.type === 'video' && after.output.ext === '.mp4' && after.output.durationSec === 35, '22l [' + lang + ']: after hydration and reconciliation the completed record keeps reason, duration, threshold and the MP4 output');
+      assert(notes.length === 1 && notes[0].o.title === title && notes[0].o.message === message, '22m [' + lang + ']: one completion notice with the policy copy: ' + (notes[0] && notes[0].o.title));
+      await second.downloadTerminal(7201, 'complete');
+      await second.flush();
+      assert(notes.length === 1, '22n [' + lang + ']: a duplicate completion event makes no second notice');
+    }
+
+    // notifications disabled: no toast, the record and its summary still explain the choice (results / history)
+    {
+      const m = mem();
+      const notes = [];
+      const t = mkTracker(m, { getDownloadItem: async () => ({ state: 'complete', filename: 'a.mp4', fileSize: 10 }), notify: mkNotifier(notes, { notifySuccess: false }) });
+      const id = await t.begin({ site: 'reddit.com' });
+      await t.stage(id, 'saving', policyPatch(40, 30));
+      await t.attachDownload(id, 7301, { filename: 'a.mp4' });
+      await t.flush();
+      const rec = await t.get(id);
+      assert(notes.length === 0 && rec.state === 'complete' && /40 с/.test(policyLine(rec)), '22o: with success notifications disabled there is no toast and the result still explains why MP4 was saved');
+    }
+
+    // history: the real store round trip keeps the explanation
+    {
+      const m = mem();
+      const hist = ctx.ImageSaverFeedbackHistory.createHistory({ storage: m.area, isEnabled: async () => true, now: () => 1700000000000 + 60000, log: () => {} });
+      const rec = FB.sanitizeRecord(baseRec({ id: 'op-hist1abcdef', reason: REASON, durationSec: 35, thresholdSec: 30, output: { type: 'video', ext: '.mp4', evidence: 'verified_mime', mime: 'video/mp4', durationSec: 35, reason: REASON, thresholdSec: 30 } }));
+      assert(await hist.record(rec) === true, '22p: the completed record is accepted by the history store');
+      const stored = m.store[hist.STORAGE_KEY].entries[0];
+      assert(stored.reason === REASON && stored.durationSec === 35 && stored.thresholdSec === 30 && stored.output.reason === REASON, '22q: the stored history entry keeps reason, duration and threshold');
+      const listed = (await hist.list()).entries[0];
+      assert(listed.reason === REASON && /35 с/.test(policyLine(listed)) && JSON.stringify(m.store[hist.STORAGE_KEY].entries[0]) === JSON.stringify(stored), '22r: the listed entry explains the choice and the stored form is stable (not rewritten as dirty)');
+      m.store[hist.STORAGE_KEY].entries[0].reason = 'https://evil.example/?token=SECRET';
+      m.store[hist.STORAGE_KEY].entries[0].output.reason = 'javascript:alert(1)';
+      const tampered = (await hist.list()).entries[0];
+      assert(tampered.reason === '' && !/evil|SECRET/.test(JSON.stringify(m.store[hist.STORAGE_KEY])) && policyLine(tampered) === '', '22s: a tampered stored reason is dropped on load and rewritten clean');
+    }
+
+    // the notifier decides from the validated policy explanation of the record, never from a raw reason alone
+    {
+      const notes = [];
+      const notify = mkNotifier(notes);
+      const rawRecords = [
+        { reason: REASON, durationSec: 20, thresholdSec: 30 },
+        { reason: REASON },
+        { reason: REASON, durationSec: NaN, thresholdSec: 30 },
+        { reason: 'https://evil.example/?token=SECRET', durationSec: 35, thresholdSec: 30 }
+      ];
+      for (const raw of rawRecords) await notify(Object.assign(FB.sanitizeRecord(baseRec({ output: { type: 'video', ext: '.mp4', evidence: 'verified_mime', mime: 'video/mp4' } })), raw));
+      assert(notes.length === 4 && notes.every((n) => n.o.title !== 'MP4 saved without conversion' && !/30-second|evil|SECRET/.test(n.o.message)), '22t2: a raw reason without a valid measured duration above the threshold never selects the policy notice');
+    }
+
+    // other outcomes never show the policy notice
+    {
+      const m = mem();
+      const notes = [];
+      const t = mkTracker(m, { notify: mkNotifier(notes) });
+      const id = await t.begin({ site: 'reddit.com' });
+      await t.stage(id, 'saving', policyPatch(35, 30));
+      await t.attachDownload(id, 7401, { filename: 'a.mp4' });
+      await t.downloadTerminal(7401, 'interrupted', 'NETWORK_FAILED');
+      await t.flush();
+      assert(notes.length === 1 && notes[0].o.title !== 'MP4 saved without conversion' && !/MP4/.test(notes[0].o.message), '22t: an interrupted download shows the failure, not the policy notice');
+    }
+  }
+
+  // =================================================================================================
+  console.log('\n--- 23. A failed startup read of the operation list never overwrites the stored operations ---');
+  {
+    // Worker start (hydrate) reads the stored list once. If that read is rejected, the first mutation used to persist only the new operation
+    // over the stored list: an unseen failure and a running download (still owned, its terminal event may come later) were erased.
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const KEY = ctx.ImageSaverFeedbackTracker.STORAGE_KEY;
+    const T0 = 1700000000000;
+    const stored = () => ({ v: 1, ops: [
+      { id: 'op-oldfail', createdAt: T0, updatedAt: T0, state: 'failed', seen: false, site: 'reddit.com', failure: { stage: 'resolve', category: 'not_found', code: 'NOT_FOUND', status: null, downloadError: '' } },
+      { id: 'op-running', createdAt: T0, updatedAt: T0, state: 'saving', site: 'x.com', downloadId: 7501 }
+    ] });
+    const mk = ({ getFailures }) => {
+      const store = { [KEY]: stored() };
+      let reads = 0;
+      const items = { 7501: { id: 7501, state: 'complete', filename: 'C:/d/x.mp4', fileSize: 10 } };
+      const t = ctx.ImageSaverFeedbackTracker.createTracker({
+        storage: { get: async (k) => { reads++; if (reads <= getFailures) throw new Error('UNREADABLE'); return store[k]; }, set: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); } },
+        now: () => T0 + 1000, genId: (() => { let n = 0; return () => 'op-new' + (++n) + 'abc'; })(),
+        getDownloadItem: async (id) => items[id] || null, peekEarlyTerminal: () => undefined, notify: async () => {}, log: () => {}
+      });
+      return { t, store };
+    };
+
+    // one rejected read at start: the next operation sees and keeps the stored list, and the running download is reconciled
+    {
+      const { t, store } = mk({ getFailures: 1 });
+      const id = await t.begin({ site: 'example.com' });
+      const listed = await t.list();
+      const ids = listed.map((r) => r.id);
+      const persisted = (store[KEY].ops || []).map((r) => r.id);
+      assert(['op-oldfail', 'op-running', id].every((x) => ids.includes(x) && persisted.includes(x)), '23a: after a failed start read the stored operations survive next to the new one: ' + JSON.stringify({ ids, persisted }));
+      const old = listed.find((r) => r.id === 'op-oldfail');
+      assert(old && old.state === 'failed' && old.seen === false && t.unseenFailureCount() === 1, '23b: the stored unseen failure stays unseen');
+      const run = listed.find((r) => r.id === 'op-running');
+      assert(run && run.state === 'complete', '23c: the stored running download is reconciled from its own download item: ' + (run && run.state));
+      const fresh = listed.find((r) => r.id === id);
+      assert(fresh && fresh.state === 'resolving', '23d: the operation created meanwhile is not treated as a restarted one: ' + (fresh && fresh.state));
+    }
+    // the store stays unreadable: nothing is written over it, the in-memory operation still works
+    {
+      const { t, store } = mk({ getFailures: Infinity });
+      const before = JSON.stringify(store[KEY]);
+      const id = await t.begin({ site: 'example.com' });
+      await t.fail(id, { stage: 'resolve', code: 'NOT_FOUND' });
+      await t.flush();
+      assert(JSON.stringify(store[KEY]) === before, '23e: an unreadable store is never overwritten by a partial list');
+      const listed = await t.list();
+      assert(listed.length === 1 && listed[0].id === id && listed[0].state === 'failed', '23f: the new operation is still tracked in memory');
+    }
+    // nearest positive: a readable store behaves as before
+    {
+      const { t, store } = mk({ getFailures: 0 });
+      const id = await t.begin({ site: 'example.com' });
+      const persisted = (store[KEY].ops || []).map((r) => r.id);
+      assert(persisted.length === 3 && persisted.includes(id) && (await t.list()).find((r) => r.id === 'op-running').state === 'complete', '23g: a readable store hydrates and reconciles as before');
+    }
+  }
+
+  // =================================================================================================
+  console.log('\n--- 24. Operations kept in memory while the store was unreadable are persisted once it can be read ---');
+  {
+    // While the start read fails nothing is written (23e). The first successful read merges the stored list with the operations of this
+    // worker; that merged list must be written then, even when the recovering call only reads (list/get) and no stored record needed a
+    // change, or a later worker restart loses the operations created meanwhile.
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const API = ctx.ImageSaverFeedbackTracker;
+    const KEY = API.STORAGE_KEY;
+    const T0 = 1700000000000;
+    const oldTerminal = { id: 'op-oldfail', createdAt: T0, updatedAt: T0, state: 'failed', seen: true, site: 'reddit.com', failure: { stage: 'resolve', category: 'not_found', code: 'NOT_FOUND', status: null, downloadError: '' } };
+    const world = (initial) => {
+      const store = initial === undefined ? {} : { [KEY]: { v: 1, ops: initial } };
+      const env = { readable: false, writes: 0, store };
+      env.storage = {
+        get: async (k) => { if (!env.readable) throw new Error('UNREADABLE'); return store[k] === undefined ? undefined : JSON.parse(JSON.stringify(store[k])); },
+        set: async (k, v) => { env.writes++; store[k] = JSON.parse(JSON.stringify(v)); }
+      };
+      let n = 0;
+      env.make = () => API.createTracker({ storage: env.storage, now: () => T0 + 1000, genId: () => 'op-new' + (++n) + 'abc',
+        getDownloadItem: async () => undefined, peekEarlyTerminal: () => undefined, notify: async () => {}, log: () => {} });
+      return env;
+    };
+    const ids = (list) => list.map((r) => r.id).sort();
+
+    for (const [label, initial, recover] of [
+      ['terminal-only store, list()', [oldTerminal], (t) => t.list()],
+      ['empty store, list()', undefined, (t) => t.list()],
+      ['terminal-only store, get()', [oldTerminal], (t, id) => t.get(id)]
+    ]) {
+      const env = world(initial);
+      const t = env.make();
+      await t.ready();
+      const failedId = await t.begin({ site: 'example.com' });
+      await t.fail(failedId, { stage: 'resolve', code: 'NOT_FOUND' });
+      const runningId = await t.begin({ site: 'example.com' });
+      await t.flush();
+      assert(env.writes === 0, `24a (${label}): nothing is written while the store is unreadable`);
+      env.readable = true;
+      await recover(t, failedId);
+      await t.flush();
+      const stored = (env.store[KEY] && env.store[KEY].ops) || [];
+      const want = (initial ? ['op-oldfail'] : []).concat([failedId, runningId]).sort();
+      assert(env.writes > 0 && JSON.stringify(ids(stored)) === JSON.stringify(want), `24b (${label}): the first successful read writes the merged list: ` + JSON.stringify(ids(stored)));
+      const mine = (await t.list()).find((r) => r.id === runningId);
+      assert(mine && mine.state === 'resolving', `24c (${label}): an operation of this worker is not reconciled as restarted: ` + (mine && mine.state));
+      const nf = stored.find((r) => r.id === failedId);
+      assert(nf && nf.state === 'failed' && nf.failure && nf.failure.code === 'NOT_FOUND' && nf.seen === false, `24d (${label}): the stored new failure keeps its own outcome and stays unseen`);
+      const next = env.make();
+      const after = await next.list();
+      assert(after.some((r) => r.id === failedId && r.state === 'failed'), `24e (${label}): another tracker instance (worker restart) still has the new failure: ` + JSON.stringify(ids(after)));
+    }
+    // reads stay unavailable: read-only calls never write either
+    {
+      const env = world([oldTerminal]);
+      const t = env.make();
+      const id = await t.begin({ site: 'example.com' });
+      await t.fail(id, { stage: 'resolve', code: 'NOT_FOUND' });
+      await t.list();
+      await t.get(id);
+      await t.flush();
+      assert(env.writes === 0 && JSON.stringify(env.store[KEY].ops.map((r) => r.id)) === '["op-oldfail"]', '24f: an unreadable store is never written, also not by list/get');
+    }
+    // a normal start (readable at once) writes nothing extra for a read-only call
+    {
+      const env = world([oldTerminal]);
+      env.readable = true;
+      const t = env.make();
+      await t.list();
+      await t.flush();
+      assert(env.writes === 0, '24g: a readable start without changes performs no write');
+    }
+  }
+
+  // =================================================================================================
+  console.log('\n--- 25. F08: feedback retention pruning and active operation preservation ---');
+  {
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const KEY = ctx.ImageSaverFeedbackTracker.STORAGE_KEY;
+    const T0 = 1700000000000;
+    const DAY = 24 * 60 * 60 * 1000;
+    const expiredTime = T0 - (DAY + 60000); // 1 minute past 24-hour retention window
+    const recentTime = T0 - 60000;         // 1 minute ago
+
+    // 25a: expired terminal records do not survive hydration into list(), get() or unseenFailureCount()
+    {
+      const store = {
+        [KEY]: {
+          v: 1,
+          ops: [
+            { id: 'op-exp-complete', state: 'complete', createdAt: expiredTime, updatedAt: expiredTime, site: 'example.com' },
+            { id: 'op-exp-failed', state: 'failed', seen: false, createdAt: expiredTime, updatedAt: expiredTime, site: 'example.com' },
+            { id: 'op-valid-term', state: 'complete', createdAt: recentTime, updatedAt: recentTime, site: 'example.com' },
+            { id: 'op-valid-active', state: 'saving', downloadId: 101, createdAt: recentTime, updatedAt: recentTime, site: 'example.com' }
+          ]
+        }
+      };
+      let n = 0;
+      const t = ctx.ImageSaverFeedbackTracker.createTracker({
+        storage: { get: async (k) => store[k], set: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); } },
+        now: () => T0,
+        genId: () => 'op-gen-' + (++n),
+        getDownloadItem: async () => undefined,
+        peekEarlyTerminal: () => undefined,
+        notify: async () => {},
+        log: () => {}
+      });
+
+      const list = await t.list();
+      assert(!list.some((o) => o.id === 'op-exp-complete'), '25a1: expired complete record pruned on hydration list()');
+      assert(!list.some((o) => o.id === 'op-exp-failed'), '25a2: expired failed record pruned on hydration list()');
+      assert(list.some((o) => o.id === 'op-valid-term'), '25a3: unexpired terminal record kept on hydration list()');
+      assert(list.some((o) => o.id === 'op-valid-active'), '25a4: active in-flight record kept on hydration list()');
+      assert((await t.get('op-exp-complete')) === null, '25a5: get() returns null for expired terminal record');
+      assert((await t.get('op-exp-failed')) === null, '25a6: get() returns null for expired failed record');
+      assert(t.unseenFailureCount() === 0, '25a7: unseenFailureCount() excludes expired failures');
+    }
+
+    // 25b: terminal records that expire in-memory while idle are pruned on list() and get()
+    {
+      const clock = { v: T0 };
+      const store = {};
+      let n = 0;
+      const t = ctx.ImageSaverFeedbackTracker.createTracker({
+        storage: { get: async (k) => store[k], set: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); } },
+        now: () => clock.v,
+        genId: () => 'op-idle-' + (++n),
+        getDownloadItem: async () => undefined,
+        peekEarlyTerminal: () => undefined,
+        notify: async () => {},
+        log: () => {}
+      });
+
+      const id = await t.begin({ site: 'example.com' });
+      await t.fail(id, { stage: 'resolve', code: 'NETWORK_ERR' });
+      assert((await t.list()).length === 1, '25b1: freshly failed record in list');
+      assert(t.unseenFailureCount() === 1, '25b2: unseen failure counts while unexpired');
+
+      // Advance clock past 24h retention window without intervening mutations
+      clock.v += DAY + 1000;
+      assert((await t.list()).length === 0, '25b3: record pruned on list() once expired in memory');
+      assert((await t.get(id)) === null, '25b4: get() returns null once record expired');
+      assert(t.unseenFailureCount() === 0, '25b5: unseen failure count 0 once record expired');
+    }
+
+    // 25c: maxOps trimming evicts terminal records but preserves active operations without silent discard
+    {
+      const store = {};
+      let n = 0;
+      const t = ctx.ImageSaverFeedbackTracker.createTracker({
+        storage: { get: async (k) => store[k], set: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); } },
+        now: () => T0,
+        genId: () => 'op-act-' + (++n),
+        getDownloadItem: async () => undefined,
+        peekEarlyTerminal: () => undefined,
+        notify: async () => {},
+        log: () => {}
+      });
+
+      // Start 20 active operations (saturating maxOps)
+      const activeIds = [];
+      for (let i = 0; i < 20; i++) {
+        const id = await t.begin({ site: 'example.com' });
+        activeIds.push(id);
+      }
+      assert((await t.list()).length === 20, '25c1: 20 active operations tracked');
+
+      // Start the 21st active operation
+      const id21 = await t.begin({ site: 'example.com' });
+      activeIds.push(id21);
+      const list21 = await t.list();
+      assert(list21.length === 21, '25c2: active operations exceed maxOps without dropping in-flight work');
+      assert(list21.some((o) => o.id === activeIds[0]), '25c3: oldest active operation was NOT silently discarded');
+      assert(await t.get(activeIds[0]) !== null, '25c4: oldest active operation still retrievable via get()');
+
+      // Complete the first operation (now terminal)
+      await t.attachDownload(activeIds[0], 2001);
+      await t.downloadTerminal(2001, 'complete');
+
+      // Start the 22nd operation: eviction should now reclaim the terminal operation
+      const id22 = await t.begin({ site: 'example.com' });
+      const list22 = await t.list();
+      assert(!list22.some((o) => o.id === activeIds[0]), '25c5: terminal operation evicted when capacity exceeded');
+      assert(list22.some((o) => o.id === id22), '25c6: newest operation tracked');
+      // All remaining 21 active operations are still intact
+      for (let i = 1; i < activeIds.length; i++) {
+        assert(list22.some((o) => o.id === activeIds[i]), `25c7: active op ${activeIds[i]} preserved`);
+      }
+    }
+  }
+
+  console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);
+  process.exit(failed > 0 ? 1 : 0);
+})().catch((err) => {
+  console.error('Ошибка в тестовом сценарии:', err);
+  process.exit(1);
+});
+

@@ -1,0 +1,37 @@
+{
+  "provenance": {
+    "sourceUrl": "https://www.reddit.com/r/gifs/comments/1wwi277/ and https://www.reddit.com/r/pcmasterrace/comments/1wchzc1/",
+    "observedDate": "2026-10-05",
+    "description": "Native GIF post on r/gifs with shreddit-player[gif] playing MP4 preview vs comment GIF shreddit-player with comment-id",
+    "observedEntities": [
+      "Native GIF post: shreddit-post[post-type=\"gif\"][content-href=\"https://i.redd.it/bozudhziq7th1.gif\"], shreddit-player[gif][src=\"https://preview.redd.it/bozudhziq7th1.gif?width=1280&format=mp4&s=...\"]",
+      "Native GIF shadowRoot: <video src=\"https://preview.redd.it/bozudhziq7th1.gif?width=1280&format=mp4&s=...\">",
+      "Comment GIF: shreddit-player[gif][comment-id=\"t1_p8xxorj\"][src=\"https://preview.redd.it/2l3mikp2wooh1.gif?width=367&format=mp4&s=...\"]"
+    ]
+  },
+  "sanitization": {
+    "redactions": "Removed signed HMAC tokens (s=...), user profile icons and metrics; synthetic tokens used for assertions."
+  },
+  "nativeGifPost": {
+    "id": "t3_1wwi277",
+    "postType": "gif",
+    "domain": "i.redd.it",
+    "contentHref": "https://i.redd.it/bozudhziq7th1.gif",
+    "permalink": "/r/gifs/comments/1wwi277/satellite_debris_orbit/",
+    "player": {
+      "src": "https://preview.redd.it/bozudhziq7th1.gif?width=1280&format=mp4&s=sig_sat_mp4",
+      "gif": true,
+      "poster": "https://preview.redd.it/satellite_preview-v0-bozudhziq7th1.gif?width=640&format=png8&s=sig_sat_poster",
+      "shadowVideoSrc": "https://preview.redd.it/bozudhziq7th1.gif?width=1280&format=mp4&s=sig_sat_mp4"
+    }
+  },
+  "commentGif": {
+    "postId": "t3_1wchzc1",
+    "commentId": "t1_p8xxorj",
+    "player": {
+      "src": "https://preview.redd.it/2l3mikp2wooh1.gif?width=367&format=mp4&s=sig_comment_gif_mp4",
+      "gif": true,
+      "shadowVideoSrc": "https://preview.redd.it/2l3mikp2wooh1.gif?width=367&format=mp4&s=sig_comment_gif_mp4"
+    }
+  }
+}

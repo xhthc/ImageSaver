@@ -1,0 +1,45 @@
+{
+  "provenance": {
+    "sourceUrl": "https://www.reddit.com/r/RuPC/ and https://www.reddit.com/r/RuPC/comments/1wxpi9w/",
+    "observedDate": "2026-10-05",
+    "description": "Feed view vs post page view of Reddit gallery carousel structures",
+    "observedEntities": [
+      "Feed: shreddit-post[view-context=\"AggregateFeed\"], gallery-carousel[device-type=\"desktop\"] (no gallery-start-index)",
+      "Post: shreddit-post[view-context=\"CommentsPage\"], gallery-carousel[gallery-start-index=\"0\"][device-type=\"desktop\"], pdp-back-button"
+    ]
+  },
+  "sanitization": {
+    "redactions": "Removed signed query values, user and tracking attributes."
+  },
+  "feedVariant": {
+    "post": {
+      "id": "t3_1wxpi9f",
+      "postType": "gallery",
+      "domain": "reddit.com",
+      "permalink": "/r/RuPC/comments/1wxpi9f/hardware/",
+      "viewContext": "AggregateFeed"
+    },
+    "carousel": {
+      "postId": "t3_1wxpi9f",
+      "deviceType": "desktop",
+      "totalPages": 2,
+      "pagesAttr": "2"
+    }
+  },
+  "postVariant": {
+    "post": {
+      "id": "t3_1wxpi9p",
+      "postType": "gallery",
+      "domain": "reddit.com",
+      "permalink": "/r/RuPC/comments/1wxpi9p/hardware/",
+      "viewContext": "CommentsPage"
+    },
+    "carousel": {
+      "postId": "t3_1wxpi9p",
+      "deviceType": "desktop",
+      "galleryStartIndex": "0",
+      "totalPages": 2,
+      "pagesAttr": "2"
+    }
+  }
+}

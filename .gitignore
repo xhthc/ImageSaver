@@ -1,0 +1,36 @@
+# Machine-local agent instructions and project coordination
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/local-notes/
+/recovery/
+/.agents/
+/.claude/
+/.codex/
+/.gemini/
+/.playwright-mcp/
+/.obsidian/
+
+# Dependencies, development builds, editor files and logs
+node_modules/
+ui/.test-dist/
+ui/dist/
+.idea/
+.vscode/
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+
+# Packages, downloads and secrets
+*.zip
+*.crx
+*.pem
+*.key
+.env
+.env.*
+downloads/
+SavedImages/
+
+# popup/ is the versioned UI build. Tests and ui/package*.json are versioned.

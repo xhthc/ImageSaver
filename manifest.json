@@ -1,0 +1,95 @@
+{
+  "manifest_version": 3,
+  "name": "Image Saver",
+  "version": "2.0.0.24",
+  "description": "Быстрое сохранение картинок со страниц через контекстное меню в максимальном качестве",
+  "permissions": [
+    "contextMenus",
+    "downloads",
+    "storage",
+    "scripting",
+    "declarativeNetRequest",
+    "offscreen",
+    "notifications"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Image Saver",
+    "default_popup": "popup/quick.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": ["content_context_target.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": ["content_x.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.reddit.com/*",
+        "https://reddit.com/*"
+      ],
+      "js": ["content_reddit.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.redgifs.com/*",
+        "https://redgifs.com/*",
+        "https://*.reddit.com/*",
+        "https://reddit.com/*"
+      ],
+      "js": ["content_redgifs.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://*.donmai.us/*"
+      ],
+      "js": ["content_booru.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.instagram.com/*",
+        "https://instagram.com/*"
+      ],
+      "js": ["content_instagram.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.tiktok.com/*",
+        "https://tiktok.com/*"
+      ],
+      "js": ["content_tiktok.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/*",
+        "https://youtube.com/*"
+      ],
+      "js": ["content_youtube.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

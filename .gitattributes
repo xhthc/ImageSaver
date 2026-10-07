@@ -1,0 +1,8 @@
+# The built extension pages are byte-exact build output (their file names carry content hashes and ui/scripts/check-built.mjs
+# compares bytes): no end-of-line conversion on any platform.
+/popup/** -text
+/ui/public/** -text
+
+# The page sources are inputs of that byte comparison (Vite copies them into the output pages): LF everywhere, so a Windows checkout with
+# core.autocrlf=true builds the same bytes. Narrow on purpose: other sources do not reach the output bytes.
+/ui/*.html text eol=lf
