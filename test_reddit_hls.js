@@ -267,15 +267,74 @@ function assertEdits(trak, res, movieTs, label) {
   assert.ok(Math.abs(entries[0].segment_duration / movieTs - presentation) <= 1 / movieTs, `${label}: the edit lasts as long as the presentation (${entries[0].segment_duration} for ${presentation} s)`);
 }
 
-// the structure of a whole output: order of boxes, both tracks, the index and the interleaving
+// ---- an independent reader of the output bytes: no library, only the ISO box layout (size, type, children) and the fixed fields of the sample tables ----
+function boxesIn(bytes, start, end) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const list = [];
+  let at = start;
+  while (at < end) {
+    assert.ok(at + 8 <= end, 'a box header fits');
+    const size = dv.getUint32(at);
+    assert.ok(size >= 8 && at + size <= end, `box size ${size} at ${at} stays inside its parent`);
+    list.push({ type: fourcc(bytes, at), start: at, size, body: at + 8, end: at + size });
+    at += size;
+  }
+  assert.equal(at, end, 'boxes tile their parent exactly');
+  return list;
+}
+const child = (bytes, box, type) => boxesIn(bytes, box.body, box.end).filter((b) => b.type === type);
+const only = (bytes, box, type) => { const l = child(bytes, box, type); assert.equal(l.length, 1, `exactly one ${type}`); return l[0]; };
+
+function rawTables(bytes, trak) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const stbl = only(bytes, only(bytes, only(bytes, trak, 'mdia'), 'minf'), 'stbl');
+  const t = {};
+  t.order = boxesIn(bytes, stbl.body, stbl.end).map((b) => b.type);
+  const u32 = (at) => dv.getUint32(at);
+  const i32 = (at) => dv.getInt32(at);
+  const entries = (box, width, fn) => { const n = u32(box.body + 4); const o = []; for (let k = 0; k < n; k++) o.push(fn(box.body + 8 + k * width)); assert.equal(box.body + 8 + n * width, box.end, `${box.type} is exactly its entries`); return o; };
+  const stts = only(bytes, stbl, 'stts');
+  t.stts = entries(stts, 8, (p) => [u32(p), u32(p + 4)]);
+  const ctts = child(bytes, stbl, 'ctts')[0];
+  t.ctts = ctts ? entries(ctts, 8, (p) => [u32(p), i32(p + 4)]) : null;
+  const stss = child(bytes, stbl, 'stss')[0];
+  t.stss = stss ? entries(stss, 4, (p) => u32(p)) : null;
+  const stsc = only(bytes, stbl, 'stsc');
+  t.stsc = entries(stsc, 12, (p) => [u32(p), u32(p + 4), u32(p + 8)]);
+  const stsz = only(bytes, stbl, 'stsz');
+  assert.equal(u32(stsz.body + 4), 0, 'no constant sample size');
+  const count = u32(stsz.body + 8);
+  t.sizes = []; for (let k = 0; k < count; k++) t.sizes.push(u32(stsz.body + 12 + k * 4));
+  assert.equal(stsz.body + 12 + count * 4, stsz.end);
+  const stco = only(bytes, stbl, 'stco');
+  t.stco = entries(stco, 4, (p) => u32(p));
+  return t;
+}
+
+// every sample's place in the file from the raw tables alone: chunk by chunk, samples back to back inside a chunk
+function rawSamplePlaces(tb) {
+  const places = [];
+  let sample = 0;
+  tb.stsc.forEach(([first, per], k) => {
+    const lastChunk = k + 1 < tb.stsc.length ? tb.stsc[k + 1][0] - 1 : tb.stco.length;
+    for (let chunk = first; chunk <= lastChunk; chunk++) {
+      let at = tb.stco[chunk - 1];
+      for (let j = 0; j < per; j++) { places.push({ chunk, offset: at, size: tb.sizes[sample] }); at += tb.sizes[sample]; sample++; }
+    }
+  });
+  assert.equal(sample, tb.sizes.length, 'the chunks hold every sample');
+  return places;
+}
+
+// the structure of a whole output: a regular MP4 (ftyp, moov, mdat), both complete tracks, ordinary tables that tile the media data, interleaving
 async function assertOutput(result, v, a, label = 'output') {
   const out = await reparse(result.blob);
   const { file, info, bytes } = out;
   assert.equal(result.size, bytes.length, `${label}: reported size`);
-  assert.deepEqual(file.boxes.slice(0, 3).map((b) => b.type), ['ftyp', 'moov', 'sidx'], `${label}: init, then the index, before any fragment`);
-  const rest = file.boxes.slice(3).map((b) => b.type);
-  assert.ok(rest.length >= 4 && rest.length % 2 === 0 && rest.every((t, i) => t === (i % 2 ? 'mdat' : 'moof')), `${label}: moof/mdat pairs only`);
-  assert.equal(info.isFragmented, true);
+  assert.equal(result.fragments, 0, `${label}: not fragmented`);
+  assert.deepEqual(file.boxes.map((b) => b.type), ['ftyp', 'moov', 'mdat'], `${label}: ftyp, moov before the media data, one mdat`);
+  assert.equal(info.isFragmented, false);
+  assert.equal(file.moov.mvex, undefined, `${label}: no fragment extension`);
   assert.equal(info.tracks.length, 2, `${label}: both declared tracks`);
   assert.deepEqual(info.tracks.map((t) => [t.id, t.type, t.codec]), [[1, 'video', 'avc1.4d401f'], [2, 'audio', 'mp4a.40.2']], `${label}: ids, kinds, codecs`);
   assert.equal(file.moov.mvhd.timescale, 1000);
@@ -286,51 +345,75 @@ async function assertOutput(result, v, a, label = 'output') {
   assert.deepEqual([info.tracks[0].volume, info.tracks[1].volume], [0, 1], `${label}: volume`);
   assertEdits(vt, v, 1000, `${label} video`);
   assertEdits(at, a, 1000, `${label} audio`);
-  // durations: media, presentation (movie) and fragment duration agree with the longest presentation
   const pres = (r) => Math.max(0, r.ticks - mediaTimeOf(r.spec)) / r.spec.timescale;
   const movie = Math.round(Math.max(pres(v), pres(a)) * 1000);
   assert.equal(file.moov.mvhd.duration, movie, `${label}: movie duration`);
-  assert.equal(file.moov.mvex.mehd.fragment_duration, movie, `${label}: fragment duration`);
   assert.equal(vt.mdia.mdhd.duration, v.ticks);
   assert.equal(at.mdia.mdhd.duration, a.ticks);
   assert.equal(result.durationSec, movie / 1000);
-  // the index: references are consecutive groups that start at moof boxes of the video track, with the video duration and sizes of the whole file
-  const sidx = file.boxes.find((b) => b.type === 'sidx');
-  assert.equal(sidx.reference_ID, 1);
-  assert.equal(sidx.timescale, v.spec.timescale);
-  let at0 = sidx.start + sidx.size + sidx.first_offset;
-  let dur = 0;
-  const firstVideoDts = [];
-  for (const ref of sidx.references) {
-    assert.equal(ref.reference_type, 0);
-    assert.equal(fourcc(bytes, at0), 'moof', `${label}: a reference starts at a moof`);
-    const moof = file.moofs.find((m) => m.start === at0);
-    assert.ok(moof, `${label}: a parsed moof at ${at0}`);
-    assert.equal(moof.trafs[0].tfhd.track_id, 1, `${label}: a group starts with its video fragment`);
-    firstVideoDts.push(moof.trafs[0].tfdt.baseMediaDecodeTime);
-    dur += ref.subsegment_duration;
-    at0 += ref.referenced_size;
-  }
-  assert.equal(at0, bytes.length, `${label}: the references cover every fragment byte`);
-  assert.equal(dur, v.ticks, `${label}: the references last as long as the video`);
-  assert.equal(sidx.references.length, result.fragments);
-  assert.equal(sidx.references[0].starts_with_SAP, 1);
-  // interleaving: the audio of a group never runs past the next group's first video time
-  const groups = [];
-  for (const m of file.moofs) {
-    const id = m.trafs[0].tfhd.track_id;
-    if (id === 1) groups.push({ v: m, a: [] }); else groups[groups.length - 1].a.push(m);
-  }
-  assert.equal(groups.length, sidx.references.length);
-  groups.forEach((g, k) => {
-    const next = groups[k + 1];
-    if (!next) return;
-    const limit = next.v.trafs[0].tfdt.baseMediaDecodeTime / v.spec.timescale;
-    for (const am of g.a) assert.ok(am.trafs[0].tfdt.baseMediaDecodeTime / a.spec.timescale < limit, `${label}: audio of group ${k} starts before the next video group`);
+
+  // --- the bytes, read without the library ---
+  const top = boxesIn(bytes, 0, bytes.length);
+  assert.deepEqual(top.map((b) => b.type), ['ftyp', 'moov', 'mdat']);
+  const mdat = top[2];
+  const moov = top[1];
+  const moovKids = boxesIn(bytes, moov.body, moov.end);
+  assert.deepEqual(moovKids.map((b) => b.type), ['mvhd', 'trak', 'trak'], `${label}: mvhd leads the movie box; two tracks; no mvex`);
+  const traks = moovKids.filter((b) => b.type === 'trak');
+  traks.forEach((trak, k) => assert.deepEqual(boxesIn(bytes, trak.body, trak.end).map((b) => b.type), (k === 0 ? mediaTimeOf(v.spec) : mediaTimeOf(a.spec)) ? ['tkhd', 'edts', 'mdia'] : ['tkhd', 'mdia'], `${label}: track box order (the edit box sits between the header and the media)`));
+  for (const trak of traks) assert.deepEqual(boxesIn(bytes, only(bytes, trak, 'mdia').body, only(bytes, trak, 'mdia').end).map((b) => b.type), ['mdhd', 'hdlr', 'minf'], `${label}: ordinary media box`);
+  const tables = [v, a].map((res, k) => {
+    const tb = rawTables(bytes, traks[k]);
+    const want = expectedSamples(res);
+    assert.deepEqual(tb.order.filter((t) => t !== 'ctts' && t !== 'stss'), ['stsd', 'stts', 'stsc', 'stsz', 'stco'], `${label}: sample table boxes`);
+    // time-to-sample, composition offsets and sync samples against the source
+    const durations = []; for (const [n, d] of tb.stts) for (let i = 0; i < n; i++) durations.push(d);
+    assert.deepEqual(durations, want.map((w) => w.duration), `${label} track ${k + 1}: stts`);
+    const ctts = []; if (tb.ctts) for (const [n, d] of tb.ctts) for (let i = 0; i < n; i++) ctts.push(d);
+    const wantCtts = want.map((w) => w.cts - w.dts);
+    if (wantCtts.some((x) => x !== 0)) assert.deepEqual(ctts, wantCtts, `${label} track ${k + 1}: ctts`); else assert.equal(tb.ctts, null, `${label} track ${k + 1}: no ctts when every offset is zero`);
+    if (k === 0) {
+      const syncs = want.map((w, i) => (w.sync ? i + 1 : 0)).filter(Boolean);
+      if (syncs.length === want.length) assert.equal(tb.stss, null); else assert.deepEqual(tb.stss, syncs, `${label}: stss lists the sync samples`);
+    } else assert.equal(tb.stss, null, `${label}: audio has no sync table`);
+    assert.deepEqual(tb.sizes, want.map((w) => w.size), `${label} track ${k + 1}: stsz`);
+    assert.ok(tb.stsc.every((e) => e[2] === 1) && tb.stsc[0][0] === 1, `${label}: stsc starts at chunk 1`);
+    assert.ok(tb.stsc.every((e, i) => i === 0 || (e[0] > tb.stsc[i - 1][0] && e[1] !== tb.stsc[i - 1][1])), `${label}: stsc runs are minimal and ordered`);
+    // every sample sits inside the media data and carries the source payload
+    const places = rawSamplePlaces(tb);
+    places.forEach((p, i) => {
+      assert.ok(p.offset >= mdat.body && p.offset + p.size <= mdat.end, `${label} track ${k + 1}: sample ${i} lies inside the mdat`);
+      assert.deepEqual(Array.from(bytes.subarray(p.offset, p.offset + p.size)), Array.from(want[i].payload), `${label} track ${k + 1}: sample ${i} payload at its table offset`);
+    });
+    return { tb, places };
   });
-  const tfdts = (id) => file.moofs.filter((m) => m.trafs[0].tfhd.track_id === id).map((m) => m.trafs[0].tfdt.baseMediaDecodeTime);
-  for (const id of [1, 2]) assert.deepEqual(tfdts(id), tfdts(id).slice().sort((x, y) => x - y), `${label}: track ${id} decode times only grow`);
-  assert.equal(tfdts(1)[0], v.spec.dtsStart || 0);
+  // the chunks of both tracks tile the media data exactly: no gap, no overlap, nothing unreferenced
+  const chunks = [];
+  tables.forEach(({ tb, places }, k) => {
+    const byChunk = new Map();
+    for (const p of places) { const c = byChunk.get(p.chunk) || { track: k, offset: p.offset, size: 0 }; c.size += p.size; byChunk.set(p.chunk, c); }
+    chunks.push(...byChunk.values());
+  });
+  chunks.sort((x, y) => x.offset - y.offset);
+  let cursor = mdat.body;
+  for (const c of chunks) { assert.equal(c.offset, cursor, `${label}: chunks follow one another`); cursor += c.size; }
+  assert.equal(cursor, mdat.end, `${label}: the chunks fill the mdat exactly`);
+  // interleaving: strictly alternating video, audio, video, ... chunks, and the audio of a pair starts before the next video chunk does
+  const kinds = chunks.map((c) => c.track);
+  assert.ok(kinds.every((t, i) => (i % 2 === 0 ? t === 0 : t === 1)) || kinds.every((t, i) => t === 0 || kinds[i - 1] === 0), `${label}: video chunks first in every pair, audio never twice in a row`);
+  const startTime = (k, res, chunkOffset) => {
+    const { places } = tables[k];
+    const i = places.findIndex((p) => p.offset === chunkOffset);
+    const w = expectedSamples(res)[i];
+    return w.dts / res.spec.timescale;
+  };
+  chunks.forEach((c, i) => {
+    if (c.track !== 1) return;
+    const nextVideo = chunks.slice(i + 1).find((x) => x.track === 0);
+    if (nextVideo) assert.ok(startTime(1, a, c.offset) < startTime(0, v, nextVideo.offset), `${label}: an audio chunk starts before the next video chunk`);
+  });
+  out.chunks = { video: chunks.filter((c) => c.track === 0).length, audio: chunks.filter((c) => c.track === 1).length };
+  out.tables = tables.map((t) => t.tb);
   return out;
 }
 
@@ -396,32 +479,37 @@ test('timing across timescales: different edit lists (priming) are kept in each 
   }
 });
 
-test('several interleaved groups: groups follow sync samples and the audio between them; the index covers every group', async () => {
+test('several interleaved chunks: chunks follow sync samples and carry the audio between them; the tables cover every chunk', async () => {
   const v = buildFmp4(videoSpec({ count: 120, perFragment: 12 }));
   const a = buildFmp4(audioSpec({ count: 200, perFragment: 20 }));
   const result = await H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: makeServer(standardFiles(v, a)).fetchImpl, limits: { groupSeconds: 0.5, blobPartBytes: 600 } });
-  assert.ok(result.fragments >= 4, 'several groups: ' + result.fragments);
-  const out = await assertOutput(result, v, a, 'groups');
-  const sidx = out.file.boxes.find((b) => b.type === 'sidx');
-  assert.ok(sidx.references.every((r) => r.starts_with_SAP === 1 && r.SAP_type === 1), 'every group starts at a sync sample');
-  // the groups' video fragments start at the sync samples (every 12th frame) of the source
+  assert.equal(result.fragments, 0);
+  const out = await assertOutput(result, v, a, 'chunks');
+  assert.ok(out.chunks.video >= 4 && out.chunks.audio >= 4, 'several chunks: ' + JSON.stringify(out.chunks));
+  assert.equal(out.tables[0].stco.length, out.chunks.video);
+  assert.equal(out.tables[1].stco.length, out.chunks.audio);
+  // the video chunks begin at the sync samples (every 12th frame) of the source
   const video = out.file.getTrackById(1);
-  const starts = out.file.moofs.filter((m) => m.trafs[0].tfhd.track_id === 1).map((m) => m.trafs[0].tfdt.baseMediaDecodeTime);
-  const syncDts = video.samples.filter((s) => s.is_sync).map((s) => s.dts);
-  assert.ok(starts.every((d) => syncDts.includes(d)), 'groups begin at sync samples');
+  const firstOfChunk = new Set(rawSamplePlaces(out.tables[0]).filter((p, i, all) => i === 0 || all[i - 1].chunk !== p.chunk).map((p) => p.offset));
+  const syncOffsets = new Set(video.samples.filter((s) => s.is_sync).map((s) => s.offset));
+  assert.ok([...firstOfChunk].every((o) => syncOffsets.has(o)), 'every chunk begins at a sync sample');
+  // seeking: the sync table points at samples whose chunks can start playback
+  assert.deepEqual(out.tables[0].stss, video.samples.map((s, i) => (s.is_sync ? i + 1 : 0)).filter(Boolean));
 });
 
-test('groups bounded by bytes: a group never exceeds the byte limit even without a sync sample (the index says so)', async () => {
+test('chunks bounded by bytes: a chunk never exceeds the byte limit even without a sync sample; the tables still tile the media data', async () => {
   const vs = videoSpec({ count: 48, perFragment: 12 });
   vs.samples = vs.samples.map((s, i) => ({ ...s, size: 200, sync: i === 0 }));
   const v = buildFmp4(vs);
   const a = buildFmp4(audioSpec());
   const result = await H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: makeServer(standardFiles(v, a)).fetchImpl, limits: { groupBytes: 1000 } });
   const out = await assertOutput(result, v, a, 'bytes');
-  const sidx = out.file.boxes.find((b) => b.type === 'sidx');
-  assert.ok(sidx.references.length >= 8);
-  assert.equal(sidx.references[0].starts_with_SAP, 1);
-  assert.ok(sidx.references.slice(1).every((r) => r.starts_with_SAP === 0), 'a group that does not start at a sync sample says so');
+  assert.ok(out.chunks.video >= 8, 'bounded chunks: ' + out.chunks.video);
+  const places = rawSamplePlaces(out.tables[0]);
+  const perChunk = new Map();
+  for (const p of places) perChunk.set(p.chunk, (perChunk.get(p.chunk) || 0) + p.size);
+  assert.ok([...perChunk.values()].every((n) => n <= 1000), 'no video chunk beyond groupBytes');
+  assert.deepEqual(out.tables[0].stss, [1], 'only the first sample is a sync sample, and the table says so');
 });
 
 test('the best supported variant: largest picture, then the larger bandwidth (the better audio group); every address is the declared one', async () => {
@@ -833,6 +921,25 @@ test('R1-F1 a valid oversized layout still falls back, and a lower layout that i
   const all = makeServer(files);
   await assert.rejects(H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: all.fetchImpl, limits: { inputBytes: 100 } }), { code: 'TOO_LARGE' });
   assert.ok(!paths(all).some((p) => p.endsWith('.mp4')));
+});
+
+test('R2 output bound and cancellation of the packaging: the exact size passes, one byte less is TOO_LARGE before any payload is copied; an abort while packaging rejects ABORTED and frees the assembler', async () => {
+  const v = buildFmp4(videoSpec());
+  const a = buildFmp4(audioSpec());
+  const ok = await H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: makeServer(standardFiles(v, a)).fetchImpl });
+  await assert.rejects(H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: makeServer(standardFiles(v, a)).fetchImpl, limits: { outputBytes: ok.size - 1 } }), { code: 'TOO_LARGE' });
+  const exact = await H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: makeServer(standardFiles(v, a)).fetchImpl, limits: { outputBytes: ok.size } });
+  assert.equal(exact.size, ok.size);
+  assert.equal(H.isAssembling(), false);
+  // the third createFile call is the output file of the packaging step (the two before parse the sources)
+  const ac = new AbortController();
+  let calls = 0;
+  const loader = async () => ({ ...M, createFile: (...args) => { const f = M.createFile(...args); if (++calls === 3) ac.abort(); return f; } });
+  await assert.rejects(H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: makeServer(standardFiles(v, a)).fetchImpl, signal: ac.signal, mp4box: loader }), { code: 'ABORTED' });
+  assert.equal(calls, 3);
+  assert.equal(H.isAssembling(), false);
+  const again = await H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: makeServer(standardFiles(v, a)).fetchImpl });
+  await assertOutput(again, v, a, 'after the abort');
 });
 
 // =============================================================================================================================================
