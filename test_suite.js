@@ -42,6 +42,8 @@ globalThis.flashBadge = flashBadge;
 globalThis.setBadge = setBadge;
 globalThis.clearBadge = clearBadge;
 globalThis.trackedDownloadIds = trackedDownloadIds;
+globalThis.activeDownloadsMetadata = activeDownloadsMetadata;
+globalThis.nativeResumeDecisions = nativeResumeDecisions;
 globalThis.probeCandidate = probeCandidate;
 globalThis.setupContextMenus = setupContextMenus;
 globalThis.executeMediaDownload = executeMediaDownload;
@@ -1460,11 +1462,15 @@ async function runTests() {
     }, { id: 1 });
     const failId = 10001 + downloadedCalls.length;
 
+    // the item Chrome reports is interrupted and not resumable (the default mock item is "complete": a stale event, see Test 268)
+    const searchBefore73 = mockChrome.downloads.search;
+    mockChrome.downloads.search = async (q, cb) => (await searchBefore73(q, cb)).map((it) => (it.id === failId ? { ...it, state: 'interrupted', error: 'NETWORK_FAILED', canResume: false } : it));
     await mockChrome.downloads._onChangedCb({
       id: failId,
       state: { current: 'interrupted', previous: 'in_progress' },
       error: { current: 'NETWORK_FAILED' }
     });
+    mockChrome.downloads.search = searchBefore73;
     assert(
       mockChrome._lastBadgeText === 'ERR' && mockChrome._lastBadgeColor === '#ef4444',
       'lifecycle: сбой загрузки (onChanged interrupted) переводит бейдж в ERR'
@@ -32586,6 +32592,405 @@ async function runTests() {
     } finally {
       sandbox.fetch = prevFetch;
       sandbox.console.warn = prevWarn;
+    }
+  }
+
+  // ── Test 268: ONE native same-id resume after NETWORK_FAILED (SITE-PAWCHIVE-01 NETWORK-R1) ──
+  // An interrupted direct download that this worker fully registered gets one chrome.downloads.resume on the SAME id when its current item is
+  // ours, same source, interrupted with NETWORK_FAILED and resumable. The decision runs before terminal feedback and cleanup; a resumed download
+  // stays tracked and "saving" until its own completion. Real handlers and real onChanged listener; only Chrome (downloads, session storage) is mocked.
+  {
+    console.log('\n--- Test 268: bounded native resume of an interrupted direct download ---');
+    const prev = {
+      download: mockChrome.downloads.download, search: mockChrome.downloads.search, resume: mockChrome.downloads.resume,
+      runtimeId: mockChrome.runtime.id, sessionGet: mockChrome.storage.session.get, sessionSet: mockChrome.storage.session.set,
+      addTracked: sandbox.addTrackedDownloadId, warn: sandbox.console.warn, log: sandbox.console.log, error: sandbox.console.error
+    };
+    sandbox.console.warn = () => {};
+    sandbox.console.log = () => {};
+    sandbox.console.error = () => {};
+    const OWN = 'mock-id';
+    mockChrome.runtime.id = OWN;
+    const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const items = new Map();
+    const started = [];
+    const resumes = [];
+    let nextId = 926800;
+    let resumeImpl = async () => {};
+    let searchImpl = null;
+    let earlyEvent = false;
+    const itemOf = (id) => { const it = items.get(id); return it ? [{ ...it }] : []; };
+    const setItem = (id, patch) => items.set(id, { ...items.get(id), ...patch });
+    const interrupt = (id, error = 'NETWORK_FAILED', canResume = true) => setItem(id, { state: 'interrupted', error, canResume });
+    const fire = (id, state, error) => mockChrome.downloads._onChangedCb({ id, state: { current: state, previous: 'in_progress' }, ...(error ? { error: { current: error } } : {}) });
+    mockChrome.downloads.download = async (opts, cb) => {
+      const id = nextId++;
+      started.push({ id, url: opts.url });
+      items.set(id, { id, state: 'in_progress', url: opts.url, finalUrl: opts.url, byExtensionId: OWN, canResume: false, paused: false });
+      if (earlyEvent) { interrupt(id); await fire(id, 'interrupted', 'NETWORK_FAILED'); }
+      if (typeof cb === 'function') cb(id);
+      return id;
+    };
+    mockChrome.downloads.search = async (q) => (searchImpl ? searchImpl(q) : itemOf(q && q.id));
+    mockChrome.downloads.resume = async (id) => { resumes.push(id); return resumeImpl(id); };
+    const resumesOf = (id) => resumes.filter((r) => r === id).length;
+    const start = async (ext = 'jpg') => {
+      const n = nextId;
+      const url = `https://img.example.com/original/net268-${n}.${ext}?f=clip${n}.${ext}`;
+      const op = await sandbox.feedbackTracker.begin({ pageUrl: 'https://img.example.com/', sourceUrl: url, site: 'example' });
+      const res = await sandbox.executeMediaPlan(sandbox.adaptCandidateToGroup({ url, source: 'unknown', tier: 'original' }), settings, url, { feedbackOp: op });
+      return { id: res.downloadId, url };
+    };
+    const stateOf = async (id) => { await sandbox.feedbackTracker.flush(); return (await sandbox.feedbackTracker.list()).find((o) => o.downloadId === id)?.state; };
+    const live = (id) => sandbox.trackedDownloadIds.has(id) && sandbox.activeDownloadsMetadata.has(id);
+    const gone = async (id) => !sandbox.trackedDownloadIds.has(id) && !sandbox.activeDownloadsMetadata.has(id) && !((await mockChrome.storage.session.get({ trackedDownloadIds: [] })).trackedDownloadIds.includes(id));
+    const marker = (id) => mockChrome.storage.session._store[`native_resume_${id}`];
+    const hasErr = () => (mockChrome._badgeHistory || []).some((b) => b.text === 'ERR');
+    const fresh = () => { mockChrome._badgeHistory = []; mockChrome._lastBadgeText = ''; };
+    const gate = () => { let release; const wait = new Promise((r) => { release = r; }); return { wait, release }; };
+    const toInProgress = (id) => setItem(id, { state: 'in_progress', error: undefined, canResume: false });
+    // a registered download whose first interruption is resumable; resumeImpl accepts and the item runs again
+    const accept = (id) => { resumeImpl = async (rid) => { toInProgress(rid); }; };
+    try {
+      // 268.1-4: accepted resume keeps everything, then the actual completion finishes it (jpg, gif and mp4 over http are all direct downloads)
+      for (const ext of ['jpg', 'gif', 'mp4']) {
+        fresh();
+        started.length = 0;
+        const a = await start(ext);
+        let markerAtResume = null;
+        resumeImpl = async (rid) => { markerAtResume = marker(rid); toInProgress(rid); };
+        interrupt(a.id);
+        await fire(a.id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(a.id) === 1 && started.length === 1 && started[0].id === a.id && started[0].url === a.url,
+          `268.1 (${ext}): one resume of the SAME id, no new download, exact source URL untouched`);
+        assert(markerAtResume !== null && markerAtResume !== undefined, `268.2 (${ext}): the one-attempt marker is persisted BEFORE the resume`);
+        assert((await stateOf(a.id)) === 'saving' && live(a.id) && !hasErr() && sandbox.nativeResumeDecisions.has(a.id),
+          `268.3 (${ext}): after an accepted resume the feedback stays saving, id and metadata stay tracked, no ERR badge`);
+        setItem(a.id, { state: 'complete', filename: `SavedImages/net268.${ext}` });
+        await fire(a.id, 'complete');
+        assert((await stateOf(a.id)) === 'complete' && (await gone(a.id)) && mockChrome._lastBadgeText === 'OK' && marker(a.id) === undefined && !sandbox.nativeResumeDecisions.has(a.id) && !hasErr(),
+          `268.4 (${ext}): the actual completion finishes the operation, untracks, clears the marker and flashes OK`);
+      }
+
+      // 268.5: a genuine second failure is not resumed again and is finalised
+      {
+        fresh();
+        const a = await start();
+        accept(a.id);
+        interrupt(a.id);
+        await fire(a.id, 'interrupted', 'NETWORK_FAILED');
+        interrupt(a.id);
+        await fire(a.id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(a.id) === 1 && (await stateOf(a.id)) === 'interrupted' && (await gone(a.id)) && hasErr() && !sandbox.nativeResumeDecisions.has(a.id) && marker(a.id) === undefined,
+          '268.5: the second NETWORK_FAILED is not resumed again: interrupted feedback, untracked, ERR, marker and attempt cleared');
+      }
+
+      // 268.6: the user cancels the resumed download: cancelled, never retried
+      {
+        fresh();
+        const a = await start();
+        accept(a.id);
+        interrupt(a.id);
+        await fire(a.id, 'interrupted', 'NETWORK_FAILED');
+        interrupt(a.id, 'USER_CANCELED', false);
+        await fire(a.id, 'interrupted', 'USER_CANCELED');
+        assert(resumesOf(a.id) === 1 && (await stateOf(a.id)) === 'cancelled' && (await gone(a.id)) && !hasErr() && !sandbox.nativeResumeDecisions.has(a.id),
+          '268.6: a cancellation after the resume is cancelled (no ERR, no second resume)');
+      }
+
+      // 268.7: the item must be ours, same source, NETWORK_FAILED and resumable; the event error must be NETWORK_FAILED too
+      const refused = [
+        ['canResume=false', { canResume: false }, 'NETWORK_FAILED'],
+        ['canResume missing', { canResume: undefined }, 'NETWORK_FAILED'],
+        ['byExtensionId of another extension', { byExtensionId: 'another-extension' }, 'NETWORK_FAILED'],
+        ['no byExtensionId', { byExtensionId: undefined }, 'NETWORK_FAILED'],
+        ['item URL differs from the owned source', { url: 'https://img.example.com/other.jpg' }, 'NETWORK_FAILED'],
+        ['item URL is a blob', { url: 'blob:chrome-extension://mock-id/abc' }, 'NETWORK_FAILED'],
+        ['SERVER_FORBIDDEN', {}, 'SERVER_FORBIDDEN'],
+        ['SERVER_UNAUTHORIZED', {}, 'SERVER_UNAUTHORIZED'],
+        ['FILE_FAILED', {}, 'FILE_FAILED'],
+        ['NETWORK_TIMEOUT', {}, 'NETWORK_TIMEOUT'],
+        ['USER_CANCELED', {}, 'USER_CANCELED']
+      ];
+      for (const [label, patch, error] of refused) {
+        fresh();
+        const d = await start();
+        interrupt(d.id, error, true);
+        setItem(d.id, patch);
+        await fire(d.id, 'interrupted', error);
+        const cancelled = error === 'USER_CANCELED';
+        assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === (cancelled ? 'cancelled' : 'interrupted') && (await gone(d.id)) && hasErr() === !cancelled && !sandbox.nativeResumeDecisions.has(d.id),
+          `268.7 (${label}): no resume; existing terminal handling`);
+      }
+      // the same source is compared after URL normalisation: a fragment Chrome may drop does not hide the owner
+      {
+        fresh();
+        const d = await start();
+        accept(d.id);
+        interrupt(d.id);
+        setItem(d.id, { url: `${d.url}#frag` });
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(d.id) === 1 && (await stateOf(d.id)) === 'saving', '268.7b: a fragment-only difference between item URL and owned source is still the same source');
+        setItem(d.id, { state: 'complete' });
+        await fire(d.id, 'complete');
+      }
+
+      // 268.8: not a fully registered current-worker direct http(s) download: no resume
+      {
+        const resumable = (url) => { const id = nextId++; items.set(id, { id, state: 'interrupted', error: 'NETWORK_FAILED', canResume: true, url, finalUrl: url, byExtensionId: OWN }); return id; };
+        const U = 'https://img.example.com/original/net268-x.jpg';
+        // (a) emergency-fallback style registration: metadata without a plan
+        fresh();
+        let id = resumable(U);
+        sandbox.activeDownloadsMetadata.set(id, { url: U, rawUrl: U });
+        await sandbox.addTrackedDownloadId(id);
+        await fire(id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(id) === 0 && (await gone(id)) && hasErr(), '268.8a: metadata without a plan (emergency fallback) is not resumed');
+        // (b) protected-blob and data-URL transports
+        for (const transport of ['protectedBlob', 'pixivDataUrl']) {
+          fresh();
+          id = resumable(U);
+          sandbox.activeDownloadsMetadata.set(id, { url: U, rawUrl: U, plan: { transport } });
+          await sandbox.addTrackedDownloadId(id);
+          await fire(id, 'interrupted', 'NETWORK_FAILED');
+          assert(resumesOf(id) === 0 && (await gone(id)), `268.8b: transport ${transport} is not resumed`);
+        }
+        // (c) a blob or data source in the metadata
+        for (const bad of ['blob:chrome-extension://mock-id/abc', 'data:image/png;base64,AAAA', 'file:///C:/x.jpg']) {
+          fresh();
+          id = resumable(bad);
+          sandbox.activeDownloadsMetadata.set(id, { url: bad, rawUrl: bad, plan: { transport: 'direct' } });
+          await sandbox.addTrackedDownloadId(id);
+          await fire(id, 'interrupted', 'NETWORK_FAILED');
+          assert(resumesOf(id) === 0 && (await gone(id)), `268.8c: non-http source ${bad.slice(0, 5)} is not resumed`);
+        }
+        // (d) tracked id without metadata (what a restarted worker has): existing handling, no automatic recovery
+        fresh();
+        const r = await start();
+        interrupt(r.id);
+        sandbox.activeDownloadsMetadata.delete(r.id);
+        await fire(r.id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(r.id) === 0 && (await stateOf(r.id)) === 'interrupted' && (await gone(r.id)) && hasErr(), '268.8d: after a worker restart (tracked id, no metadata) the first failure keeps the existing terminal handling');
+        // (e) metadata without a tracked id (registration not finished): the event takes the early path
+        fresh();
+        id = resumable(U);
+        sandbox.activeDownloadsMetadata.set(id, { url: U, rawUrl: U, plan: { transport: 'direct' } });
+        await fire(id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(id) === 0 && sandbox.earlyTerminalDownloadStates.has(id), '268.8e: metadata alone (not yet tracked) is not resumed; the early state is recorded');
+        sandbox.earlyTerminalDownloadStates.delete(id);
+        sandbox.activeDownloadsMetadata.delete(id);
+      }
+
+      // 268.9: API and guard-storage failures mean no automatic attempt; existing terminal handling
+      {
+        const finalised = async (d, label, extra = true) => assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === 'interrupted' && (await gone(d.id)) && hasErr() && extra, label);
+        let d;
+        fresh(); d = await start(); interrupt(d.id); searchImpl = async () => { throw new Error('search failed'); };
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED'); searchImpl = null;
+        await finalised(d, '268.9a: chrome.downloads.search rejects: no resume, interrupted');
+        fresh(); d = await start(); interrupt(d.id); searchImpl = async () => [];
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED'); searchImpl = null;
+        await finalised(d, '268.9b: the item is not found: no resume, interrupted');
+        const sessionSet = mockChrome.storage.session.set;
+        const sessionGet = mockChrome.storage.session.get;
+        fresh(); d = await start(); interrupt(d.id);
+        mockChrome.storage.session.set = async (o) => { if (Object.keys(o).some((k) => k.startsWith('native_resume_'))) throw new Error('quota'); return sessionSet(o); };
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED'); mockChrome.storage.session.set = sessionSet;
+        await finalised(d, '268.9c: the marker cannot be persisted: no resume, interrupted', marker(d.id) === undefined);
+        fresh(); d = await start(); interrupt(d.id);
+        mockChrome.storage.session.get = async (k, ...a) => { if (typeof k === 'string' && k.startsWith('native_resume_')) throw new Error('unavailable'); return sessionGet(k, ...a); };
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED'); mockChrome.storage.session.get = sessionGet;
+        await finalised(d, '268.9d: the marker cannot be read: no resume, interrupted');
+        fresh(); d = await start(); interrupt(d.id); mockChrome.storage.session._store[`native_resume_${d.id}`] = 1;
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED');
+        await finalised(d, '268.9e: a persisted marker means the attempt was already made: no resume', marker(d.id) === undefined);
+        // resume rejects: one call, no retry, terminal handling with the item's error
+        fresh(); d = await start(); interrupt(d.id); resumeImpl = async () => { throw new Error('Download must be resumable'); };
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(d.id) === 1 && (await stateOf(d.id)) === 'interrupted' && (await gone(d.id)) && hasErr() && !sandbox.nativeResumeDecisions.has(d.id),
+          '268.9f: a rejected resume is not retried and ends as an interrupted download');
+        // resume rejects because the item has meanwhile completed: not a failure
+        fresh(); d = await start(); interrupt(d.id); resumeImpl = async (rid) => { setItem(rid, { state: 'complete' }); throw new Error('Download must be in progress'); };
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED');
+        assert((await stateOf(d.id)) === 'saving' && live(d.id) && !hasErr(), '268.9g: a resume refused because the download already moved on does not fail the operation');
+        await fire(d.id, 'complete');
+        assert((await stateOf(d.id)) === 'complete' && (await gone(d.id)) && !hasErr(), '268.9h: its own completion still finishes it');
+      }
+
+      // 268.10: concurrent and duplicate events never resume twice, and a stale duplicate never fails the resumed download
+      {
+        fresh();
+        const d = await start();
+        const g = gate();
+        resumeImpl = async (rid) => { await g.wait; toInProgress(rid); };
+        interrupt(d.id);
+        const events = [fire(d.id, 'interrupted', 'NETWORK_FAILED'), fire(d.id, 'interrupted', 'NETWORK_FAILED'), fire(d.id, 'interrupted', 'NETWORK_FAILED')];
+        await sleep(25);
+        g.release();
+        await Promise.all(events);
+        assert(resumesOf(d.id) === 1 && (await stateOf(d.id)) === 'saving' && live(d.id) && !hasErr(), '268.10a: three concurrent interrupted events cause exactly one resume and leave the download saving');
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(d.id) === 1 && (await stateOf(d.id)) === 'saving' && live(d.id) && !hasErr(), '268.10b: a stale duplicate after the resume does not fail the running download');
+        setItem(d.id, { state: 'complete' });
+        await fire(d.id, 'complete');
+        assert((await stateOf(d.id)) === 'complete' && (await gone(d.id)), '268.10c: the running download still completes normally');
+      }
+
+      // 268.11: completion, cancellation and a second interruption that race the awaited decision keep the winning outcome
+      {
+        let d; let g; let events;
+        // completion while the resume is awaited
+        fresh(); d = await start(); g = gate(); resumeImpl = async () => { await g.wait; }; interrupt(d.id);
+        events = [fire(d.id, 'interrupted', 'NETWORK_FAILED')];
+        await sleep(25); setItem(d.id, { state: 'complete' }); events.push(fire(d.id, 'complete')); await sleep(10); g.release(); await Promise.all(events);
+        assert(resumesOf(d.id) === 1 && (await stateOf(d.id)) === 'complete' && (await gone(d.id)) && !hasErr() && mockChrome._lastBadgeText === 'OK', '268.11a: completion during the awaited resume wins: complete, OK, no ERR');
+        // completion while the item is being read
+        fresh(); d = await start(); g = gate(); interrupt(d.id);
+        searchImpl = async (q) => { await g.wait; return itemOf(q.id); };
+        events = [fire(d.id, 'interrupted', 'NETWORK_FAILED')];
+        await sleep(25); setItem(d.id, { state: 'complete' }); events.push(fire(d.id, 'complete')); await sleep(10); g.release(); await Promise.all(events); searchImpl = null;
+        assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === 'complete' && (await gone(d.id)) && !hasErr(), '268.11b: completion during the item read wins: no resume, complete, no ERR');
+        // cancellation while the resume is awaited
+        fresh(); d = await start(); g = gate(); resumeImpl = async () => { await g.wait; }; interrupt(d.id);
+        events = [fire(d.id, 'interrupted', 'NETWORK_FAILED')];
+        await sleep(25); interrupt(d.id, 'USER_CANCELED', false); events.push(fire(d.id, 'interrupted', 'USER_CANCELED')); await sleep(10); g.release(); await Promise.all(events);
+        assert(resumesOf(d.id) === 1 && (await stateOf(d.id)) === 'cancelled' && (await gone(d.id)) && !hasErr(), '268.11c: cancellation during the awaited resume wins: cancelled, no ERR');
+        // a second interruption while the resume is awaited
+        fresh(); d = await start(); g = gate(); resumeImpl = async () => { await g.wait; }; interrupt(d.id);
+        events = [fire(d.id, 'interrupted', 'NETWORK_FAILED')];
+        await sleep(25); events.push(fire(d.id, 'interrupted', 'NETWORK_FAILED')); await sleep(10); g.release(); await Promise.all(events);
+        assert(resumesOf(d.id) === 1 && (await stateOf(d.id)) === 'interrupted' && (await gone(d.id)) && hasErr(), '268.11d: the item still interrupted after the one attempt is finalised as interrupted, with one resume only');
+        // storage is slow: the event of a completion cannot be turned into a failure by the decision
+        fresh(); d = await start(); g = gate(); interrupt(d.id);
+        const sg = mockChrome.storage.session.set;
+        mockChrome.storage.session.set = async (o) => { if (Object.keys(o).some((k) => k.startsWith('native_resume_'))) await g.wait; return sg(o); };
+        accept(d.id);
+        events = [fire(d.id, 'interrupted', 'NETWORK_FAILED')];
+        await sleep(25); setItem(d.id, { state: 'complete' }); events.push(fire(d.id, 'complete')); await sleep(10); g.release(); await Promise.all(events); mockChrome.storage.session.set = sg;
+        assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === 'complete' && (await gone(d.id)) && !hasErr(), '268.11e: completion during the marker write wins: no resume, complete, no ERR');
+      }
+
+      // 268.12: a stale interrupted event never fails a download that Chrome reports as running or complete
+      {
+        fresh();
+        let d = await start();
+        setItem(d.id, { state: 'in_progress', error: undefined, canResume: false });
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === 'saving' && live(d.id) && !hasErr(), '268.12a: an interrupted event for a running item (manually continued) is ignored');
+        setItem(d.id, { state: 'complete' });
+        await fire(d.id, 'complete');
+        assert((await stateOf(d.id)) === 'complete' && (await gone(d.id)), '268.12b: it then completes normally');
+        fresh(); d = await start();
+        setItem(d.id, { state: 'complete' });
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === 'saving' && live(d.id) && !hasErr(), '268.12c: an interrupted event for a completed item is ignored; its own complete event decides');
+        await fire(d.id, 'complete');
+        assert((await stateOf(d.id)) === 'complete' && (await gone(d.id)), '268.12d: the complete event finishes it');
+      }
+
+      // 268.13: a feedback record already finalised (attach/reconcile) is not revived by a resume
+      {
+        fresh();
+        const d = await start();
+        await sandbox.feedbackTracker.downloadTerminal(d.id, 'interrupted', 'NETWORK_FAILED');
+        interrupt(d.id);
+        await fire(d.id, 'interrupted', 'NETWORK_FAILED');
+        assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === 'interrupted' && (await gone(d.id)), '268.13: a record finalised before the event is not resumed');
+      }
+
+      // 268.14: early and racing registration keep their existing handling
+      {
+        fresh();
+        earlyEvent = true;
+        const e = await start();
+        earlyEvent = false;
+        await sleep(30);
+        assert(resumesOf(e.id) === 0 && (await stateOf(e.id)) === 'interrupted' && (await gone(e.id)) && hasErr() && !sandbox.earlyTerminalDownloadStates.has(e.id), '268.14a: an interruption before registration is settled at registration; no resume');
+        fresh();
+        let raced = null;
+        sandbox.addTrackedDownloadId = async (id) => { interrupt(id); raced = fire(id, 'interrupted', 'NETWORK_FAILED'); await prev.addTracked(id); await raced; };
+        const r = await start();
+        sandbox.addTrackedDownloadId = prev.addTracked;
+        await sleep(30);
+        assert(resumesOf(r.id) === 0 && (await stateOf(r.id)) === 'interrupted' && (await gone(r.id)) && hasErr(), '268.14b: an event racing the registration (id not yet tracked) is not resumed');
+      }
+
+      // 268.15 (NETWORK-F1-01): an awaited refusal (marker read/write, tracker read, existing marker) that races the download's completion or
+      // cancellation must not finalise the stale NETWORK_FAILED before the waiting winning event: the tracker would ignore the real outcome.
+      {
+        const sessionGet = mockChrome.storage.session.get;
+        const sessionSet = mockChrome.storage.session.set;
+        const trackerList = sandbox.feedbackTracker.list;
+        const isMarker = (k) => typeof k === 'string' && k.startsWith('native_resume_');
+        const arms = {
+          'marker read rejects': (g) => { mockChrome.storage.session.get = async (k, ...a) => { if (isMarker(k)) { await g.wait; throw new Error('read rejected'); } return sessionGet(k, ...a); }; },
+          'marker write rejects': (g) => { mockChrome.storage.session.set = async (o) => { if (Object.keys(o).some(isMarker)) { await g.wait; throw new Error('write rejected'); } return sessionSet(o); }; },
+          'tracker read rejects': (g) => { sandbox.feedbackTracker.list = async () => { await g.wait; throw new Error('tracker unreadable'); }; },
+          'marker already present': (g) => { mockChrome.storage.session.get = async (k, ...a) => { if (isMarker(k)) { await g.wait; return { [k]: 1 }; } return sessionGet(k, ...a); }; }
+        };
+        const race = async (label, outcome) => {
+          fresh();
+          const d = await start();
+          const g = gate();
+          interrupt(d.id);
+          arms[label](g);
+          const events = [fire(d.id, 'interrupted', 'NETWORK_FAILED')];
+          await sleep(25);
+          if (outcome === 'complete') { setItem(d.id, { state: 'complete', error: undefined, canResume: false }); events.push(fire(d.id, 'complete')); }
+          else if (outcome === 'cancel') { interrupt(d.id, 'USER_CANCELED', false); events.push(fire(d.id, 'interrupted', 'USER_CANCELED')); }
+          else events.push(fire(d.id, 'interrupted', 'NETWORK_FAILED'));
+          await sleep(10);
+          g.release();
+          await Promise.all(events);
+          mockChrome.storage.session.get = sessionGet;
+          mockChrome.storage.session.set = sessionSet;
+          sandbox.feedbackTracker.list = trackerList;
+          return d;
+        };
+        for (const label of Object.keys(arms)) {
+          let d = await race(label, 'complete');
+          assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === 'complete' && (await gone(d.id)) && !hasErr() && mockChrome._lastBadgeText === 'OK' && !sandbox.nativeResumeDecisions.has(d.id),
+            `268.15a (${label}): completion racing the refusal wins: complete, OK, no ERR, no resume`);
+          d = await race(label, 'cancel');
+          assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === 'cancelled' && (await gone(d.id)) && !hasErr() && !sandbox.nativeResumeDecisions.has(d.id),
+            `268.15b (${label}): cancellation racing the refusal wins: cancelled, no ERR, no resume`);
+          d = await race(label, 'still');
+          // the tracker read failing leaves the record as it is: the item itself is still NETWORK_FAILED, so the failure stands
+          assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === 'interrupted' && (await gone(d.id)) && hasErr() && !sandbox.nativeResumeDecisions.has(d.id),
+            `268.15c (${label}): the item still NETWORK_FAILED keeps the terminal failure and makes no attempt`);
+        }
+        // the item continued by the user while the refusal was pending is not failed either
+        {
+          fresh();
+          const d = await start();
+          const g = gate();
+          interrupt(d.id);
+          arms['marker write rejects'](g);
+          const first = fire(d.id, 'interrupted', 'NETWORK_FAILED');
+          await sleep(25);
+          toInProgress(d.id);
+          g.release();
+          await first;
+          mockChrome.storage.session.set = sessionSet;
+          assert(resumesOf(d.id) === 0 && (await stateOf(d.id)) === 'saving' && live(d.id) && !hasErr(), '268.15d: a download running again when the marker write fails is not failed');
+          setItem(d.id, { state: 'complete' });
+          await fire(d.id, 'complete');
+          assert((await stateOf(d.id)) === 'complete' && (await gone(d.id)), '268.15e: it then completes normally');
+        }
+      }
+    } finally {
+      mockChrome.downloads.download = prev.download;
+      mockChrome.downloads.search = prev.search;
+      mockChrome.downloads.resume = prev.resume;
+      mockChrome.runtime.id = prev.runtimeId;
+      mockChrome.storage.session.get = prev.sessionGet;
+      mockChrome.storage.session.set = prev.sessionSet;
+      sandbox.addTrackedDownloadId = prev.addTracked;
+      sandbox.console.warn = prev.warn;
+      sandbox.console.log = prev.log;
+      sandbox.console.error = prev.error;
+      if (prev.runtimeId === undefined) delete mockChrome.runtime.id;
     }
   }
 

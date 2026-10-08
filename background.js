@@ -9194,13 +9194,137 @@ if (typeof chrome !== 'undefined' && chrome.notifications?.onClicked?.addListene
 
 const activeDownloadsMetadata = new Map();
 
+// Native recovery of an interrupted transfer: ONE chrome.downloads.resume on the SAME download id (never a new download, another URL, other headers
+// or a whole-file fetch). Only for a download this worker has fully registered (tracked id, metadata and feedback attached) that the shared executor
+// started as a direct http(s) transfer, and only while the current DownloadItem says: ours, same source, interrupted with NETWORK_FAILED, resumable.
+// The decision runs before any terminal feedback or cleanup, so a resumed download stays tracked and "saving" until its own real end. It is a bounded
+// recovery of an unknown cause, not a claim that the network failure is fixed. Not covered: an interruption that arrives before registration
+// (early state), and a first failure after a worker restart (the metadata is memory-only); both keep their existing handling.
+// An entry exists from the synchronous reservation until the download's real terminal event: it is the single attempt of that id and orders every
+// later terminal event of the id behind the decision. It is never evicted while the id is alive.
+const nativeResumeDecisions = new Map();
+const nativeResumeKey = (id) => `native_resume_${id}`;
+
+function isNativeResumeCandidate(id, errorCode) {
+  if (errorCode !== 'NETWORK_FAILED' || nativeResumeDecisions.has(id)) return false;
+  if (!trackedDownloadIds.has(id) || earlyTerminalDownloadStates.has(id) || activeProtectedBlobsByDownloadId.has(id)) return false;
+  const meta = activeDownloadsMetadata.get(id);
+  const transport = meta?.plan?.transport;
+  return Boolean(meta?.plan) && transport !== 'protectedBlob' && transport !== 'pixivDataUrl' && /^https?:\/\//i.test(meta.url || '');
+}
+
+// The current DownloadItem of an id, or null when it cannot be read.
+async function readDownloadItem(id) {
+  try {
+    const items = await chrome.downloads.search({ id });
+    return Array.isArray(items) && items.length ? items[0] : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function isSameDownloadSource(a, b) {
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    x.hash = '';
+    y.hash = '';
+    return x.href === y.href;
+  } catch (_) {
+    return false;
+  }
+}
+
+function isResumableOwnedItem(item, meta) {
+  const ownId = chrome.runtime?.id;
+  return Boolean(item) && item.state === 'interrupted' && item.error === 'NETWORK_FAILED' && item.canResume === true &&
+    Boolean(ownId) && item.byExtensionId === ownId && isSameDownloadSource(item.url, meta?.url);
+}
+
+// A feedback record that attach or reconcile already finalised must not be revived by a resume: its later completion would be ignored.
+async function isFeedbackRecordSaving(id) {
+  if (!feedbackTracker) return true;
+  const record = (await feedbackTracker.list()).find((r) => r.downloadId === id);
+  return !record || record.state === 'saving';
+}
+
+// A refusal that follows an awaited step (tracker read, marker storage, resume): the download may have completed, been cancelled or been continued
+// meanwhile, and its own event waits behind this decision. The current item decides, never the error the decision started with; an unreadable item keeps it.
+async function refuseNativeResume(id, errorCode) {
+  const now = await readDownloadItem(id);
+  if (!now) return { error: errorCode };
+  return now.state === 'interrupted' ? { error: now.error || errorCode } : { stale: true };
+}
+
+// Resolves { resumed } (resume accepted), { stale } (the item moved on: in progress or complete) or { error } (finalise as interrupted with this code).
+async function decideNativeResume(id, errorCode) {
+  try {
+    const meta = activeDownloadsMetadata.get(id);
+    const item = await readDownloadItem(id);
+    if (!item) return { error: errorCode };
+    if (item.state !== 'interrupted') return { stale: true };
+    const finalError = item.error || errorCode;
+    if (!isResumableOwnedItem(item, meta)) return { error: finalError };
+    if (!(await isFeedbackRecordSaving(id))) return refuseNativeResume(id, finalError);
+    // the one-attempt marker is persisted BEFORE the resume; storage that cannot hold it means no automatic attempt
+    const store = chrome.storage?.session;
+    if (!store?.get || !store?.set) return refuseNativeResume(id, finalError);
+    const key = nativeResumeKey(id);
+    if ((await store.get(key))?.[key]) return refuseNativeResume(id, finalError);
+    await store.set({ [key]: Date.now() });
+    const fresh = await readDownloadItem(id);
+    if (!fresh) return { error: finalError };
+    if (fresh.state !== 'interrupted') return { stale: true };
+    if (!isResumableOwnedItem(fresh, meta)) return { error: fresh.error || finalError };
+    try {
+      await chrome.downloads.resume(id);
+    } catch (err) {
+      console.warn(`[Image Saver] Загрузка ${id}: resume отклонён:`, err?.message || err);
+      return refuseNativeResume(id, finalError);
+    }
+    console.log(`[Image Saver] Загрузка ${id} прервана (NETWORK_FAILED): запрошено одно возобновление`);
+    return { resumed: true };
+  } catch (_) {
+    return refuseNativeResume(id, errorCode);
+  }
+}
+
+// Orders a terminal event behind the id's decision and returns { skip: true } (the event must not finalise anything) or { error } (the code to finalise with).
+async function settleNativeResume(id, state, errorCode) {
+  const entry = nativeResumeDecisions.get(id);
+  if (!entry) {
+    if (state !== 'interrupted' || !isNativeResumeCandidate(id, errorCode)) return { error: errorCode };
+    const decision = decideNativeResume(id, errorCode);
+    nativeResumeDecisions.set(id, decision.then(() => {}));
+    const verdict = await decision;
+    return verdict.resumed || verdict.stale ? { skip: true } : { error: verdict.error };
+  }
+  await entry;
+  if (state !== 'interrupted') return { error: errorCode };
+  // a later interrupted event of an id with a decision is stale unless the current item is still interrupted (then its error wins)
+  const item = await readDownloadItem(id);
+  if (!item) return { error: errorCode };
+  return item.state === 'interrupted' ? { error: item.error || errorCode } : { skip: true };
+}
+
+async function releaseNativeResume(id) {
+  if (!nativeResumeDecisions.delete(id)) return;
+  try { await chrome.storage?.session?.remove?.(nativeResumeKey(id)); } catch (_) {}
+}
+
 // Subscribe to chrome.downloads.onChanged to track state transitions
 if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
   chrome.downloads.onChanged.addListener(async (delta) => {
     if (!delta || !delta.id) return;
 
-    if (delta.state && (delta.state.current === 'complete' || delta.state.current === 'interrupted')) {
-      await fbDownloadTerminal(delta.id, delta.state.current, delta.error?.current || delta.error || '');
+    const terminalState = delta.state?.current;
+    const isTerminal = terminalState === 'complete' || terminalState === 'interrupted';
+    let errorCode = delta.error?.current || delta.error || '';
+    if (isTerminal) {
+      const settled = await settleNativeResume(delta.id, terminalState, errorCode);
+      if (settled.skip) return;
+      errorCode = settled.error;
+      await fbDownloadTerminal(delta.id, terminalState, errorCode);
     }
 
     const sessionKey = `active_dl_blob_${delta.id}`;
@@ -9212,7 +9336,6 @@ if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
       } catch (_) {}
     }
 
-    const isTerminal = delta.state && (delta.state.current === 'complete' || delta.state.current === 'interrupted');
     const isTracked = (await isTrackedDownloadId(delta.id)) || activeProtectedBlobsByDownloadId.has(delta.id) || hasInSession;
 
     if (isTracked) {
@@ -9231,7 +9354,6 @@ if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
         await removeTrackedDownloadId(delta.id);
         const meta = activeDownloadsMetadata.get(delta.id);
         activeDownloadsMetadata.delete(delta.id);
-        const errorCode = delta.error?.current || delta.error;
         if (errorCode === 'USER_CANCELED') {
           console.log(`[Image Saver] Загрузка ${delta.id} отменена пользователем (USER_CANCELED)`);
           await restoreOrClearBadge();
@@ -9255,7 +9377,7 @@ if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
       // Early terminal event arriving before registration
       earlyTerminalDownloadStates.set(delta.id, {
         state: delta.state.current,
-        errorCode: delta.error?.current || delta.error || null,
+        errorCode: errorCode || null,
         timestamp: Date.now()
       });
       if (earlyTerminalDownloadStates.size > 200) {
@@ -9263,6 +9385,8 @@ if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
         earlyTerminalDownloadStates.delete(oldestKey);
       }
     }
+    // the download's real end: the id's single attempt is over (a skipped stale event returned above and keeps it)
+    if (isTerminal) await releaseNativeResume(delta.id);
   });
 }
 
