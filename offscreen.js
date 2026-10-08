@@ -87,6 +87,18 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
     return true;
   }
 
+  // REDDIT-HLS-01: one complete MP4 from a Reddit HLS master (lib/reddit_hls.mjs); only a lightweight result and a Blob URL cross IPC
+  if (message.action === 'ASSEMBLE_REDDIT_HLS') {
+    if (typeof message.url !== 'string' || !message.url) {
+      sendResponse({ success: false, error: 'FOREIGN_SOURCE' });
+      return false;
+    }
+    assembleRedditHlsBlob(message.url)
+      .then(result => sendResponse(result))
+      .catch(() => sendResponse({ success: false, error: 'ASSEMBLE_FAILED' }));
+    return true;
+  }
+
   return false;
 });
 }
@@ -1316,8 +1328,32 @@ async function convertRedditVideoToGif(mediaUrl, options = {}) {
   return convertMp4VideoToGif(mediaUrl, options, 'reddit');
 }
 
+// The assembly module (and the pinned muxer it imports) is loaded only when a save needs it. The only failure detail that leaves is a fixed code.
+const loadRedditHlsModule = typeof __REDDIT_HLS_LOADER === 'function' ? __REDDIT_HLS_LOADER : () => import(chrome.runtime.getURL('lib/reddit_hls.mjs'));
+
+async function assembleRedditHlsBlob(url) {
+  let mod;
+  try {
+    mod = await loadRedditHlsModule();
+  } catch (err) {
+    console.error('[Offscreen] Reddit HLS module did not load:', err && err.name);
+    return { success: false, error: 'ASSEMBLE_FAILED' };
+  }
+  try {
+    const result = await mod.assembleRedditHls({ masterUrl: url });
+    // the Blob URL exists only for a complete result
+    const blobUrl = URL.createObjectURL(result.blob);
+    return { success: true, blobUrl, contentType: 'video/mp4', size: result.size, duration: result.durationSec, fragments: result.fragments, video: result.video, audio: result.audio };
+  } catch (err) {
+    const code = err && typeof err.code === 'string' ? err.code : 'ASSEMBLE_FAILED';
+    console.error('[Offscreen] Reddit HLS assembly failed:', code);
+    return { success: false, error: code, ...(err && Number.isInteger(err.status) ? { status: err.status } : {}) };
+  }
+}
+
 // Exports for tests / modules
 if (typeof globalThis !== 'undefined') {
+  globalThis.assembleRedditHlsBlob = assembleRedditHlsBlob;
   globalThis.fetchProtectedBlob = fetchProtectedBlob;
   globalThis.fetchGelbooruBlob = fetchGelbooruBlob;
   globalThis.sniffMediaMagicBytes = sniffMediaMagicBytes;
@@ -1342,6 +1378,7 @@ if (typeof globalThis !== 'undefined') {
 }
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    assembleRedditHlsBlob,
     fetchProtectedBlob,
     fetchGelbooruBlob,
     sniffMediaMagicBytes,

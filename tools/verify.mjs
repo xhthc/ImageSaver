@@ -28,7 +28,7 @@ const syntaxFiles = new Set([
   manifest.background.service_worker,
   ...manifest.content_scripts.flatMap(entry => entry.js),
   'offscreen.js',
-  ...fs.readdirSync(path.join(root, 'lib')).filter(file => file.endsWith('.js')).map(file => `lib/${file}`),
+  ...fs.readdirSync(path.join(root, 'lib')).filter(file => file.endsWith('.js') || file.endsWith('.mjs')).map(file => `lib/${file}`),
   'tools/verify.mjs',
 ]);
 if (!only) for (const file of syntaxFiles) run(`syntax-${file.replaceAll('/', '-')}`, ['--check', file]);
@@ -36,7 +36,7 @@ if (!only) for (const file of syntaxFiles) run(`syntax-${file.replaceAll('/', '-
 const tests = [
   'test_suite.js', 'test_animation_duration_policy.js', 'test_context_target_avatar.js',
   'test_generic_context_boundary.js', 'test_offscreen_resources.js', 'test_reddit_frame_lifecycle.js',
-  'test_reddit_inline_diagnostic.js', 'test_reddit_inline.js', 'test_redgifs_reinjection.js', 'test_redgifs_selected_target.js', 'test_redgifs_inline.js',
+  'test_reddit_inline_diagnostic.js', 'test_reddit_inline.js', 'test_redgifs_reinjection.js', 'test_redgifs_selected_target.js', 'test_redgifs_inline.js', 'test_reddit_hls.js',
   'test_release_check.js', 'test_ux_feedback.js', 'test_ux_ui.js', 'test_youtube_sharing.js',
 ];
 if (only && (!tests.includes(only) || withUi)) {

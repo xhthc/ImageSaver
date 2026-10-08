@@ -1188,6 +1188,9 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     const downloads = [];
     const asks = [];
     const convs = [];
+    // the offscreen HLS assembly (REDDIT-HLS-01): the requests it receives, and what it answers (replaceable per test)
+    const assemblies = [];
+    const hls = { impl: (msg, n) => ({ success: true, blobUrl: `blob:chrome-extension://${EXT_ID}/hls_${n}.mp4`, contentType: 'video/mp4', size: 4096, duration: 660 }) };
     let fetched = [];
     let onChanged = null;
     let offscreenContexts = [];
@@ -1205,6 +1208,10 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
           if (msg && /^CONVERT_/.test(msg.action || '')) {
             convs.push(msg.action);
             return { success: true, blobUrl: `blob:chrome-extension://${EXT_ID}/rd_${convs.length}.gif`, contentType: 'image/gif', size: 2048, frames: 15, duration: 1.0 };
+          }
+          if (msg && msg.action === 'ASSEMBLE_REDDIT_HLS') {
+            assemblies.push(msg);
+            return hls.impl(msg, assemblies.length);
           }
           return null;
         },
@@ -1276,7 +1283,7 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       return { success: true };
     };
     const bg = {
-      sandbox, downloads, asks, convs, net, listeners, warns,
+      sandbox, downloads, asks, convs, net, listeners, warns, assemblies, hls,
       get fetched() { return fetched; },
       resetNet(opts = {}) { fetched = []; net.max = 0; net.gate = opts.gate || null; net.gateFor = opts.gateFor || null; net.fail = opts.fail || null; },
       send(msg, sender) { for (const l of listeners) { try { l(msg, sender, () => {}); } catch (_) {} } },
@@ -1716,7 +1723,7 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA']);
   });
 
-  await itAsync('9.9h an unresolved blob player fails only its own item (UNRESOLVED_BLOB_MEDIA), the other items are saved', async () => {
+  await itAsync('9.9h an HLS-only blob player fails only its own item (UNSUPPORTED_SOURCE: no assembly in a batch), the other items are saved', async () => {
     const w = await world();
     const g = galleryPost(w.env, 'dr8', [gal3('dr8')[0], gal3('dr8')[2]], {
       declared: 3,
@@ -1739,7 +1746,8 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert(hasAll(w), 'the gallery of three (two images and a player) is proven complete');
     const r = await saveAllClick(w, 2);
     assert.strictEqual(r.d.length, 2);
-    assert.deepStrictEqual(failedCodes(r.ops), ['UNRESOLVED_BLOB_MEDIA']);
+    assert.deepStrictEqual(failedCodes(r.ops), ['UNSUPPORTED_SOURCE'], 'an HLS-only player inside Save all is refused as an unsupported source, never assembled in a batch');
+    assert.strictEqual(w.bg.assemblies.length, 0, 'no assembly in a batch');
     assert(w.bg.fetched.every((u) => /dr8_[13]\.jpg/.test(u)), 'no request for the unresolved player');
     assert(!proofs(w).some((a) => /RESOLVE_REDDIT_BLOB_MEDIA/.test(a)));
   });
@@ -1788,7 +1796,7 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
 
   // ===== 9.10: a blob (Shreddit) player: the document recovers the direct source itself =====
   await itAsync('9.10 blob player with a direct source on the player: that MP4 is saved without any gesture query; with none it is one failed operation', async () => {
-    const mk = (w, id, directSrc) => {
+    const mk = (w, id, directSrc, stream = true) => {
       const { document } = w.env.context;
       const post = document.createElement('shreddit-post');
       post.setAttribute('permalink', `/r/videos/comments/${id}/blob/`);
@@ -1796,7 +1804,8 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       const player = document.createElement('shreddit-player');
       player.style.position = 'relative';
       if (directSrc) player.setAttribute('src', directSrc);
-      player.setAttribute('stream-url', `https://v.redd.it/${id}/HLSPlaylist.m3u8`);
+      // a declared HLS master is a stream of its own (assembled); this case needs a player that declares nothing at all
+      if (stream) player.setAttribute('stream-url', `https://v.redd.it/${id}/HLSPlaylist.m3u8`);
       R(player, 100, 100, 600, 500);
       const video = document.createElement('video');
       video.src = 'blob:https://www.reddit.com/0b9b1c2d-1111-2222-3333-444455556666';
@@ -1814,7 +1823,7 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert(/\.mp4$/i.test(r.d[0].filename));
     assert(!proofs(ok).some((a) => /RESOLVE_REDDIT_BLOB_MEDIA|GET_REDDIT_MEDIA_AT_CURSOR/.test(a)));
     const bad = await world();
-    mk(bad, 'blobno', null);
+    mk(bad, 'blobno', null, false);
     await hover(bad.env, 200, 200);
     const r2 = await saveThis(bad, 0);
     assert.strictEqual(r2.d.length, 0);
@@ -2145,6 +2154,74 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
   }
   const onlyFetched = (w, re) => w.bg.fetched.length >= 1 && w.bg.fetched.every((u) => re.test(u));
 
+  // REDDIT-HLS-01: what a save of an HLS-only player is now: exactly one assembly request for the selected player's OWN declared master, no media
+  // request from the worker, and one download of the assembled Blob (never a preview, a neighbour's file or a guessed address).
+  const assembledMasters = (w) => w.bg.assemblies.map((m) => m.url);
+  function assertAssembledOwn(w, r, master, name = '') {
+    assert.deepStrictEqual(assembledMasters(w), [master], name + ': one assembly of the selected player\'s own master');
+    assert.strictEqual(r.d.length, 1, name + ': one download');
+    assert(/^blob:chrome-extension:\/\//.test(r.d[0].url) && /\.mp4$/i.test(r.d[0].filename), name + ': the assembled MP4 Blob: ' + r.d[0].url + ' ' + r.d[0].filename);
+    assert.strictEqual(w.bg.fetched.length, 0, name + ': the worker requests no media');
+    assert.deepStrictEqual(failedCodes(r.ops), [], name + ': not a failed operation');
+  }
+
+  await itAsync('9.16d2 HLS save: the assembled MP4 is named for its asset, the feedback ends complete as MP4; assembly failures are visible with accurate codes, nothing is downloaded, and the next save works', async () => {
+    const MASTER = 'https://v.redd.it/vid9hlsf/HLSPlaylist.m3u8?f=hd&t=1';
+    const hlsPost = (w) => { playerPost(w.env, 'f1', 'vid9hlsf', { json: null }); };
+    const ok = await world();
+    hlsPost(ok);
+    await hover(ok.env, 200, 200);
+    const r = await saveThis(ok);
+    assertAssembledOwn(ok, r, MASTER, 'success');
+    assert(/(^|[\\/])vid9hlsf\.mp4$/i.test(r.d[0].filename), 'named for its asset: ' + r.d[0].filename);
+    assert.strictEqual(r.d[0].saveAs, false);
+    assert.strictEqual(r.ops[0].state, 'complete');
+    assert.strictEqual(r.ops[0].output && r.ops[0].output.mime, 'video/mp4');
+    const cases = [
+      [{ success: false, error: 'UNSUPPORTED_LAYOUT' }, 'UNSUPPORTED_SOURCE'],
+      [{ success: false, error: 'UNSUPPORTED_CODEC' }, 'UNSUPPORTED_SOURCE'],
+      [{ success: false, error: 'UNSUPPORTED_ENCRYPTED' }, 'UNSUPPORTED_SOURCE'],
+      [{ success: false, error: 'TOO_LARGE' }, 'UNSUPPORTED_SOURCE'],
+      [{ success: false, error: 'BUSY' }, 'RATE_LIMIT'],
+      [{ success: false, error: 'INCOMPLETE' }, 'INVALID_MEDIA'],
+      [{ success: false, error: 'HTTP_ERROR', status: 403 }, 'AUTH_REQUIRED'],
+      [{ success: false, error: 'TIMEOUT' }, 'NETWORK_TIMEOUT'],
+      [{ success: false, error: 'ASSEMBLE_FAILED' }, 'ASSEMBLE_FAILED'],
+      [null, 'ASSEMBLE_FAILED']
+    ];
+    for (const [answer, code] of cases) {
+      const w = await world();
+      hlsPost(w);
+      w.bg.hls.impl = () => answer;
+      await hover(w.env, 200, 200);
+      const f = await saveThis(w, 0);
+      assert.strictEqual(f.d.length, 0, code + ': nothing downloaded');
+      assert.deepStrictEqual(assembledMasters(w), [MASTER], code + ': one attempt');
+      assert.deepStrictEqual(failedCodes(f.ops), [code], JSON.stringify(answer));
+      // the failure leaves nothing busy: the next save of the same player works (the click gap makes this slow: two representative codes)
+      if (code !== 'UNSUPPORTED_SOURCE' && code !== 'RATE_LIMIT') continue;
+      w.bg.hls.impl = (m, n) => ({ success: true, blobUrl: `blob:chrome-extension://${EXT_ID}/again_${n}.mp4`, contentType: 'video/mp4', size: 4096, duration: 660 });
+      w.state.busyAt = 0; // lift the double-click gap of the same player
+      await hover(w.env, 200, 200);
+      const again = await saveThis(w);
+      assert.strictEqual(again.d.length, 1, code + ': the next save downloads');
+      assert.strictEqual(again.ops.filter((o) => o.state === 'complete').length, 1);
+    }
+    // a failing chrome.downloads.download is a visible failure and releases the assembler
+    const w = await world();
+    hlsPost(w);
+    await hover(w.env, 200, 200);
+    const realDownload = w.bg.sandbox.chrome.downloads.download;
+    w.bg.sandbox.chrome.downloads.download = async () => { throw new Error('boom'); };
+    const bad = await saveThis(w, 0);
+    assert.strictEqual(failedCodes(bad.ops).length, 1, 'visible failure: ' + JSON.stringify(bad.ops.map((o) => o.state)));
+    w.bg.sandbox.chrome.downloads.download = realDownload;
+    w.state.busyAt = 0;
+    await hover(w.env, 200, 200);
+    const next = await saveThis(w);
+    assert.strictEqual(next.d.length, 1, 'the next save works');
+  });
+
   await itAsync('9.16 unplayed native player (HLS src, empty shadow video, packaged-media-json): Save this downloads the 720p H264 MP4 it declares, exactly, as an MP4, with nothing else requested', async () => {
     const w = await world();
     playerPost(w.env, 'dlss1', 'vid9dlss');
@@ -2192,7 +2269,7 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert(res && res.success === true && res.targetUrl === BEST('vid9blob'), JSON.stringify(res));
   });
 
-  await itAsync('9.16d unresolved players fail clearly and request/download nothing: no declaration, manifest only, VP9 only, a foreign host, mixed assets, garbage, oversize, an asset that is not the player\'s own', async () => {
+  await itAsync('9.16d no usable direct file (none, VP9 only, a foreign host, mixed assets, garbage, oversize, an asset that is not the player\'s own) is never downloaded: the player\'s own declared HLS master is assembled instead', async () => {
     const cases = [
       ['no packaged-media-json at all', { json: null }],
       ['declaration without any permutation', { json: JSON.stringify({ playbackMp4s: { duration: 1, permutations: [] } }) }],
@@ -2216,18 +2293,25 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       const w = await world();
       playerPost(w.env, 'bad1', 'vid9bad', opts);
       await hover(w.env, 200, 200);
-      assert(w.state.btn !== null, name + ': the control is still shown (the failure is the explicit proof refusal)');
-      const r = await saveThis(w, 0);
-      assert.strictEqual(r.d.length, 0, name);
-      assert.strictEqual(w.bg.fetched.length, 0, name + ': no request');
+      assert(w.state.btn !== null, name + ': the control is still shown');
+      const r = await saveThis(w);
       assert.deepStrictEqual(proofs(w), ['REDDIT_INLINE_OWNER'], name);
-      assert.deepStrictEqual(failedCodes(r.ops), ['UNRESOLVED_BLOB_MEDIA'], name);
-      assert(w.bg.warns.some((m) => /Inline Reddit Save refused: UNRESOLVED_BLOB$/.test(m)), name + ': the log names the bounded reason: ' + w.bg.warns.join(' | '));
-      assert(!w.bg.warns.some((m) => /owner was not proven/.test(m)), name + ': no misleading owner wording');
+      assertAssembledOwn(w, r, 'https://v.redd.it/vid9bad/HLSPlaylist.m3u8?f=hd&t=1', name);
     }
+    // a player that declares nothing at all stays unresolved: nothing requested, nothing assembled, nothing downloaded
+    const none = await world();
+    playerPost(none.env, 'bad2', 'vid9bad', { json: null, src: '' });
+    await hover(none.env, 200, 200);
+    const nr = await saveThis(none, 0);
+    assert.strictEqual(nr.d.length, 0);
+    assert.strictEqual(none.bg.assemblies.length, 0);
+    assert.strictEqual(none.bg.fetched.length, 0);
+    assert.deepStrictEqual(proofs(none), ['REDDIT_INLINE_OWNER']);
+    assert.deepStrictEqual(failedCodes(nr.ops), ['UNRESOLVED_BLOB_MEDIA']);
+    assert(none.bg.warns.some((m) => /Inline Reddit Save refused: UNRESOLVED_BLOB$/.test(m)), 'the log names the bounded reason: ' + none.bg.warns.join(' | '));
   });
 
-  await itAsync('9.16e no borrowing: another post\'s player, a nested crosspost\'s player and the last right-click never supply the media of an unresolved player', async () => {
+  await itAsync('9.16e no borrowing: another post\'s player, a nested crosspost\'s player and the last right-click never supply the stream of the selected player', async () => {
     const w = await world();
     const a = playerPost(w.env, 'own1', 'vid9own', { json: null, left: 100, top: 100 });
     // the neighbour (another post) resolves; the user right-clicked it earlier
@@ -2236,10 +2320,8 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     // a nested crosspost inside the first post resolves too (its own post element, its own id)
     playerPost(w.env, 'nst1', 'vid9nst', { parent: a.cont, left: 400, top: 400 });
     await hover(w.env, 150, 150);
-    const r = await saveThis(w, 0);
-    assert.strictEqual(r.d.length, 0);
-    assert.strictEqual(w.bg.fetched.length, 0);
-    assert.deepStrictEqual(failedCodes(r.ops), ['UNRESOLVED_BLOB_MEDIA']);
+    const r = await saveThis(w);
+    assertAssembledOwn(w, r, 'https://v.redd.it/vid9own/HLSPlaylist.m3u8?f=hd&t=1', 'the selected player\'s own master, never the neighbour\'s or the nested crosspost\'s');
     assert.deepStrictEqual(proofs(w), ['REDDIT_INLINE_OWNER']);
   });
 
@@ -2253,10 +2335,9 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     shadowOf(w.env, second).appendChild(w.env.context.document.createElement('video'));
     a.cont.appendChild(second);
     await hover(w.env, 200, 200);
-    const r = await saveThis(w, 0);
-    assert.strictEqual(r.d.length, 0, 'the unresolved player fails alone');
-    assert(!w.bg.fetched.some((u) => /vid9second/.test(u)));
-    assert.deepStrictEqual(failedCodes(r.ops), ['UNRESOLVED_BLOB_MEDIA']);
+    const r = await saveThis(w);
+    assertAssembledOwn(w, r, 'https://v.redd.it/vid9two/HLSPlaylist.m3u8?f=hd&t=1', 'the selected slot');
+    assert(!w.bg.fetched.some((u) => /vid9second/.test(u)) && !assembledMasters(w).some((u) => /vid9second/.test(u)), 'the other player is never used');
   });
 
   await itAsync('9.16g a changed source ends the click before any token; a change after the token refuses without a request; a refused/expired proof logs its bounded reason', async () => {
@@ -2787,10 +2868,8 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     a = playerPost(w.env, 'shadowfor2', 'vid9shadow', { json: null });
     f = second(w, a, 'vid9foreign', P0('vid9foreign'), pmj('vid9foreign'));
     await hover(w.env, 200, 200);
-    r = await saveThis(w, 0);
-    assert.strictEqual(r.d.length, 0, 'the unresolved player fails alone and never takes its neighbour\'s playing source');
-    assert.strictEqual(w.bg.fetched.length, 0);
-    assert.deepStrictEqual(failedCodes(r.ops), ['UNRESOLVED_BLOB_MEDIA']);
+    r = await saveThis(w);
+    assertAssembledOwn(w, r, 'https://v.redd.it/vid9shadow/HLSPlaylist.m3u8?f=hd&t=1', 'the selected player\'s own master, never its neighbour\'s playing source');
     // the foreign player comes FIRST in the document: the selected (second) player's own shadow change is still its own change
     w = await world();
     a = playerPost(w.env, 'shadowfor3', 'vid9shadow', { inner: P0('vid9shadow') });
@@ -3086,10 +3165,9 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     const b = playerPost(w.env, 'animnbr', '41s6pcpyxith1', { json: null, src: ANIM, inner: ANIM, left: 900, top: 100 });
     w.env.context.setLastRedditContextmenuTarget(b.player, [b.player, b.post]);
     await hover(w.env, 150, 150);
-    const r = await saveThis(w, 0);
-    assert.strictEqual(r.d.length, 0, 'an unresolved player never takes its neighbour\'s animation or the last right-click');
-    assert.strictEqual(w.bg.fetched.length, 0);
-    assert.deepStrictEqual(failedCodes(r.ops), ['UNRESOLVED_BLOB_MEDIA']);
+    const r = await saveThis(w);
+    assertAssembledOwn(w, r, 'https://v.redd.it/vid9own2/HLSPlaylist.m3u8?f=hd&t=1', 'the player takes neither its neighbour\'s animation nor the last right-click');
+    assert.strictEqual(w.bg.convs.length, 0, 'no GIF conversion');
     assert(a && b);
   });
 
@@ -3175,7 +3253,7 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
   const HLS_VARIANTS = [];
   for (const place of ['shadow', 'light']) for (const order of ['main-first', 'preview-first']) for (const mainSrc of ['', BLOB_SRC]) HLS_VARIANTS.push({ place, order, mainSrc, tag: `${place}/${order}/${mainSrc ? 'blob' : 'empty'}` });
 
-  await itAsync('9.31 an HLS-only player (observed DOM) never yields the scrub-preview .mp4 on any route, whatever the order of its controls: the helper, both menu routes and the click path refuse it', async () => {
+  await itAsync('9.31 an HLS-only player (observed DOM) never yields the scrub-preview .mp4 on any route, whatever the order of its controls: the helpers and both menu routes refuse it, the click path assembles the post\'s own HLS master', async () => {
     const found = [];
     for (const v of HLS_VARIANTS) {
       const w = await world();
@@ -3199,10 +3277,12 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       }
       await hover(w.env, 200, 200);
       if (!w.state.btn) { found.push(`${v.tag}: no inline control over the player`); continue; }
-      const r = await saveThis(w, 0);
-      for (const d of r.d) found.push(`${v.tag}: inline Save downloaded ${d.url}`);
+      // the post's own HLS master is assembled (REDDIT-HLS-01); the scrub preview is never downloaded, requested or assembled
+      const r = await saveThis(w);
+      for (const d of r.d) if (!/^blob:chrome-extension:\/\//.test(d.url)) found.push(`${v.tag}: inline Save downloaded ${d.url}`);
       for (const u of w.bg.fetched) found.push(`${v.tag}: inline Save requested ${u}`);
-      if (JSON.stringify(failedCodes(r.ops)) !== '["UNRESOLVED_BLOB_MEDIA"]') found.push(`${v.tag}: inline failure code ${JSON.stringify(failedCodes(r.ops))}`);
+      if (JSON.stringify(assembledMasters(w)) !== JSON.stringify([HLS_URL])) found.push(`${v.tag}: assembled ${JSON.stringify(assembledMasters(w))}`);
+      if (JSON.stringify(failedCodes(r.ops)) !== '[]') found.push(`${v.tag}: inline failure code ${JSON.stringify(failedCodes(r.ops))}`);
     }
     assert.deepStrictEqual(found, [], found.join('\n'));
   });
@@ -3296,6 +3376,31 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       if (JSON.stringify(failedCodes(r.ops)) !== '["NO_MEDIA"]') found.push(`${tag}: failure codes ${JSON.stringify(failedCodes(r.ops))}`);
     }
     assert.deepStrictEqual(found, [], found.join('\n'));
+  });
+
+  await itAsync('9.32a native menu: a right-click on the HLS-only player\'s main (blob) video assembles the player\'s own master; a menu route on the preview still refuses; a DASH-only declaration is unsupported, never assembled', async () => {
+    for (const order of ['main-first', 'preview-first']) {
+      const w = await world();
+      const g = hlsOnlyPost(w.env, { place: 'shadow', order, mainSrc: BLOB_SRC });
+      giveRoots(w.env, g, 'shadow');
+      armNativeMenu(w);
+      const r = await nativeMenuSave(w, { path: [g.main, g.player.shadowRoot, g.player, g.post], x: 300, y: 300, srcUrl: BLOB_SRC, mediaType: 'video', retarget: g.player });
+      assert.deepStrictEqual(assembledMasters(w), [HLS_URL], `${order}: the player's own master is assembled`);
+      assert.strictEqual(r.d.length, 1, `${order}: one download ${JSON.stringify(failedCodes(r.ops))}`);
+      assert(/^blob:chrome-extension:\/\//.test(r.d[0].url) && /\.mp4$/i.test(r.d[0].filename), `${order}: ${r.d[0].url} ${r.d[0].filename}`);
+      assert.strictEqual(w.bg.fetched.length, 0, 'the worker requests no media');
+      assert.deepStrictEqual(failedCodes(r.ops), []);
+      assert(r.ops.every((o) => o.state === 'complete'));
+    }
+    // the assembly refuses the layout: a visible UNSUPPORTED_SOURCE through the menu too
+    const w = await world();
+    const g = hlsOnlyPost(w.env, { place: 'shadow', order: 'main-first', mainSrc: BLOB_SRC });
+    giveRoots(w.env, g, 'shadow');
+    armNativeMenu(w);
+    w.bg.hls.impl = () => ({ success: false, error: 'UNSUPPORTED_ENCRYPTED' });
+    const r = await nativeMenuSave(w, { path: [g.main, g.player.shadowRoot, g.player, g.post], x: 300, y: 300, srcUrl: BLOB_SRC, mediaType: 'video', retarget: g.player });
+    assert.strictEqual(r.d.length, 0);
+    assert.deepStrictEqual(failedCodes(r.ops), ['UNSUPPORTED_SOURCE']);
   });
 
   await itAsync('9.32b native menu: a layer pressed over the preview selects the preview as its media: refused too; the player itself is untouched by the refusal', async () => {
@@ -3402,13 +3507,14 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     }
   });
 
-  await itAsync('9.30d the diagnostics follow the path too: a DASH path is reported as an unsupported DASH stream, a query that mentions .mpd on an HLS playlist is not', async () => {
-    for (const [src, reason] of [['https://v.redd.it/vid9mq/DASHPlaylist.mpd', 'UNSUPPORTED_DASH_STREAM'], [HLS_OWN + '&m=DASHPlaylist.mpd', 'NO_DIRECT_MEDIA_FOUND']]) {
+  await itAsync('9.30d the diagnostics follow the path too: a DASH path is reported as an unsupported DASH stream, a query that mentions .mpd on an HLS playlist is an HLS stream', async () => {
+    for (const [src, reason] of [['https://v.redd.it/vid9mq/DASHPlaylist.mpd', 'UNSUPPORTED_DASH_STREAM'], [HLS_OWN + '&m=DASHPlaylist.mpd', 'HLS']]) {
       const w = await world();
       const g = playerPost(w.env, 'mq3', 'vid9mq', { json: null, src, inner: 'blob:https://www.reddit.com/aaaa-bbbb' });
       w.env.context.setLastRedditContextmenuTarget(g.video, [g.video, g.player, g.post]);
       const res = w.env.ask({ action: 'RESOLVE_REDDIT_BLOB_MEDIA', clickedSrc: 'blob:https://www.reddit.com/aaaa-bbbb' });
-      assert(res && res.success === false && res.reason === reason, src + ': ' + JSON.stringify(res));
+      if (reason === 'HLS') assert(res && res.success === true && res.hls && res.hls.url === src && !res.targetUrl, src + ': an HLS playlist is an HLS stream, whatever its query says: ' + JSON.stringify(res));
+      else assert(res && res.success === false && res.reason === reason, src + ': ' + JSON.stringify(res));
     }
   });
 
@@ -3432,14 +3538,20 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
   });
 
   await itAsync('9.30f inline Save still refuses what is not the selected player\'s own direct file: a real manifest, a foreign host, a neighbour\'s file (zero downloads, nothing requested)', async () => {
-    for (const [name, url] of [['DASH manifest path', 'https://v.redd.it/vid9mq/DASHPlaylist.mpd?x=.mp4'], ['HLS manifest path', HLS_OWN + '&n=a.mp4'], ['foreign host', 'https://cdn.evil.example/vid9mq/m2-res_720p.mp4?m=DASHPlaylist.mpd']]) {
+    for (const [name, url] of [['DASH manifest path', 'https://v.redd.it/vid9mq/DASHPlaylist.mpd?x=.mp4'], ['foreign host', 'https://cdn.evil.example/vid9mq/m2-res_720p.mp4?m=DASHPlaylist.mpd']]) {
       const w = await world();
       playerPost(w.env, 'mq4', 'vid9mq', { json: null, src: url });
       await hover(w.env, 200, 200);
       const r = await saveThis(w, 0);
       assert.strictEqual(r.d.length, 0, name);
       assert.strictEqual(w.bg.fetched.length, 0, name + ': no request');
+      assert.strictEqual(w.bg.assemblies.length, 0, name + ': nothing assembled');
     }
+    // a real HLS master of the player's own asset is the one manifest that is saved (assembled), never as a file request
+    const hlsOwn = await world();
+    playerPost(hlsOwn.env, 'mq4b', 'vid9mq', { json: null, src: HLS_OWN + '&n=a.mp4' });
+    await hover(hlsOwn.env, 200, 200);
+    assertAssembledOwn(hlsOwn, await saveThis(hlsOwn), HLS_OWN + '&n=a.mp4', 'HLS manifest path');
     // two posts: the selected player saves its own file, never the neighbour's
     const w = await world();
     playerPost(w.env, 'mq5', 'vid9mq', { json: null, src: MQ, left: 100, top: 100 });
@@ -3882,7 +3994,7 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert.strictEqual(r.d.length, 0, 'Structure changed, zero downloads');
   });
 
-  await itAsync('10.4e unsupported player without declaration and only manifest fails closed to UNRESOLVED_BLOB_MEDIA', async () => {
+  await itAsync('10.4e a DASH-only player (a manifest nothing can save) fails closed as an UNSUPPORTED_SOURCE: no request, no assembly, no download', async () => {
     const w = await world();
     const { document } = w.env.context;
     const post = document.createElement('shreddit-post');
@@ -3891,15 +4003,17 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     R(post, 0, 0, 800, 600);
 
     const player = document.createElement('shreddit-player');
-    player.setAttribute('src', 'https://v.redd.it/unsupported1/HLSPlaylist.m3u8');
+    player.setAttribute('src', 'https://v.redd.it/unsupported1/DASHPlaylist.mpd');
     R(player, 20, 20, 700, 500);
     post.appendChild(player);
     document.body.appendChild(post);
 
     await hover(w.env, 100, 100);
     const r = await saveThis(w, 0);
-    assert.strictEqual(r.d.length, 0, 'Zero downloads for unresolvable HLS-only player');
-    assert.deepStrictEqual(failedCodes(r.ops), ['UNRESOLVED_BLOB_MEDIA']);
+    assert.strictEqual(r.d.length, 0, 'Zero downloads for a DASH-only player');
+    assert.strictEqual(w.bg.assemblies.length, 0);
+    assert.strictEqual(w.bg.fetched.length, 0);
+    assert.deepStrictEqual(failedCodes(r.ops), ['UNSUPPORTED_SOURCE']);
   });
 
   // --- Suite 11: RD-10 inline Save over a RedGIFs embed in a Reddit post ---

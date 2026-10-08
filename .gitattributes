@@ -6,3 +6,6 @@
 # The page sources are inputs of that byte comparison (Vite copies them into the output pages): LF everywhere, so a Windows checkout with
 # core.autocrlf=true builds the same bytes. Narrow on purpose: other sources do not reach the output bytes.
 /ui/*.html text eol=lf
+
+# Preserve the pinned MP4Box runtime and licence bytes on checkout.
+/lib/vendor/mp4box/2.4.1/** -text

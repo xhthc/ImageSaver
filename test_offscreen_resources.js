@@ -1306,6 +1306,46 @@ async function runAllSuites() {
     assert.strictEqual(res.error, 'UNAUTHORIZED_SENDER');
   });
 
+  // REDDIT-HLS-01: the offscreen action hands the master to the assembly module; only a complete result gets a Blob URL
+  await test('ASSEMBLE_REDDIT_HLS: success returns one Blob URL and light metadata; failure keeps the module code and creates no Blob', async () => {
+    const calls = [];
+    let outcome = 'ok';
+    const loader = async () => ({
+      assembleRedditHls: async (opts) => {
+        calls.push(opts.masterUrl);
+        if (outcome === 'ok') return { blob: new Blob([new Uint8Array(7)], { type: 'video/mp4' }), size: 7, durationSec: 1.5, fragments: 2, video: { codec: 'avc1.4d401f' }, audio: { codec: 'mp4a.40.2' } };
+        const e = new Error('x'); e.code = outcome; if (outcome === 'HTTP_ERROR') e.status = 403; throw e;
+      }
+    });
+    const { dispatchMessage, createdBlobs } = createTestSandbox({ __REDDIT_HLS_LOADER: loader });
+    const url = 'https://v.redd.it/x1/HLSPlaylist.m3u8';
+    const ok = await dispatchMessage({ action: 'ASSEMBLE_REDDIT_HLS', url });
+    assert.deepStrictEqual([ok.success, ok.contentType, ok.size, ok.duration, ok.fragments], [true, 'video/mp4', 7, 1.5, 2]);
+    assert.ok(/^blob:/.test(ok.blobUrl));
+    assert.strictEqual(createdBlobs.size, 1);
+    assert.deepStrictEqual(calls, [url]);
+    for (const code of ['UNSUPPORTED_LAYOUT', 'TOO_LARGE', 'INCOMPLETE', 'BUSY', 'HTTP_ERROR']) {
+      outcome = code;
+      const bad = await dispatchMessage({ action: 'ASSEMBLE_REDDIT_HLS', url });
+      assert.strictEqual(bad.success, false);
+      assert.strictEqual(bad.error, code);
+      if (code === 'HTTP_ERROR') assert.strictEqual(bad.status, 403);
+      assert.strictEqual('blobUrl' in bad, false);
+    }
+    assert.strictEqual(createdBlobs.size, 1, 'no Blob for a failed assembly');
+    const none = await dispatchMessage({ action: 'ASSEMBLE_REDDIT_HLS' });
+    assert.deepStrictEqual([none.success, none.error], [false, 'FOREIGN_SOURCE']);
+    assert.strictEqual(calls.length, 6);
+  });
+
+  await test('ASSEMBLE_REDDIT_HLS: unauthorized sender refused; an unloadable or crashing module is a fixed code', async () => {
+    const { dispatchMessage } = createTestSandbox({ __REDDIT_HLS_LOADER: async () => { throw new Error('secret path D:\\x'); } });
+    const bad = await dispatchMessage({ action: 'ASSEMBLE_REDDIT_HLS', url: 'https://v.redd.it/x1/HLSPlaylist.m3u8' }, { id: 'foreign-extension-attacker-id' });
+    assert.deepStrictEqual([bad.success, bad.error], [false, 'UNAUTHORIZED_SENDER']);
+    const own = await dispatchMessage({ action: 'ASSEMBLE_REDDIT_HLS', url: 'https://v.redd.it/x1/HLSPlaylist.m3u8' });
+    assert.deepStrictEqual([own.success, own.error, Object.keys(own).length], [false, 'ASSEMBLE_FAILED', 2]);
+  });
+
   await test('getProtectedHostInfo: strictly allows only anime-pictures and gelbooru domains', () => {
     const { sandbox } = createTestSandbox();
     assert.notStrictEqual(sandbox.getProtectedHostInfo('https://oimages.anime-pictures.net/img.jpg'), null);

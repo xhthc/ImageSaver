@@ -70,6 +70,19 @@
     return manifestKindOfAddress(urlStr) !== '';
   }
 
+  // The stream a <shreddit-player> declares itself (its own stream-url or src attribute): the manifest kind and the address as declared. Only the
+  // canonical Reddit HLS master (https://v.redd.it/<asset>/HLSPlaylist.m3u8) is a stream this extension can save; the background validates it again.
+  const REDDIT_HLS_MASTER = /^https:\/\/v\.redd\.it\/[A-Za-z0-9_-]{1,64}\/HLSPlaylist\.m3u8(?:\?[^#]*)?$/;
+  function declaredStreamOf(player) {
+    if (!player || typeof player.getAttribute !== 'function') return null;
+    for (const attr of ['stream-url', 'src']) {
+      const url = String(player.getAttribute(attr) || '');
+      const kind = url.length <= 2048 ? manifestKindOfAddress(url) : '';
+      if (kind) return { kind, url, saveable: kind === 'hls' && REDDIT_HLS_MASTER.test(url) };
+    }
+    return null;
+  }
+
   /**
    * A scrub-preview <video> (observed on a signed-out www.reddit.com post, 2026-10-07: a <video src=".../CMAF_96.mp4"> inside <shreddit-preview-video-lazy>
    * under <shreddit-progress-bar>) is a low-resolution thumbnail of the post's video, never the video: an address that merely ends in .mp4 does not
@@ -982,6 +995,13 @@
             }
           });
         } else {
+          const selectedPlayer = lastContextmenuTarget?.closest?.('shreddit-player') ||
+            (Array.isArray(lastContextmenuPath) ? lastContextmenuPath.find((el) => el && String(el.tagName).toUpperCase() === 'SHREDDIT-PLAYER') : null) || null;
+          const stream = declaredStreamOf(selectedPlayer);
+          if (stream && stream.saveable) {
+            sendResponse({ success: true, hls: { url: stream.url }, diagnostics: { streamType: 'hls', targetFound: true } });
+            return true;
+          }
           const isDashAddress = (u) => manifestKindOfAddress(u) === 'dash';
           let isDash = Boolean(
             isDashAddress(lastContextmenuTarget?.closest?.('shreddit-player')?.getAttribute?.('stream-url')) ||
@@ -1001,11 +1021,11 @@
           sendResponse({
             success: false,
             error: 'UNRESOLVED_BLOB_MEDIA',
-            reason: isDash ? 'UNSUPPORTED_DASH_STREAM' : 'NO_DIRECT_MEDIA_FOUND',
+            reason: isDash ? 'UNSUPPORTED_DASH_STREAM' : (stream ? 'UNSUPPORTED_STREAM' : 'NO_DIRECT_MEDIA_FOUND'),
             diagnostics: {
               targetFound: Boolean(lastContextmenuTarget),
               isConnected: lastContextmenuTarget ? lastContextmenuTarget.isConnected !== false : false,
-              streamType: isDash ? 'dash' : 'blob'
+              streamType: isDash ? 'dash' : (stream ? stream.kind : 'blob')
             }
           });
         }
@@ -2105,7 +2125,15 @@
             url = fallback.url;
             blobPlayer = true;
           } else {
-            return { ok: false, reason: 'UNRESOLVED_BLOB' };
+            // No direct file anywhere: the stream the selected player itself declares (frozen here, never looked up again), or a positively
+            // identified stream that cannot be saved. A blob with no declaration stays unresolved.
+            const stream = declaredStreamOf(player);
+            if (stream && stream.saveable && index === null) {
+              const media = { kind: 'video', url: stream.url, ownerId, redditHls: true };
+              if (postUrl) media.postUrl = postUrl;
+              return { ok: true, media };
+            }
+            return { ok: false, reason: stream ? 'UNSUPPORTED_STREAM' : 'UNRESOLVED_BLOB' };
           }
         }
       } else if (el.tagName === 'VIDEO') {

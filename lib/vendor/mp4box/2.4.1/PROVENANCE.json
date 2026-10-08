@@ -1,0 +1,49 @@
+{
+  "package": "mp4box",
+  "version": "2.4.1",
+  "license": "BSD-3-Clause",
+  "licenseFile": "LICENSE",
+  "source": {
+    "registry": "https://registry.npmjs.org/mp4box/-/mp4box-2.4.1.tgz",
+    "registryIntegrity": "sha512-0HGX7nXoDIX6FKLVl4a3wtYjBlwqsN3xuQC3GXzNtKp98FXUOhDSq623azsz8DG5ptd9ZXcXodDkgbdMZOjWvw==",
+    "registryShasum": "9a3e9527de7fbf80208c8c3a766bc125ca01c34b",
+    "tarballSha256": "c24dd2e4a793afc080797bf3c69529f09add9880177b78289ef2a76603ed7388",
+    "tarballBytes": 408220,
+    "attestations": "https://registry.npmjs.org/-/npm/v1/attestations/mp4box@2.4.1"
+  },
+  "copiedFrom": "the verified official tarball, extracted for evidence under local-notes/checks/reddit-hls01/prep/mp4box-package/package (dist/ and LICENSE only)",
+  "modification": "none: the files below are byte-identical to the package files",
+  "runtimeDependencies": "none",
+  "usage": "ESM, imported lazily by lib/reddit_hls.mjs from the offscreen document and from Node tests; never loaded from a remote address",
+  "files": [
+    {
+      "path": "mp4box.all.mjs",
+      "packagePath": "dist/mp4box.all.mjs",
+      "bytes": 91813,
+      "sha256": "34fa8fd681e8b63998ca9e4c3b477830dd11310c8aaedc37ecb8f49c5452d259",
+      "integrity": "sha512-bTFEmt8qGAUOkHe7092r0GIa+TsRiITk1/0zj4BYkuocINDmUgBo3JkAryHXWacjLzXazTX7YcP8Ga1BeR57+w=="
+    },
+    {
+      "path": "styp-9TIZZDLN.mjs",
+      "packagePath": "dist/styp-9TIZZDLN.mjs",
+      "bytes": 236007,
+      "sha256": "ae15acb79233251b72af7f7cc9f47e7f47cadb209206753b7000b502a2391049",
+      "integrity": "sha512-jv/HbI6BjZj8gSy+0DA9QShJt2xyugR9AVYXH6td8SlcN7Fz8A4TNdD6TrjSLFM5ACHR25hC+ESki8Opy2oUtA=="
+    },
+    {
+      "path": "rolldown-runtime-w6R9maHv.mjs",
+      "packagePath": "dist/rolldown-runtime-w6R9maHv.mjs",
+      "bytes": 377,
+      "sha256": "183552fe973134bce551888434b581d5a2cb695a82d8907e2cd9d2b61e12ce24",
+      "integrity": "sha512-krBZfj5djc7tUQDojcuzFtYdRbW8SRdZUA9Oi44xZ3uOXfRfB4dcKBrHfgqLA2NmfiqwYUHsX0HEVTYvffWPbA=="
+    },
+    {
+      "path": "LICENSE",
+      "packagePath": "LICENSE",
+      "bytes": 1534,
+      "sha256": "ebad0332150a08f37389158289d93ab2f70b0ee8717d1db9b3d002febc6c5047",
+      "integrity": "sha512-HiTRbU9KogXP9jIRwEXuI17kOLONfQebhPVt9KT1o+33wDmF9bDTz2x5oDRxbJ5CBoghKtLcMCkrvyPYTyMung=="
+    }
+  ],
+  "note": "These files must stay byte-exact: keep them out of any end-of-line conversion. The license must accompany any package that contains them."
+}

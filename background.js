@@ -5683,6 +5683,14 @@ async function resolveRedditFrameBlobMedia({ tabId, frameId, clickedSrc, pageUrl
     }
   }
 
+  // An HLS-only player of the selected post: the canonical master address the frame read from the selected player, validated again here
+  if (response && response.success && response.hls && !response.targetUrl) {
+    const master = redditHlsMasterUrl(response.hls.url);
+    return master
+      ? { success: true, redditHls: { url: master.url, assetId: master.assetId }, diagnostics: response.diagnostics || {} }
+      : { success: false, error: 'UNRESOLVED_BLOB_MEDIA', reason: 'UNSUPPORTED_STREAM', diagnostics: response.diagnostics || {} };
+  }
+
   if (response && response.success && response.targetUrl) {
     const validated = validateRedditCandidateUrl(response.targetUrl);
     if (validated.valid) {
@@ -7361,6 +7369,9 @@ async function resolveMediaTarget(options = {}) {
             ...(options.gesturePlayer === true ? { documentId: options.gestureDocumentId || '', requireGesture: !options.inlineToken, gestureAt: options.gestureAt, inlineToken: options.inlineToken || '' } : {})
           });
         }
+      }
+      if (frameRes && frameRes.success && frameRes.redditHls) {
+        return { redditHls: frameRes.redditHls, type: 'video', descriptor: mediaDesc };
       }
       if (frameRes && frameRes.success && frameRes.targetUrl) {
         const detectedMime = detectVideoMime(frameRes.targetUrl) || 'video/mp4';
@@ -9999,6 +10010,114 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
   }
 }
 
+// ---- REDDIT-HLS-01: one complete MP4 (video + audio) from the HLS master a selected Reddit player declares ----------------------------------------------
+// The offscreen document fetches the playlist-declared fMP4 resources and remuxes them with the pinned MP4Box (lib/reddit_hls.mjs); this worker only
+// validates the address, runs one assembly at a time, and hands the resulting Blob to the same download/tracking/revocation path as the Reddit GIF.
+const REDDIT_HLS_MASTER = /^https:\/\/v\.redd\.it\/([A-Za-z0-9_-]{1,64})\/HLSPlaylist\.m3u8(?:\?[^#]*)?$/;
+function redditHlsMasterUrl(url) {
+  if (typeof url !== 'string' || url.length > 2048) return null;
+  const m = url.match(REDDIT_HLS_MASTER);
+  if (!m) return null;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && u.hostname === 'v.redd.it' && !u.username && !u.password && !u.port ? { url: u.href, assetId: m[1] } : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+let redditHlsActive = false;
+
+// The feedback failure of an assembly that did not produce a file. Unsupported sources are one category; a busy worker, network and integrity problems are theirs.
+function redditHlsFailure(res) {
+  const code = String((res && res.error) || '');
+  const status = res && Number.isInteger(res.status) ? res.status : null;
+  if (/^UNSUPPORTED_/.test(code) || code === 'TOO_LARGE' || code === 'FOREIGN_SOURCE') return { stage: 'resolve', code: 'UNSUPPORTED_SOURCE' };
+  if (code === 'BUSY') return { stage: 'resolve', code: 'RATE_LIMIT' };
+  if (code === 'HTTP_ERROR') {
+    if (status === 401 || status === 403) return { stage: 'download', code: 'AUTH_REQUIRED', status };
+    if (status === 404 || status === 410) return { stage: 'download', code: 'NOT_FOUND', status };
+    if (status === 429) return { stage: 'download', code: 'RATE_LIMIT', status };
+    return { stage: 'download', code: 'NETWORK_ERROR', status };
+  }
+  if (code === 'TIMEOUT') return { stage: 'download', code: 'NETWORK_TIMEOUT' };
+  if (code === 'NETWORK' || code === 'ABORTED') return { stage: 'download', code: 'NETWORK_ERROR' };
+  if (code === 'INCOMPLETE' || code === 'INVALID_MEDIA') return { stage: 'verify', code: 'INVALID_MEDIA' };
+  return { stage: 'resolve', code: 'ASSEMBLE_FAILED' };
+}
+
+async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) {
+  const feedbackOp = options?.feedbackOp || null;
+  const master = redditHlsMasterUrl(masterUrl);
+  if (!master) {
+    await fbFail(feedbackOp, { stage: 'resolve', code: 'UNSUPPORTED_SOURCE' });
+    await flashBadge('ERR', '#ef4444');
+    return { success: false, error: 'UNSUPPORTED_SOURCE' };
+  }
+  // one assembly at a time (memory is bounded for one); another request is a visible failure, never silence
+  if (redditHlsActive) {
+    await fbFail(feedbackOp, redditHlsFailure({ error: 'BUSY' }));
+    await flashBadge('ERR', '#ef4444');
+    return { success: false, error: 'BUSY' };
+  }
+  redditHlsActive = true;
+  let taskKey = null;
+  let blobUrl = null;
+  try {
+    await setBadge('...', '#3b82f6');
+    await fbStage(feedbackOp, 'converting', { conversion: 'none', expectedType: 'video', sourceUrl: master.url, site: fbSiteOf(options?.pageUrl, master.url) });
+    taskKey = acquireOffscreenTask('reddit_hls_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+    await ensureOffscreenDocument();
+    const res = await chrome.runtime.sendMessage({ action: 'ASSEMBLE_REDDIT_HLS', url: master.url, jobId: taskKey });
+    if (!res || res.success !== true || typeof res.blobUrl !== 'string' || !res.blobUrl.startsWith('blob:') || !(res.size > 0)) {
+      const failure = redditHlsFailure(res);
+      await fbFail(feedbackOp, failure);
+      await releaseOffscreenTask(taskKey).catch(() => {});
+      taskKey = null;
+      await flashBadge('ERR', '#ef4444');
+      return { success: false, error: (res && res.error) || 'ASSEMBLE_FAILED' };
+    }
+    blobUrl = res.blobUrl;
+    await fbStage(feedbackOp, 'saving', { output: { type: 'video', ext: '.mp4', evidence: 'converted_output', mime: 'video/mp4', sizeBytes: res.size, sizeKind: 'measured', durationSec: Number.isFinite(res.duration) ? res.duration : null } });
+    const filename = resolveDownloadPath({
+      filename: `${master.assetId}.mp4`,
+      subfolder: getConfiguredRoot(settings),
+      folderOrganizationMode: settings?.folderOrganizationMode,
+      mediaType: 'video',
+      pageUrl: options?.pageUrl || '',
+      resolvedUrl: master.url,
+      contentType: 'video/mp4'
+    });
+    let downloadId = null;
+    try {
+      downloadId = await chrome.downloads.download({ url: blobUrl, filename, saveAs: false });
+    } catch (dlErr) {
+      console.error('[Image Saver] Ошибка chrome.downloads.download для собранного Reddit HLS видео:', dlErr);
+      await fbFail(feedbackOp, { stage: 'save', code: dlErr?.message });
+      await releaseOffscreenTask(taskKey, blobUrl).catch(() => {});
+      taskKey = null;
+      await flashBadge('ERR', '#ef4444');
+      return { success: false, error: dlErr?.message || String(dlErr) };
+    }
+    await fbAttach(feedbackOp, downloadId, { filename });
+    await addTrackedDownloadId(downloadId);
+    await setBadge('DL', '#3b82f6');
+    transferOffscreenTask(taskKey, 'protected_' + downloadId, blobUrl);
+    taskKey = null;
+    await trackDownloadProtectedBlob(downloadId, blobUrl, 'protected_' + downloadId);
+    await settleEarlyTerminalDownload(downloadId);
+    return { success: true, downloadId };
+  } catch (err) {
+    console.error('[Image Saver] Не удалось собрать и скачать Reddit HLS видео:', err);
+    await fbFail(feedbackOp, { stage: 'resolve', code: 'ASSEMBLE_FAILED' });
+    if (taskKey) await releaseOffscreenTask(taskKey, blobUrl).catch(() => {});
+    await flashBadge('ERR', '#ef4444');
+    return { success: false, error: err?.message || String(err) };
+  } finally {
+    redditHlsActive = false;
+  }
+}
+
 /**
  * Closes the offscreen document when no tasks or active protected downloads remain.
  */
@@ -10705,6 +10824,12 @@ async function onContextMenuClicked(info, tab) {
         folderOrganizationMode: 'single'
       });
 
+      // An HLS-only post video proven by the selected Reddit player's document (inline): its frozen master address goes straight to the assembly
+      if (redditInlineInfos.has(info) && info.redditInlineMedia && info.redditInlineMedia.redditHls === true) {
+        await executeRedditHlsDownload(info.redditInlineMedia.url, settings, { pageUrl: info.pageUrl || tab?.url || '', feedbackOp: op });
+        return;
+      }
+
       const isBlob = rawImageUrl.startsWith('blob:');
       const isRedGifs = isRedGifsUrl(info.frameUrl) ||
                         isRedGifsUrl(info.pageUrl) ||
@@ -10805,6 +10930,11 @@ async function onContextMenuClicked(info, tab) {
             inlineToken,
             redGifsEmbed: redditInlineInfos.has(info) && info.redditInlineRedGifs ? info.redditInlineRedGifs : undefined
           });
+          if (mediaResolution?.redditHls) {
+            // the same assembly from the context menu: the selected player's declared master, read by its own frame and validated again
+            await executeRedditHlsDownload(mediaResolution.redditHls.url, settings, { pageUrl: info.pageUrl || tab?.url || '', feedbackOp: op });
+            return;
+          }
           targetMediaUrl = mediaResolution?.targetUrl;
           mediaPlan = mediaResolution?.mediaPlan;
         } else {
@@ -10837,7 +10967,9 @@ async function onContextMenuClicked(info, tab) {
         }
         if (mediaResolution?.error === 'UNRESOLVED_BLOB_MEDIA') {
           console.warn('[Image Saver] Отмена скачивания: не удалось разрешить blob URL (UNRESOLVED_BLOB_MEDIA)');
-          await fbFail(op, { stage: 'resolve', code: 'UNRESOLVED_BLOB_MEDIA' });
+          // a positively identified stream that cannot be saved is an unsupported source, not an unresolved element
+          const unsupportedStream = mediaResolution.reason === 'UNSUPPORTED_DASH_STREAM' || mediaResolution.reason === 'UNSUPPORTED_STREAM';
+          await fbFail(op, { stage: 'resolve', code: unsupportedStream ? 'UNSUPPORTED_SOURCE' : 'UNRESOLVED_BLOB_MEDIA' });
           await flashBadge('ERR', '#ef4444');
           return;
         }
@@ -11481,7 +11613,9 @@ function sanitizeRedditInlineMedia(raw, expect) {
   // a RedGIFs embed (RD-10): the document proved the clip its post declares; the address is only the strict embed address of that clip
   // (never part of a batch) and the frame is found and proven again by the background
   const embedClip = raw.redgifsEmbed === true && kind === 'video' && !expect ? redGifsEmbedClipOf(url) : '';
-  if (!url || (raw.redgifsEmbed === true ? !embedClip : !redditInlineUrlOk(url, kind))) return null;
+  // an HLS-only post video (REDDIT-HLS-01): only the canonical master address of a video, only for a single save; manifests stay forbidden to the direct-file check
+  const redditHls = raw.redditHls === true && kind === 'video' && !expect;
+  if (!url || (raw.redgifsEmbed === true ? !embedClip : (redditHls ? !redditHlsMasterUrl(url) : !redditInlineUrlOk(url, kind)))) return null;
   const ownerId = typeof raw.ownerId === 'string' && REDDIT_INLINE_OWNER_ID.test(raw.ownerId) ? raw.ownerId : '';
   if (!ownerId) return null;
   let postUrl = null;
@@ -11500,12 +11634,16 @@ function sanitizeRedditInlineMedia(raw, expect) {
     sig = typeof raw.sig === 'string' && /^[a-f0-9]{8}$/.test(raw.sig) ? raw.sig : '';
     if (ownerId !== expect.ownerId || count !== expect.count || index !== expect.index || sig !== expect.sig) return null;
   }
-  return { kind, url, ownerId, postUrl, blobPlayer: raw.blobPlayer === true, index, count, sig, redgifsEmbedClip: embedClip };
+  return { kind, url, ownerId, postUrl, blobPlayer: raw.blobPlayer === true, index, count, sig, redgifsEmbedClip: embedClip, redditHls };
 }
 
 // Why a proof was refused, for the log only: one of a fixed set of codes, never page data. The generic "owner not proven" wording hid whether the
 // document refused (and why) or answered a descriptor the background rejected.
-const REDDIT_INLINE_REASONS = new Set(['NO_TOKEN', 'USED', 'STALE_OWNER', 'STALE_LIST', 'STALE_ITEM', 'UNRESOLVED_BLOB', 'NO_MEDIA']);
+const REDDIT_INLINE_REASONS = new Set(['NO_TOKEN', 'USED', 'STALE_OWNER', 'STALE_LIST', 'STALE_ITEM', 'UNRESOLVED_BLOB', 'UNSUPPORTED_STREAM', 'NO_MEDIA']);
+// The failure code a refused answer is recorded with: a positively identified stream that cannot be saved is an unsupported source, an ordinary blob stays unresolved
+const redditInlineRefusalCode = (answer) => (answer && answer.ok === false
+  ? (answer.reason === 'UNRESOLVED_BLOB' ? 'UNRESOLVED_BLOB_MEDIA' : (answer.reason === 'UNSUPPORTED_STREAM' ? 'UNSUPPORTED_SOURCE' : 'NO_MEDIA'))
+  : 'NO_MEDIA');
 function redditInlineWhy(answer) {
   if (!answer || typeof answer !== 'object') return 'NO_ANSWER';
   if (answer.ok === true) return 'INVALID_DESCRIPTOR';
@@ -11559,7 +11697,7 @@ async function handleRedditInlineSave(message, sender) {
   const media = answer && answer.ok === true ? sanitizeRedditInlineMedia(answer.media, null) : null;
   if (!media) {
     console.warn('[Image Saver] Inline Reddit Save refused:', redditInlineWhy(answer));
-    await redditInlineRefuse(sender, answer && answer.ok === false && answer.reason === 'UNRESOLVED_BLOB' ? 'UNRESOLVED_BLOB_MEDIA' : 'NO_MEDIA');
+    await redditInlineRefuse(sender, redditInlineRefusalCode(answer));
     return;
   }
   await redditInlineRun(sender.tab, sender, media);
@@ -11598,10 +11736,10 @@ async function handleRedditInlineSaveAll(message, sender) {
         tally.refused++;
         // an item that changed or cannot be resolved on its own is skipped; an owner that is gone, replaced, navigated or unknown
         // (or an answer that does not match the batch) ends the batch
-        const itemLevel = answer && answer.ok === false && (answer.reason === 'STALE_ITEM' || answer.reason === 'UNRESOLVED_BLOB');
+        const itemLevel = answer && answer.ok === false && (answer.reason === 'STALE_ITEM' || answer.reason === 'UNRESOLVED_BLOB' || answer.reason === 'UNSUPPORTED_STREAM');
         if (!itemLevel) lost = true;
         console.warn('[Image Saver] Inline Reddit Save all item refused:', index, redditInlineWhy(answer));
-        await redditInlineRefuse(sender, answer && answer.reason === 'UNRESOLVED_BLOB' ? 'UNRESOLVED_BLOB_MEDIA' : 'NO_MEDIA');
+        await redditInlineRefuse(sender, redditInlineRefusalCode(answer));
         continue;
       }
       if (seen.has(media.url)) { tally.duplicate++; continue; }
