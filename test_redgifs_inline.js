@@ -86,6 +86,13 @@ class El {
     for (const l of this.listeners.blur || []) l({ target: this });
   }
   getBoundingClientRect() {
+    if (this.attributes['data-image-saver-inline'] === 'redgifs' && this.parentElement) {
+      // an absolutely positioned host: its place is the containing player's origin plus its own offset, so a scrolled player carries it along
+      const p = this.parentElement.getBoundingClientRect();
+      const l = p.left + parseFloat(this.style.props.left || '0');
+      const tp = p.top + parseFloat(this.style.props.top || '0');
+      return { left: l, top: tp, width: 32, height: 32, right: l + 32, bottom: tp + 32 };
+    }
     const r = this.rect || { left: 0, top: 0, width: 0, height: 0 };
     return { left: r.left, top: r.top, width: r.width, height: r.height, right: r.left + r.width, bottom: r.top + r.height };
   }
@@ -174,6 +181,8 @@ function makeWorld({ url = 'https://www.redgifs.com/niches/ecchi-anime', docId =
     URL, Array, Object, Number, String, Boolean, Set, Map, Uint8Array, Promise, JSON, Math, RegExp, Error, Symbol, AbortController,
     crypto: webcrypto,
     Date: { now: () => world.now },
+    requestAnimationFrame: (fn) => { const id = world.timerSeq++; world.timers.push({ id, at: world.now + 16, fn, every: 0, raf: true }); return id; },
+    cancelAnimationFrame: (id) => { world.timers = world.timers.filter((tm) => tm.id !== id); },
     MutationObserver: class { constructor(cb) { world.observerCallback = cb; } observe() { world.observing = true; } disconnect() {} },
     setTimeout: (fn, ms) => { const id = world.timerSeq++; world.timers.push({ id, at: world.now + (ms || 0), fn, every: 0 }); return id; },
     clearTimeout: (id) => { world.timers = world.timers.filter((t) => t.id !== id); },
@@ -251,6 +260,9 @@ function makeWorld({ url = 'https://www.redgifs.com/niches/ecchi-anime', docId =
   // the same Player and video node now show another clip
   world.swap = (card, name, blob = `blob:https://www.redgifs.com/swapped-${name}`) => { card.video.setAttribute('src', blob); card.poster.setAttribute('src', posterUrl(name)); card.blob = blob; };
   world.intervals = () => world.timers.filter((t) => t.every).length;
+  world.frames = () => world.timers.filter((t) => t.raf).length;
+  // where the control really is in the viewport
+  world.rectOf = (card) => world.hostOf(card).getBoundingClientRect();
   world.addLayer = (rect) => { const el = new El('div', { class: 'modal' }, rect); world.body.appendChild(el); world.layers.push({ el, rect }); return el; };
   world.addOgVideo = (u) => world.metas.push({ getAttribute: (k) => ({ property: 'og:video', content: u })[k] || null });
   world.ask = (msg, sender = { id: 'testid' }) => new Promise((resolve) => {
@@ -428,7 +440,7 @@ test('eligibility: Reddit documents, embedded /ifr/ players, frames and other si
   })) {
     const { world } = pageAndWorker(opts);
     world.addCard('ClipAlpha');
-    assert.equal((world.listeners.pointermove || []).length, 0, `${what}: no listener`);
+    assert.equal((world.listeners.pointermove || []).length + (world.listeners.scroll || []).length + (world.listeners.resize || []).length, 0, `${what}: no listener`);
     assert.equal(world.observing, undefined, `${what}: no observer`);
     world.scan();
     world.move(100, 100);
@@ -879,6 +891,77 @@ test('placement: the control needs room for itself in the visible part of the pl
   a.player.rect.top = 0;
   world.hover(a);
   assert.equal(world.visible(a), true);
+});
+
+test('stable placement: the control follows its player while the page scrolls or resizes, and is concealed when that cannot be proven', async () => {
+  const { world } = pageAndWorker();
+  const a = world.addCard('ClipAlpha');
+  world.addCard('ClipBravo');
+  world.scan();
+  world.hover(a);
+  assert.equal(world.hostOf(a).style.props.position, 'absolute', 'anchored inside its player, not to the viewport');
+  assert.deepEqual([world.rectOf(a).left, world.rectOf(a).top], [600, 8]);
+  // scrolling without pointer motion: many events, one frame; the control is placed again before the 250 ms refresh could run
+  a.player.rect.top = -200; // the player's upper part leaves the viewport
+  for (let i = 0; i < 5; i++) world.fire('scroll', {});
+  assert.equal(world.frames(), 1, 'coalesced into one pending frame');
+  world.advance(20);
+  assert.equal(world.frames(), 0);
+  assert.equal(world.visible(a), true);
+  assert.deepEqual([world.rectOf(a).left, world.rectOf(a).top], [600, 8], 'at the upper-right of the visible part of its own player');
+  a.player.rect.top = 60; // scrolled back: the player is lower again
+  world.fire('scroll', {});
+  world.advance(20);
+  assert.deepEqual([world.rectOf(a).left, world.rectOf(a).top], [600, 68], 'follows the player, never left behind over another card');
+  // resize
+  world.win.innerWidth = 500;
+  world.fire('resize', {});
+  world.advance(20);
+  assert.equal(world.rectOf(a).left, 460, 'inside the narrower viewport');
+  world.win.innerWidth = 1280;
+  world.fire('resize', {});
+  world.advance(20);
+  assert.equal(world.rectOf(a).left, 600);
+  // a placement that cannot be proven (the control would not lie inside its player's visible part) is not shown
+  const host = world.hostOf(a);
+  const real = host.getBoundingClientRect.bind(host);
+  host.getBoundingClientRect = () => ({ left: 5, top: -400, width: 32, height: 32, right: 37, bottom: -368 });
+  world.fire('scroll', {});
+  world.advance(20);
+  assert.equal(world.visible(a), false, 'concealed until a fresh, provable placement');
+  host.getBoundingClientRect = real;
+  world.hover(a);
+  assert.equal(world.visible(a), true, 'and shown again once it can be proven');
+  // cleanup: a pending frame never outlives the control; scroll events with nothing visible schedule nothing
+  world.fire('scroll', {});
+  assert.equal(world.frames(), 1);
+  world.move(900, 5000);
+  assert.equal(world.visible(a), false);
+  assert.equal(world.frames(), 0, 'cancelled with the control');
+  world.fire('scroll', {});
+  world.fire('resize', {});
+  assert.equal(world.frames(), 0, 'nothing visible, nothing scheduled');
+  assert.equal(world.intervals(), 0);
+  // removed while a frame is pending
+  world.hover(a);
+  world.fire('scroll', {});
+  a.gif.remove();
+  world.advance(20);
+  assert.equal(world.visible(a), false);
+  assert.equal(world.frames(), 0);
+  assert.equal(world.intervals(), 0);
+  // hidden document
+  const hidden = pageAndWorker();
+  const h = hidden.world.addCard('ClipAlpha');
+  hidden.world.scan();
+  hidden.world.hover(h);
+  hidden.world.fire('scroll', {});
+  hidden.world.doc.hidden = true;
+  hidden.world.advance(20);
+  assert.equal(hidden.world.visible(h), false);
+  assert.equal(hidden.world.frames(), 0);
+  assert.equal(hidden.world.intervals(), 0);
+  assert.equal(world.sent.length + hidden.world.sent.length, 0, 'placement sends and asks nothing');
 });
 
 test('occlusion without a generic parent: a Player placed straight under the body does not admit an unrelated layer', async () => {

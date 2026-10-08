@@ -1279,7 +1279,7 @@
   // read nor written and the player must survive every asynchronous step unchanged.
   const INLINE = { Z: 2147483000, HOVER_MS: 60, POLL_MS: 250, SCAN_MS: 100, TOKEN_TTL: 30000, MAX_PENDING: 8, MAX_ITEMS: 100, CLICK_GAP: 1500, SIZE: 32, INSET: 8 };
   const INLINE_TOKEN = /^[a-f0-9]{32}$/;
-  const inl = { items: new Map(), active: null, timer: null, scanTimer: null, poll: null, observer: null, x: 0, y: 0, moved: false, watch: false, pending: new Map() };
+  const inl = { items: new Map(), active: null, timer: null, scanTimer: null, poll: null, observer: null, x: 0, y: 0, moved: false, watch: false, frame: null, pending: new Map() };
 
   function inlineAllowed() {
     try {
@@ -1337,7 +1337,9 @@
 
   // The refresh interval lives only while a control is visible or a player waits behind a layer
   function inlineSettle() {
-    if (!inl.active && !inl.watch && inl.poll) { clearInterval(inl.poll); inl.poll = null; }
+    if (inl.active || inl.watch) return;
+    if (inl.poll) { clearInterval(inl.poll); inl.poll = null; }
+    if (inl.frame) { (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout)(inl.frame); inl.frame = null; }
   }
 
   // Hidden = transparent and not hit-testable, still focusable
@@ -1365,18 +1367,37 @@
     const R = Math.min(r.right, window.innerWidth);
     const B = Math.min(r.bottom, window.innerHeight);
     if (R - L < INLINE.SIZE || B - T < INLINE.SIZE) return false; // the visible part of the player cannot contain the button
-    item.host.style.setProperty('left', `${Math.max(R - INLINE.SIZE - INLINE.INSET, L)}px`);
-    item.host.style.setProperty('top', `${Math.max(Math.min(T + INLINE.INSET, B - INLINE.SIZE - INLINE.INSET), T)}px`);
-    return true;
+    // Local anchoring: the host is absolutely positioned inside the player, so a scroll the compositor performs carries the control with its player
+    // instead of leaving it behind at the old viewport place. The wanted viewport place is converted by measurement, not by assuming which ancestor
+    // is the containing block, and the result is proven: a control that does not lie inside the visible part of its player is not shown
+    const host = item.host;
+    host.style.setProperty('left', '0px');
+    host.style.setProperty('top', '0px');
+    const origin = host.getBoundingClientRect();
+    host.style.setProperty('left', `${Math.max(R - INLINE.SIZE - INLINE.INSET, L) - origin.left}px`);
+    host.style.setProperty('top', `${Math.max(Math.min(T + INLINE.INSET, B - INLINE.SIZE - INLINE.INSET), T) - origin.top}px`);
+    const m = host.getBoundingClientRect();
+    return !(m.width > 0 && (m.left < L - 2 || m.top < T - 2 || m.right > R + 2 || m.bottom > B + 2));
   }
 
   // The one bounded refresh (every 250 ms, only while a control is visible or a player waits behind a layer): a changed or moved player is dropped,
   // and the pointer's place is judged again, so a layer that appears, goes or changes visibility under a stationary pointer is noticed. The control
   // the keyboard is on is never taken away by the pointer
-  function inlineTick() {
+  function inlineFollow() {
     const item = inl.active;
     if (item && (document.hidden || !item.shown || !inlineHolds(item.shown) || !inlinePlace(item))) inlineConceal(item);
+  }
+
+  function inlineTick() {
+    inlineFollow();
     inlineEvaluate();
+  }
+
+  // A scroll or resize places the visible control again, at most once per frame, and only while one is visible or a player waits behind a layer
+  function inlineOnViewport() {
+    if ((!inl.active && !inl.watch) || inl.frame) return;
+    const run = () => { inl.frame = null; inlineFollow(); };
+    inl.frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 16);
   }
 
   // Show the control of one player (hover or focus); at most one control is visible
@@ -1431,7 +1452,7 @@
     if (inl.items.size >= INLINE.MAX_ITEMS || !inlineRandom(1)) return null;
     const host = document.createElement('div');
     host.setAttribute('data-image-saver-inline', 'redgifs');
-    for (const [k, v] of [['position', 'fixed'], ['z-index', String(INLINE.Z)], ['margin', '0'], ['padding', '0'], ['opacity', '0'], ['pointer-events', 'none']]) host.style.setProperty(k, v);
+    for (const [k, v] of [['position', 'absolute'], ['z-index', String(INLINE.Z)], ['margin', '0'], ['padding', '0'], ['opacity', '0'], ['pointer-events', 'none']]) host.style.setProperty(k, v);
     const root = typeof host.attachShadow === 'function' ? host.attachShadow({ mode: 'closed' }) : host;
     const btn = document.createElement('button');
     btn.setAttribute('type', 'button');
@@ -1559,6 +1580,8 @@
   try {
     if (inlineAllowed() && typeof window.addEventListener === 'function') {
       window.addEventListener('pointermove', inlineOnMove, { capture: true, passive: true });
+      window.addEventListener('scroll', inlineOnViewport, { capture: true, passive: true }); // capture: a scroller inside the page counts too
+      window.addEventListener('resize', inlineOnViewport, { passive: true });
       if (typeof MutationObserver === 'function' && typeof document !== 'undefined' && document.documentElement) {
         inl.observer = new MutationObserver(inlineScheduleScan);
         inl.observer.observe(document.documentElement, { childList: true, subtree: true });
