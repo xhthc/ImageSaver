@@ -133,6 +133,7 @@ function makeWorld({ url = 'https://www.redgifs.com/niches/ecchi-anime', docId =
     hidden: false,
     activeElement: null,
     createElement: (t) => new El(t),
+    createElementNS: (ns, t) => new El(t),
     querySelectorAll: (s) => (/meta/.test(s) ? world.metas : html.querySelectorAll(s)),
     querySelector: (s) => (/meta/.test(s) ? null : html.querySelector(s)),
     contains: (n) => { for (let c = n; c; c = c.parentElement) if (c === html) return true; return false; },
@@ -384,6 +385,16 @@ test('mount: every eligible player has exactly one hidden control, hover reveals
     assert.equal(world.visible(c), false, 'hidden until the pointer rests on its player or it takes the focus');
     assert.equal(world.hostOf(c).style.props['pointer-events'], 'none', 'a hidden control is not hit-testable');
   }
+  const first = world.btnOf(a);
+  const svg = first._kids[0];
+  assert.equal(svg.tagName, 'SVG', 'the download icon, not a text label');
+  assert.equal(svg.getAttribute('aria-hidden'), 'true', 'decorative');
+  assert.equal(svg.getAttribute('width') + 'x' + svg.getAttribute('height'), '18x18');
+  assert.equal(svg._kids[0].getAttribute('d'), 'M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14', 'the same path as the X and Reddit controls');
+  assert.equal(first.textContent, '', 'no visible text');
+  assert.equal(first.style.props.width + ' ' + first.style.props.height, '32px 32px');
+  assert.equal(first.style.props.padding, '0');
+  assert.equal(first.style.props['border-radius'], '9999px');
   world.scan();
   world.scan();
   assert.equal(world.hosts().length, 2, 'a repeated scan mounts nothing twice');
@@ -392,6 +403,13 @@ test('mount: every eligible player has exactly one hidden control, hover reveals
   assert.equal(world.visible(a), false);
   world.hover(a);
   assert.equal(world.visible(a), true);
+  // upper-right of the player (640 wide), 8 px inset, 32 px button, inside the viewport
+  assert.deepEqual([world.hostOf(a).style.props.left, world.hostOf(a).style.props.top], ['600px', '8px'], 'upper-right placement');
+  world.win.innerWidth = 500; // a narrow viewport: the control stays inside the visible part of the player
+  world.advance(300);
+  assert.equal(world.hostOf(a).style.props.left, '460px');
+  world.win.innerWidth = 1280;
+  world.advance(300);
   assert.equal(world.visible(b), false, 'at most one control is visible');
   assert.equal(world.hosts().length, 2);
   assert.equal(world.sent.length, 0, 'mounting and hovering send nothing');
@@ -823,6 +841,44 @@ test('bounded: more saves than the limit resolve at once are a visible failure, 
   assert.equal(ops.filter((o) => o.state === 'failed').length, 1, 'the fifth is a visible failed operation');
   assert.equal(ops.find((o) => o.state === 'failed').failure.code, 'RATE_LIMIT');
   assert.equal(world.fetchCalls.length, 4, 'four lookups started, the fifth never reached the provider');
+});
+
+test('placement: the control needs room for itself in the visible part of the player', async () => {
+  // the pointer rests on the (visible part of the) player: `at` is where, default the usual hover point
+  const room = async (mutate, at = null) => {
+    const { world } = pageAndWorker();
+    const a = world.addCard('ClipAlpha');
+    world.scan();
+    mutate(world, a);
+    if (at) world.move(at[0], at[1]); else world.hover(a);
+    return { world, a };
+  };
+  // ordinary: the whole player is visible
+  let r = await room(() => {});
+  assert.equal(r.world.visible(r.a), true);
+  assert.deepEqual([r.world.hostOf(r.a).style.props.left, r.world.hostOf(r.a).style.props.top], ['600px', '8px'], 'upper-right, 8 px inset');
+  // exactly enough room (32 px wide visible part): shown, inside the visible part
+  r = await room((w) => { w.win.innerWidth = 32; });
+  assert.equal(r.world.visible(r.a), true);
+  assert.equal(r.world.hostOf(r.a).style.props.left, '0px');
+  // horizontally clipped: only 10 px of the player lie inside the viewport
+  r = await room((w, a) => { a.player.rect.left = 1270; }, [1275, 100]);
+  assert.equal(r.world.visible(r.a), false, 'no control that would overflow the viewport');
+  // vertically clipped: only 10 px of the player lie inside the viewport (top and bottom)
+  r = await room((w, a) => { a.player.rect.top = -350; }, [100, 5]);
+  assert.equal(r.world.visible(r.a), false, 'only the lower 10 px are visible');
+  r = await room((w, a) => { w.win.innerHeight = 10; }, [100, 5]);
+  assert.equal(r.world.visible(r.a), false, 'only the upper 10 px are visible');
+  // a control already shown is withdrawn when the room goes (scrolling out), and returns when it is back
+  const { world, a } = await room(() => {});
+  assert.equal(world.visible(a), true);
+  world.move(100, 5);
+  a.player.rect.top = -350;
+  world.advance(300);
+  assert.equal(world.visible(a), false, 'withdrawn by the refresh');
+  a.player.rect.top = 0;
+  world.hover(a);
+  assert.equal(world.visible(a), true);
 });
 
 test('occlusion without a generic parent: a Player placed straight under the body does not admit an unrelated layer', async () => {

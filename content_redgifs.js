@@ -1277,7 +1277,7 @@
   // stores a one-shot target for the live player (node, source and poster evidence, document location) and sends only its token and the player's own
   // key; the worker then asks this same document to resolve THAT player (RESOLVE_FRAME_MEDIA with inlineToken), so the context-menu capture is neither
   // read nor written and the player must survive every asynchronous step unchanged.
-  const INLINE = { Z: 2147483000, HOVER_MS: 60, POLL_MS: 250, SCAN_MS: 100, TOKEN_TTL: 30000, MAX_PENDING: 8, MAX_ITEMS: 100, CLICK_GAP: 1500 };
+  const INLINE = { Z: 2147483000, HOVER_MS: 60, POLL_MS: 250, SCAN_MS: 100, TOKEN_TTL: 30000, MAX_PENDING: 8, MAX_ITEMS: 100, CLICK_GAP: 1500, SIZE: 32, INSET: 8 };
   const INLINE_TOKEN = /^[a-f0-9]{32}$/;
   const inl = { items: new Map(), active: null, timer: null, scanTimer: null, poll: null, observer: null, x: 0, y: 0, moved: false, watch: false, pending: new Map() };
 
@@ -1355,12 +1355,18 @@
     inl.items.delete(item.owner);
   }
 
-  // Top-left corner of the player, inside the viewport; false when the player is not visibly laid out
+  // Upper-right corner of the visible part of the player (8 px inset, 32 px button), kept inside the player and the viewport while it scrolls or
+  // resizes; false when the player is not visibly laid out or its visible part is smaller than the button
   function inlinePlace(item) {
     const r = typeof item.owner.getBoundingClientRect === 'function' ? item.owner.getBoundingClientRect() : null;
     if (!r || !(r.width >= 80 && r.height >= 60) || r.bottom < 0 || r.right < 0 || r.top > window.innerHeight || r.left > window.innerWidth) return false;
-    item.host.style.setProperty('left', `${Math.max(r.left, 0) + 8}px`);
-    item.host.style.setProperty('top', `${Math.max(r.top, 0) + 8}px`);
+    const L = Math.max(r.left, 0);
+    const T = Math.max(r.top, 0);
+    const R = Math.min(r.right, window.innerWidth);
+    const B = Math.min(r.bottom, window.innerHeight);
+    if (R - L < INLINE.SIZE || B - T < INLINE.SIZE) return false; // the visible part of the player cannot contain the button
+    item.host.style.setProperty('left', `${Math.max(R - INLINE.SIZE - INLINE.INSET, L)}px`);
+    item.host.style.setProperty('top', `${Math.max(Math.min(T + INLINE.INSET, B - INLINE.SIZE - INLINE.INSET), T)}px`);
     return true;
   }
 
@@ -1396,6 +1402,29 @@
     if (!inl.poll) inl.poll = setInterval(inlineTick, INLINE.POLL_MS);
   }
 
+  // Decorative (aria-hidden): the button's own label names it
+  function inlineIcon() {
+    try {
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('width', '18');
+      svg.setAttribute('height', '18');
+      svg.setAttribute('aria-hidden', 'true');
+      const path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', 'M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14');
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', 'currentColor');
+      path.setAttribute('stroke-width', '2');
+      path.setAttribute('stroke-linecap', 'round');
+      path.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(path);
+      return svg;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function inlineMount(owner) {
     let item = inl.items.get(owner);
     if (item) return item;
@@ -1408,9 +1437,13 @@
     btn.setAttribute('type', 'button');
     btn.setAttribute('aria-label', 'Image Saver: Save this clip');
     btn.setAttribute('title', 'Image Saver: Save this clip');
-    btn.textContent = 'Save';
-    for (const [k, v] of [['all', 'initial'], ['box-sizing', 'border-box'], ['height', '28px'], ['padding', '0 10px'], ['border-radius', '9999px'],
-      ['border', '1px solid rgba(255,255,255,0.55)'], ['background', 'rgba(15,20,25,0.78)'], ['color', '#fff'], ['cursor', 'pointer'],
+    // the download icon and the single-button look of the X and Reddit inline controls (same path, colors and border), as a 32 px round button
+    const icon = inlineIcon();
+    if (icon) btn.appendChild(icon);
+    else btn.textContent = 'Save';
+    for (const [k, v] of [['all', 'initial'], ['box-sizing', 'border-box'], ['display', 'flex'], ['align-items', 'center'], ['justify-content', 'center'],
+      ['width', `${INLINE.SIZE}px`], ['height', `${INLINE.SIZE}px`], ['border-radius', '9999px'], ['border', '1px solid rgba(255,255,255,0.55)'],
+      ['background', 'rgba(15,20,25,0.78)'], ['color', '#fff'], ['cursor', 'pointer'], ['padding', '0'],
       ['font', '600 12px/1 system-ui, -apple-system, Segoe UI, sans-serif']]) btn.style.setProperty(k, v);
     for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick', 'touchstart', 'touchend']) {
       btn.addEventListener(type, (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); });
