@@ -7336,8 +7336,13 @@ async function resolveMediaTarget(options = {}) {
       }
     }
 
+    // Chrome's own srcUrl of a Reddit HLS player can be the canonical master itself: the owning frame proves it is the selected player's own declaration,
+    // exactly as for a blob (the address alone, from the menu, owns nothing). Outside Reddit pages nothing changes.
+    const redditHlsSrc = Boolean(options.tabId && videoUrl && redditHlsMasterUrl(videoUrl) &&
+      (isRedditDomain(getUrlHostname(options.pageUrl || mediaDesc.pageUrl || '')) || isRedditDomain(getUrlHostname(options.linkUrl || mediaDesc.linkUrl || ''))));
+
     // Never fetch a blob: URL from the service worker. Resolve in the owning frame (also a gesture-proven player that shows no address):
-    if (options.gesturePlayer === true || (videoUrl && videoUrl.startsWith('blob:'))) {
+    if (options.gesturePlayer === true || redditHlsSrc || (videoUrl && videoUrl.startsWith('blob:'))) {
       const frameId = typeof options.frameId === 'number' ? options.frameId : 0;
       let frameRes = null;
       const hostFromUrl = (u) => {
@@ -10071,6 +10076,10 @@ async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) 
     const res = await chrome.runtime.sendMessage({ action: 'ASSEMBLE_REDDIT_HLS', url: master.url, jobId: taskKey });
     if (!res || res.success !== true || typeof res.blobUrl !== 'string' || !res.blobUrl.startsWith('blob:') || !(res.size > 0)) {
       const failure = redditHlsFailure(res);
+      // the worker log keeps only a bounded code and status: never an address, its query or text a server sent
+      const logCode = res && typeof res.error === 'string' && /^[A-Z][A-Z_]{1,31}$/.test(res.error) ? res.error : 'ASSEMBLE_FAILED';
+      const logStatus = res && Number.isInteger(res.status) && res.status >= 100 && res.status <= 599 ? ` ${res.status}` : '';
+      console.warn(`[Image Saver] Reddit HLS assembly failed: ${logCode}${logStatus}`);
       await fbFail(feedbackOp, failure);
       await releaseOffscreenTask(taskKey).catch(() => {});
       taskKey = null;

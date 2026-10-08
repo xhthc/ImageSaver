@@ -3403,6 +3403,160 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert.deepStrictEqual(failedCodes(r.ops), ['UNSUPPORTED_SOURCE']);
   });
 
+  // ===== 9.32r1: REDDIT-HLS-01 R1. Chrome's own srcUrl of the main <video> of an HLS-only player can be the canonical HLS master itself (native failure
+  // report), not only a blob: address. It goes through the same owning-frame proof as a blob: the selected player's own fresh, connected, unchanged
+  // declaration; the master is the player's exact declared address (query included), never rebuilt, never a neighbour's, never a preview's.
+  const HLS_Q = `${HLS_URL}?f=hd&t=1&sig=%2Fa%2Bb%3D`;
+  const lateDate = (w, ms) => { const Real = Date; w.env.context.Date = class extends Real { static now() { return Real.now() + ms; } }; };
+  function askHls(w, g, clickedSrc, { target = g.main, path = null, place = 'shadow' } = {}) {
+    const root = place === 'shadow' ? [g.player.shadowRoot] : [];
+    w.env.context.setLastRedditContextmenuTarget(target, path || [target, ...root, g.player, g.post]);
+    return w.env.ask({ action: 'RESOLVE_REDDIT_BLOB_MEDIA', clickedSrc });
+  }
+
+  await itAsync('9.32r1a native menu: the canonical HLS master as Chrome\'s srcUrl is assembled from the selected player\'s own exact declared address (query kept); the blob form is the same route', async () => {
+    for (const [form, srcUrl] of [['master srcUrl', HLS_Q], ['blob srcUrl', BLOB_SRC]]) {
+      for (const order of ['main-first', 'preview-first']) {
+        const w = await world();
+        const g = hlsOnlyPost(w.env, { place: 'shadow', order, mainSrc: srcUrl });
+        g.player.setAttribute('src', HLS_Q);
+        giveRoots(w.env, g, 'shadow');
+        armNativeMenu(w);
+        const r = await nativeMenuSave(w, { path: [g.main, g.player.shadowRoot, g.player, g.post], x: 300, y: 300, srcUrl, mediaType: 'video', retarget: g.player });
+        assert.deepStrictEqual(assembledMasters(w), [HLS_Q], `${form}/${order}: the exact declared master, nothing rebuilt`);
+        assert.strictEqual(r.d.length, 1, `${form}/${order}: ${JSON.stringify(failedCodes(r.ops))}`);
+        assert(/^blob:chrome-extension:\/\//.test(r.d[0].url) && /\.mp4$/i.test(r.d[0].filename));
+        assert.strictEqual(w.bg.fetched.length, 0);
+        assert(r.ops.every((o) => o.state === 'complete'));
+      }
+    }
+    // the player declares its stream in stream-url, not src
+    const w = await world();
+    const g = hlsOnlyPost(w.env, { place: 'shadow', order: 'main-first', mainSrc: HLS_Q });
+    g.player.setAttribute('src', ''); g.player.setAttribute('stream-url', HLS_Q);
+    giveRoots(w.env, g, 'shadow');
+    armNativeMenu(w);
+    const r = await nativeMenuSave(w, { path: [g.main, g.player.shadowRoot, g.player, g.post], x: 300, y: 300, srcUrl: HLS_Q, mediaType: 'video', retarget: g.player });
+    assert.deepStrictEqual(assembledMasters(w), [HLS_Q]);
+    assert.strictEqual(r.d.length, 1);
+  });
+
+  await itAsync('9.32r1b native menu refusals: a different master, a neighbour\'s, a changed or detached or stale selection, a preview, nothing selected: no hls answer, nothing assembled, nothing downloaded', async () => {
+    const build = async () => {
+      const w = await world();
+      const g = hlsOnlyPost(w.env, { place: 'shadow', order: 'main-first', mainSrc: '' });
+      g.player.setAttribute('src', HLS_Q);
+      giveRoots(w.env, g, 'shadow');
+      return { w, g };
+    };
+    const refused = (res, name) => assert(res && res.success === false && !res.hls, `${name}: ${JSON.stringify(res)}`);
+    // the baseline answers with the exact declared address
+    {
+      const { w, g } = await build();
+      const ok = askHls(w, g, HLS_Q);
+      assert.strictEqual(ok.success, true, JSON.stringify(ok));
+      assert.strictEqual(ok.hls && ok.hls.url, HLS_Q, JSON.stringify(ok));
+    }
+    {
+      const { w, g } = await build();
+      refused(askHls(w, g, `https://v.redd.it/vid9neighbour/HLSPlaylist.m3u8?f=hd&t=1`), 'another asset\'s master');
+      refused(askHls(w, g, `${HLS_URL}?f=hd&t=2`), 'the same asset with another query');
+      refused(askHls(w, g, `${HLS_URL}`), 'the same asset without the declared query');
+      refused(askHls(w, g, 'https://v.redd.it/vid9neighbour/DASHPlaylist.mpd'), 'a manifest of another kind');
+    }
+    {
+      // two players of one post: the right-click is on the first, Chrome\'s srcUrl names the second\'s master
+      const { w, g } = await build();
+      const second = w.env.context.document.createElement('shreddit-player');
+      second.setAttribute('src', 'https://v.redd.it/vid9second/HLSPlaylist.m3u8?f=hd&t=1');
+      R(second, 100, 620, 600, 300);
+      g.post.appendChild(second);
+      refused(askHls(w, g, 'https://v.redd.it/vid9second/HLSPlaylist.m3u8?f=hd&t=1'), 'the neighbour player\'s master');
+      const own = askHls(w, g, HLS_Q);
+      assert.strictEqual(own.hls && own.hls.url, HLS_Q, 'the selected player\'s own');
+    }
+    {
+      const { w, g } = await build();
+      g.player.setAttribute('src', 'https://v.redd.it/vid9replaced/HLSPlaylist.m3u8?f=hd&t=1'); // the player was replaced after the right-click read
+      refused(askHls(w, g, HLS_Q), 'a player whose declaration changed');
+    }
+    {
+      const { w, g } = await build();
+      g.main.isConnected = false;
+      refused(askHls(w, g, HLS_Q), 'a detached target');
+    }
+    {
+      const { w, g } = await build();
+      g.player.isConnected = false;
+      refused(askHls(w, g, HLS_Q), 'a detached player');
+    }
+    {
+      const { w, g } = await build();
+      const first = askHls(w, g, HLS_Q);
+      assert.strictEqual(first.success, true);
+      lateDate(w, 20000);
+      refused(w.env.ask({ action: 'RESOLVE_REDDIT_BLOB_MEDIA', clickedSrc: HLS_Q }), 'a stale right-click (older than 15 s)');
+    }
+    {
+      const { w, g } = await build();
+      refused(askHls(w, g, HLS_Q, { target: g.preview, path: [g.preview, g.lazy, g.bar, g.player.shadowRoot, g.player, g.post] }), 'the seek preview');
+      refused(askHls(w, g, BLOB_SRC, { target: g.preview, path: [g.preview, g.lazy, g.bar, g.player.shadowRoot, g.player, g.post] }), 'the seek preview (blob form)');
+    }
+    {
+      const w = await world();
+      hlsOnlyPost(w.env, { place: 'shadow', order: 'main-first' });
+      refused(w.env.ask({ action: 'RESOLVE_REDDIT_BLOB_MEDIA', clickedSrc: HLS_Q }), 'no right-click recorded at all');
+    }
+    {
+      // a DASH-only player stays an unsupported stream, not an HLS save
+      const { w, g } = await build();
+      g.player.setAttribute('src', 'https://v.redd.it/vid9dash/DASHPlaylist.mpd?a=1');
+      const res = askHls(w, g, 'https://v.redd.it/vid9dash/DASHPlaylist.mpd?a=1');
+      refused(res, 'DASH');
+      assert.strictEqual(res.reason, 'UNSUPPORTED_DASH_STREAM');
+    }
+  });
+
+  await itAsync('9.32r1c native menu: a direct file the player declares wins over its HLS master (no assembly); a refused master reaches the user as a visible failure', async () => {
+    const w = await world();
+    const g = hlsOnlyPost(w.env, { place: 'shadow', order: 'main-first', mainSrc: HLS_Q, json: pmj(HLS_ID) });
+    g.player.setAttribute('src', HLS_Q);
+    giveRoots(w.env, g, 'shadow');
+    armNativeMenu(w);
+    const r = await nativeMenuSave(w, { path: [g.main, g.player.shadowRoot, g.player, g.post], x: 300, y: 300, srcUrl: HLS_Q, mediaType: 'video', retarget: g.player });
+    assert.strictEqual(w.bg.assemblies.length, 0, 'the direct file is preferred');
+    assert.strictEqual(r.d.length, 1);
+    assert.strictEqual(r.d[0].url, BEST(HLS_ID));
+    // a master that is not the player\'s own: unresolved, visible, nothing assembled or downloaded
+    const w2 = await world();
+    const g2 = hlsOnlyPost(w2.env, { place: 'shadow', order: 'main-first', mainSrc: 'https://v.redd.it/vid9neighbour/HLSPlaylist.m3u8?f=hd&t=1' });
+    g2.player.setAttribute('src', HLS_Q);
+    giveRoots(w2.env, g2, 'shadow');
+    armNativeMenu(w2);
+    const r2 = await nativeMenuSave(w2, { path: [g2.main, g2.player.shadowRoot, g2.player, g2.post], x: 300, y: 300, srcUrl: 'https://v.redd.it/vid9neighbour/HLSPlaylist.m3u8?f=hd&t=1', mediaType: 'video', retarget: g2.player });
+    assert.strictEqual(w2.bg.assemblies.length, 0);
+    assert.strictEqual(r2.d.length, 0);
+    assert.strictEqual(failedCodes(r2.ops).length, 1, 'a visible failure');
+  });
+
+  await itAsync('9.32r1d a failed assembly is logged in the worker with its bounded code and status only: no address, query or server text', async () => {
+    for (const [answer, expect] of [
+      [{ success: false, error: 'TOO_LARGE' }, /Reddit HLS assembly failed: TOO_LARGE$/],
+      [{ success: false, error: 'HTTP_ERROR', status: 403 }, /Reddit HLS assembly failed: HTTP_ERROR 403$/],
+      [{ success: false, error: 'a secret https://v.redd.it/x/HLSPlaylist.m3u8?sig=TOPSECRET and text', status: 502 }, /Reddit HLS assembly failed: ASSEMBLE_FAILED 502$/]
+    ]) {
+      const w = await world();
+      w.bg.hls.impl = () => answer;
+      playerPost(w.env, 'lg1', 'vid9log', { json: null });
+      await hover(w.env, 200, 200);
+      await saveThis(w, 0);
+      const logs = w.bg.warns.filter((m) => /Reddit HLS assembly failed/.test(m));
+      assert.strictEqual(logs.length, 1, JSON.stringify(w.bg.warns));
+      assert(expect.test(logs[0]), logs[0]);
+      assert(!w.bg.warns.some((m) => /TOPSECRET|v\.redd\.it|HLSPlaylist|sig=|t=1/.test(m)), 'no address or query in the worker log: ' + JSON.stringify(w.bg.warns));
+    }
+  });
+
   await itAsync('9.32b native menu: a layer pressed over the preview selects the preview as its media: refused too; the player itself is untouched by the refusal', async () => {
     for (const place of ['shadow', 'light']) {
       const w = await world();

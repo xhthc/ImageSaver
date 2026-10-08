@@ -198,6 +198,9 @@ function standardFiles(v, a, over = {}) {
     '/x1/HLSPlaylist.m3u8': { body: over.master || masterPlaylist(), type: 'application/x-mpegurl' },
     '/x1/CMAF_720.m3u8': { body: over.vPlaylist || mediaPlaylist(v, 'CMAF_720.mp4'), type: 'application/x-mpegurl' },
     '/x1/CMAF_AUDIO_128.m3u8': { body: over.aPlaylist || mediaPlaylist(a, 'CMAF_AUDIO_128.mp4'), type: 'application/x-mpegurl' },
+    // the other renditions the master lists (only their playlists exist here; a lower layout is read only after a byte-budget refusal)
+    '/x1/CMAF_AUDIO_64.m3u8': { body: mediaPlaylist(a, 'CMAF_AUDIO_64.mp4'), type: 'application/x-mpegurl' },
+    '/x1/CMAF_480.m3u8': { body: mediaPlaylist(v, 'CMAF_480.mp4'), type: 'application/x-mpegurl' },
     '/x1/CMAF_720.mp4': { body: v.bytes, type: 'video/mp4', ...(over.vFile || {}) },
     '/x1/CMAF_AUDIO_128.mp4': { body: a.bytes, type: 'video/mp4', ...(over.aFile || {}) }
   };
@@ -480,7 +483,9 @@ test('media playlists: the finite unencrypted single-resource byte-range VOD is 
   assert.equal(code(m.replace(/#EXTINF:[\d.]+,/, '#EXTINF:NaN,')), 'UNSUPPORTED_TIMING');
   assert.equal(code(m.replace(/#EXTINF:[\d.]+,/, '#EXTINF:3600,')), 'UNSUPPORTED_TIMING', 'a segment longer than the bound');
   assert.equal(code(m, { ...H.LIMITS, inputBytes: 100 }), 'TOO_LARGE', 'a declared range beyond the input limit');
-  assert.equal(code(m.replace(/BYTERANGE:(\d+)@(\d+)/, 'BYTERANGE:$1@999999999999')), 'TOO_LARGE', 'unsafe arithmetic');
+  assert.equal(code(m.replace(/BYTERANGE:(\d+)@(\d+)/, 'BYTERANGE:$1@999999999999')), 'UNSUPPORTED_LAYOUT', 'a first range that the next ones overlap is a layout error before any budget judgement');
+  const last = v.segments.at(-1);
+  assert.equal(code(m.replace('#EXT-X-BYTERANGE:' + last.length + '@' + last.offset, '#EXT-X-BYTERANGE:' + last.length + '@999999999999')), 'TOO_LARGE', 'a last range far beyond the input limit');
   assert.equal(code(m.replace('BYTERANGE="' + v.map.length + '@0"', 'BYTERANGE="' + v.map.length + '"')), 'UNSUPPORTED_LAYOUT', 'an init range without an offset');
 });
 
@@ -674,6 +679,160 @@ test('memory shape: the result is one Blob and the module holds no state between
   await assertOutput(result, v, a, 'larger');
   await tickAsync();
   assert.ok(process.memoryUsage().arrayBuffers - before < 50 * 1024 * 1024, 'no large retained buffers for a tiny assembly');
+});
+
+// =============================================================================================================================================
+// R1: the best complete layout that fits the input budget (the native 1080p master of post 1sqccda is ~188 MiB with its audio, the 720p one ~110 MiB)
+// =============================================================================================================================================
+const MASTER_1080 = masterPlaylist({ lines: [
+  '#EXTM3U', '#EXT-X-VERSION:4',
+  '#EXT-X-MEDIA:URI="CMAF_AUDIO_64.m3u8",TYPE=AUDIO,GROUP-ID="6",NAME="audio 0",DEFAULT=YES,AUTOSELECT=YES',
+  '#EXT-X-MEDIA:URI="CMAF_AUDIO_128.m3u8",TYPE=AUDIO,GROUP-ID="7",NAME="audio 0",DEFAULT=YES,AUTOSELECT=YES',
+  '#EXT-X-STREAM-INF:BANDWIDTH=4331012,RESOLUTION=1920x1080,FRAME-RATE=30,CODECS="avc1.640028,mp4a.40.2",AUDIO="7"', 'CMAF_1080.m3u8',
+  '#EXT-X-STREAM-INF:BANDWIDTH=2271415,RESOLUTION=1280x720,FRAME-RATE=30,CODECS="avc1.4d401f,mp4a.40.2",AUDIO="6"', 'CMAF_720.m3u8',
+  '#EXT-X-STREAM-INF:BANDWIDTH=2340050,RESOLUTION=1280x720,FRAME-RATE=30,CODECS="avc1.4d401f,mp4a.40.2",AUDIO="7"', 'CMAF_720.m3u8'
+] });
+
+// a 1080p video resource far larger than the 720p one (same duration), plus the shared audio
+function budgetFiles() {
+  const big = videoSpec({ width: 96, height: 72 });
+  big.samples = big.samples.map((s) => ({ ...s, size: 600 }));
+  const v1080 = buildFmp4(big);
+  const v720 = buildFmp4(videoSpec());
+  const a = buildFmp4(audioSpec());
+  const files = standardFiles(v720, a, { master: MASTER_1080 });
+  files['/x1/CMAF_1080.m3u8'] = { body: mediaPlaylist(v1080, 'CMAF_1080.mp4'), type: 'application/x-mpegurl' };
+  files['/x1/CMAF_1080.mp4'] = { body: v1080.bytes, type: 'video/mp4' };
+  return { v1080, v720, a, files };
+}
+const paths = (server) => server.calls.map((c) => c.pathname.replace('/x1/', ''));
+
+test('R1 the best layout wins when it fits: 1080p is assembled with the default budget and nothing lower is looked at', async () => {
+  const { v1080, a, files } = budgetFiles();
+  const server = makeServer(files);
+  const result = await H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: server.fetchImpl });
+  await assertOutput(result, v1080, a, '1080 fits');
+  assert.deepEqual(paths(server), ['HLSPlaylist.m3u8', 'CMAF_1080.m3u8', 'CMAF_AUDIO_128.m3u8', 'CMAF_1080.mp4', 'CMAF_AUDIO_128.mp4']);
+});
+
+test('R1 an oversized 1080p resource falls back to the complete 720p + declared audio layout; the 1080p body is never fetched', async () => {
+  const { v1080, v720, a, files } = budgetFiles();
+  assert.ok(v1080.bytes.length > v720.bytes.length + 8000, 'the fixture 1080p is the larger resource');
+  const server = makeServer(files);
+  const inputBytes = v720.bytes.length + a.bytes.length + 64;
+  const result = await H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: server.fetchImpl, limits: { inputBytes } });
+  await assertOutput(result, v720, a, '720 fallback');
+  assert.deepEqual(paths(server), ['HLSPlaylist.m3u8', 'CMAF_1080.m3u8', 'CMAF_AUDIO_128.m3u8', 'CMAF_720.m3u8', 'CMAF_720.mp4', 'CMAF_AUDIO_128.mp4'], 'the oversized layout is validated with its audio, each playlist once, no 1080p resource');
+});
+
+test('R1 aggregate overflow (video fits alone, video + audio does not) also falls back; the shared audio playlist is read once', async () => {
+  const { v1080, v720, a, files } = budgetFiles();
+  const server = makeServer(files);
+  const inputBytes = v1080.bytes.length + a.bytes.length - 1;
+  assert.ok(inputBytes >= v720.bytes.length + a.bytes.length, 'the 720p layout fits, the 1080p one overflows by one byte');
+  const result = await H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: server.fetchImpl, limits: { inputBytes } });
+  await assertOutput(result, v720, a, 'aggregate fallback');
+  assert.deepEqual(paths(server), ['HLSPlaylist.m3u8', 'CMAF_1080.m3u8', 'CMAF_AUDIO_128.m3u8', 'CMAF_720.m3u8', 'CMAF_720.mp4', 'CMAF_AUDIO_128.mp4']);
+});
+
+test('R1 when every supported layout is oversized: TOO_LARGE, no playlist read twice, no MP4 body fetched, assembler idle', async () => {
+  const { v720, a, files } = budgetFiles();
+  const server = makeServer(files);
+  await assert.rejects(H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: server.fetchImpl, limits: { inputBytes: v720.bytes.length + a.bytes.length - 1 } }), { code: 'TOO_LARGE' });
+  assert.ok(!paths(server).some((p) => p.endsWith('.mp4')), 'no media resource was requested');
+  const counts = {};
+  for (const p of paths(server)) counts[p] = (counts[p] || 0) + 1;
+  assert.ok(Object.values(counts).every((n) => n === 1), 'no playlist is fetched twice: ' + JSON.stringify(counts));
+  assert.equal(H.isAssembling(), false);
+});
+
+test('R1 only a byte-budget refusal permits a lower layout: encryption, HTTP, foreign, layout, timing and integrity failures are not masked', async () => {
+  const { v1080, a, files } = budgetFiles();
+  const lowerSeen = (server) => paths(server).some((p) => p === 'CMAF_720.m3u8' || p === 'CMAF_720.mp4');
+  const pl = (res, name, over) => ({ body: mediaPlaylist(res, name, over), type: 'application/x-mpegurl' });
+  const cases = [
+    ['encrypted 1080p playlist', { '/x1/CMAF_1080.m3u8': pl(v1080, 'CMAF_1080.mp4', { extra: ['#EXT-X-KEY:METHOD=AES-128,URI="https://v.redd.it/x1/k"'] }) }, 'UNSUPPORTED_ENCRYPTED', undefined],
+    ['1080p playlist HTTP 403', { '/x1/CMAF_1080.m3u8': { body: '', type: 'application/x-mpegurl', status: 403 } }, 'HTTP_ERROR', undefined],
+    ['1080p playlist is not finite', { '/x1/CMAF_1080.m3u8': pl(v1080, 'CMAF_1080.mp4', { noEnd: true }) }, 'UNSUPPORTED_LAYOUT', undefined],
+    ['1080p resource of another asset', { '/x1/CMAF_1080.m3u8': pl(v1080, '/x2/CMAF_1080.mp4') }, 'FOREIGN_SOURCE', undefined],
+    ['1080p bad duration', { '/x1/CMAF_1080.m3u8': { body: mediaPlaylist(v1080, 'CMAF_1080.mp4').replace(/#EXTINF:[\d.]+,/, '#EXTINF:0,'), type: 'application/x-mpegurl' } }, 'UNSUPPORTED_TIMING', undefined],
+    ['1080p and audio playlists differ in length', { '/x1/CMAF_1080.m3u8': pl({ ...v1080, segments: v1080.segments.map((s) => ({ ...s, duration: s.duration + 2 })) }, 'CMAF_1080.mp4') }, 'INCOMPLETE', undefined],
+    ['too many segments (a layout bound, not bytes)', {}, 'TOO_LARGE', { maxSegments: 2 }],
+    ['the audio playlist is encrypted', { '/x1/CMAF_AUDIO_128.m3u8': pl(a, 'CMAF_AUDIO_128.mp4', { extra: ['#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://k"'] }) }, 'UNSUPPORTED_ENCRYPTED', undefined]
+  ];
+  for (const [name, patch, code, limits] of cases) {
+    const server = makeServer({ ...files, ...patch });
+    await assert.rejects(H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: server.fetchImpl, limits }), { code }, name);
+    assert.ok(!lowerSeen(server), `${name}: no lower layout was tried (${paths(server).join(', ')})`);
+    assert.equal(H.isAssembling(), false, name);
+  }
+  // a media body failure of the chosen layout is final: no body is downloaded again, no other layout is fetched
+  for (const [name, vFile, code] of [['1080p body HTTP 403', { status: 403 }, 'HTTP_ERROR'], ['1080p body truncated', { length: v1080.bytes.length - 5 }, 'INCOMPLETE']]) {
+    const server = makeServer({ ...files, '/x1/CMAF_1080.mp4': { ...files['/x1/CMAF_1080.mp4'], ...vFile } });
+    await assert.rejects(H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: server.fetchImpl }), { code }, name);
+    assert.equal(paths(server).filter((p) => p.endsWith('.mp4')).length, 1, `${name}: one body request at most`);
+    assert.ok(!lowerSeen(server), name);
+  }
+});
+
+test('R1 a better variant without its declared audio rendition is a layout error, never replaced silently; layout order is stable', async () => {
+  const noAudio = masterPlaylist({ lines: [
+    '#EXTM3U',
+    '#EXT-X-MEDIA:URI="CMAF_AUDIO_128.m3u8",TYPE=AUDIO,GROUP-ID="7",NAME="audio 0",DEFAULT=YES',
+    '#EXT-X-STREAM-INF:BANDWIDTH=4331012,RESOLUTION=1920x1080,CODECS="avc1.640028,mp4a.40.2",AUDIO="9"', 'CMAF_1080.m3u8',
+    '#EXT-X-STREAM-INF:BANDWIDTH=2340050,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2",AUDIO="7"', 'CMAF_720.m3u8'
+  ] });
+  const { files } = budgetFiles();
+  const server = makeServer({ ...files, '/x1/HLSPlaylist.m3u8': { body: noAudio, type: 'application/x-mpegurl' } });
+  await assert.rejects(H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: server.fetchImpl }), { code: 'UNSUPPORTED_LAYOUT' });
+  assert.deepEqual(paths(server), ['HLSPlaylist.m3u8']);
+  const ranked = H.rankLayouts(H.parseMasterPlaylist(MASTER_1080));
+  assert.deepEqual(ranked.map((l) => [l.video.uri, l.audio.uri]), [['CMAF_1080.m3u8', 'CMAF_AUDIO_128.m3u8'], ['CMAF_720.m3u8', 'CMAF_AUDIO_128.m3u8'], ['CMAF_720.m3u8', 'CMAF_AUDIO_64.m3u8']], 'resolution, then bandwidth; one entry per video + audio playlist pair');
+  assert.deepEqual(H.selectLayout(H.parseMasterPlaylist(MASTER_1080)), ranked[0]);
+});
+
+// R1-F1: a byte overflow is judged only after the candidate layout is fully valid. The better layout is oversized AND invalid in the same time; the lower
+// layout's playlist answers 404, so a fallback to it would hide the real error behind HTTP_ERROR 404.
+test('R1-F1 oversized + invalid is never a fallback: foreign resource, overlap, total duration, encrypted or failed audio, foreign audio, pair duration; no lower layout, no media body', async () => {
+  const { v1080, v720, a, files } = budgetFiles();
+  delete files['/x1/CMAF_720.m3u8']; // the lower layout is unreadable: reaching it would turn every case into HTTP_ERROR 404
+  const inputBytes = v720.bytes.length + a.bytes.length + 64; // the 1080p resource is oversized in every case
+  const pl = (res, name, over) => ({ body: mediaPlaylist(res, name, over), type: 'application/x-mpegurl' });
+  const longer = (extra) => ({ ...v1080, segments: v1080.segments.map((s) => ({ ...s, duration: s.duration + extra })) });
+  const overlapping = { ...v1080, segments: [...v1080.segments.slice(0, -1), { ...v1080.segments.at(-1), offset: v1080.segments.at(-2).offset + 1 }] };
+  const cases = [
+    ['a foreign-asset resource', { '/x1/CMAF_1080.m3u8': pl(v1080, '/x2/CMAF_1080.mp4') }, 'FOREIGN_SOURCE', {}],
+    ['a resource that is another kind of file', { '/x1/CMAF_1080.m3u8': pl(v1080, 'CMAF_1080.m3u8') }, 'FOREIGN_SOURCE', {}],
+    ['overlapping ranges after the oversized one', { '/x1/CMAF_1080.m3u8': pl(overlapping, 'CMAF_1080.mp4') }, 'UNSUPPORTED_LAYOUT', {}],
+    ['a total duration beyond the bound', { '/x1/CMAF_1080.m3u8': pl(longer(1), 'CMAF_1080.mp4') }, 'UNSUPPORTED_TIMING', { maxDurationSeconds: 3 }],
+    ['an encrypted audio playlist', { '/x1/CMAF_AUDIO_128.m3u8': pl(a, 'CMAF_AUDIO_128.mp4', { extra: ['#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://k"'] }) }, 'UNSUPPORTED_ENCRYPTED', {}],
+    ['a failed audio playlist', { '/x1/CMAF_AUDIO_128.m3u8': { body: '', type: 'application/x-mpegurl', status: 403 } }, 'HTTP_ERROR', {}],
+    ['an audio resource of another asset', { '/x1/CMAF_AUDIO_128.m3u8': pl(a, '/x2/CMAF_AUDIO_128.mp4') }, 'FOREIGN_SOURCE', {}],
+    ['a video/audio pair of different length', { '/x1/CMAF_1080.m3u8': pl(longer(2), 'CMAF_1080.mp4') }, 'INCOMPLETE', {}]
+  ];
+  for (const [name, patch, code, limits] of cases) {
+    const server = makeServer({ ...files, ...patch });
+    await assert.rejects(H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: server.fetchImpl, limits: { inputBytes, ...limits } }), { code }, name);
+    assert.ok(!paths(server).includes('CMAF_720.m3u8'), `${name}: the lower layout was not inspected (${paths(server).join(', ')})`);
+    assert.ok(!paths(server).some((p) => p.endsWith('.mp4')), `${name}: no media body was requested`);
+    assert.equal(H.isAssembling(), false, name);
+  }
+});
+
+test('R1-F1 a valid oversized layout still falls back, and a lower layout that is itself oversized or invalid is judged the same way', async () => {
+  const { v720, a, files } = budgetFiles();
+  const inputBytes = v720.bytes.length + a.bytes.length + 64;
+  // valid + oversized: fallback to the lower complete layout (the existing behavior)
+  const ok = await H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: makeServer(files).fetchImpl, limits: { inputBytes } });
+  await assertOutput(ok, v720, a, 'valid fallback');
+  // the lower layout is invalid (a foreign resource): that error ends the save, no media body requested
+  const bad = makeServer({ ...files, '/x1/CMAF_720.m3u8': { body: mediaPlaylist(v720, '/x2/CMAF_720.mp4'), type: 'application/x-mpegurl' } });
+  await assert.rejects(H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: bad.fetchImpl, limits: { inputBytes } }), { code: 'FOREIGN_SOURCE' });
+  assert.ok(!paths(bad).some((p) => p.endsWith('.mp4')));
+  // every layout oversized but valid: TOO_LARGE with only playlists requested
+  const all = makeServer(files);
+  await assert.rejects(H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: all.fetchImpl, limits: { inputBytes: 100 } }), { code: 'TOO_LARGE' });
+  assert.ok(!paths(all).some((p) => p.endsWith('.mp4')));
 });
 
 // =============================================================================================================================================

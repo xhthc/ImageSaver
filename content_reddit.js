@@ -969,18 +969,28 @@
         const clickedSrc = message.clickedSrc || '';
         const isFresh = (Date.now() - lastContextmenuTime) < 15000;
         let candidateDesc = null;
+        let selectedPlayer = null;
+        let connectedPath = [];
 
-        if (isFresh && lastContextmenuTarget && lastContextmenuTarget.isConnected !== false) {
-          const connectedPath = Array.isArray(lastContextmenuPath)
+        const freshTarget = Boolean(isFresh && lastContextmenuTarget && lastContextmenuTarget.isConnected !== false);
+        if (freshTarget) {
+          connectedPath = Array.isArray(lastContextmenuPath)
             ? lastContextmenuPath.filter(el => el && el.isConnected !== false)
             : [];
           candidateDesc = findRedditDirectMediaForBlob(lastContextmenuTarget, connectedPath, clickedSrc);
           if (!candidateDesc) {
             const found = findRedditMediaFromTargetAndPath(lastContextmenuTarget, connectedPath, lastContextmenuPoint);
-            if (found && found.url && !found.url.startsWith('blob:')) {
+            // a manifest address is a stream, never a direct file: it falls through to the stream the selected player declares
+            if (found && found.url && !found.url.startsWith('blob:') && !isManifestAddress(found.url)) {
               candidateDesc = found;
             }
           }
+          // the player of the fresh, connected selection (a stale or detached selection owns nothing), never one reached through a seek preview
+          const picked = lastContextmenuTarget.closest?.('shreddit-player') ||
+            connectedPath.find((el) => el && String(el.tagName).toUpperCase() === 'SHREDDIT-PLAYER') || null;
+          if (picked && picked.isConnected !== false && !isPreviewVideo(lastContextmenuTarget, connectedPath) &&
+              !lastContextmenuTarget.closest?.(PREVIEW_VIDEO_HOSTS) &&
+              !connectedPath.some((el) => el && PREVIEW_VIDEO_TAGS.includes(String(el.tagName).toUpperCase()))) selectedPlayer = picked;
         }
 
         if (candidateDesc && candidateDesc.url && !candidateDesc.url.startsWith('blob:')) {
@@ -995,21 +1005,23 @@
             }
           });
         } else {
-          const selectedPlayer = lastContextmenuTarget?.closest?.('shreddit-player') ||
-            (Array.isArray(lastContextmenuPath) ? lastContextmenuPath.find((el) => el && String(el.tagName).toUpperCase() === 'SHREDDIT-PLAYER') : null) || null;
           const stream = declaredStreamOf(selectedPlayer);
-          if (stream && stream.saveable) {
+          // Chrome's own address of the clicked video: a blob (the player's MediaSource) or the master itself. A master must be the very address this
+          // player declares now (a neighbour's, a replaced player's or another query is not the selected one); the player's declared address is used.
+          const sameAddress = (a, b) => { try { return new URL(a).href === new URL(b).href; } catch (_) { return false; } };
+          const addressClicked = Boolean(clickedSrc) && !clickedSrc.startsWith('blob:');
+          if (stream && stream.saveable && (!addressClicked || sameAddress(clickedSrc, stream.url))) {
             sendResponse({ success: true, hls: { url: stream.url }, diagnostics: { streamType: 'hls', targetFound: true } });
             return true;
           }
           const isDashAddress = (u) => manifestKindOfAddress(u) === 'dash';
-          let isDash = Boolean(
-            isDashAddress(lastContextmenuTarget?.closest?.('shreddit-player')?.getAttribute?.('stream-url')) ||
-            isDashAddress(lastContextmenuTarget?.closest?.('shreddit-player')?.getAttribute?.('src')) ||
+          let isDash = Boolean(freshTarget && (
+            isDashAddress(selectedPlayer?.getAttribute?.('stream-url')) ||
+            isDashAddress(selectedPlayer?.getAttribute?.('src')) ||
             isDashAddress(lastContextmenuTarget?.getAttribute?.('src'))
-          );
-          if (!isDash && Array.isArray(lastContextmenuPath)) {
-            for (const el of lastContextmenuPath) {
+          ));
+          if (!isDash && freshTarget) {
+            for (const el of connectedPath) {
               const streamUrl = el?.getAttribute?.('stream-url') || '';
               const src = el?.getAttribute?.('src') || '';
               if (isDashAddress(streamUrl) || isDashAddress(src)) {
@@ -1021,7 +1033,7 @@
           sendResponse({
             success: false,
             error: 'UNRESOLVED_BLOB_MEDIA',
-            reason: isDash ? 'UNSUPPORTED_DASH_STREAM' : (stream ? 'UNSUPPORTED_STREAM' : 'NO_DIRECT_MEDIA_FOUND'),
+            reason: isDash ? 'UNSUPPORTED_DASH_STREAM' : (stream && !(stream.saveable && addressClicked) ? 'UNSUPPORTED_STREAM' : 'NO_DIRECT_MEDIA_FOUND'),
             diagnostics: {
               targetFound: Boolean(lastContextmenuTarget),
               isConnected: lastContextmenuTarget ? lastContextmenuTarget.isConnected !== false : false,
