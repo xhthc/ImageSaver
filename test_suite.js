@@ -135,7 +135,12 @@ globalThis.convertRedditVideoToGifBlob = typeof convertRedditVideoToGifBlob !== 
 globalThis.executeRedditGifDownload = typeof executeRedditGifDownload !== 'undefined' ? executeRedditGifDownload : undefined;
 globalThis.lastDetectedRedditMediaByTab = typeof lastDetectedRedditMediaByTab !== 'undefined' ? lastDetectedRedditMediaByTab : undefined;
 globalThis.validateRedditCandidateUrl = typeof validateRedditCandidateUrl !== 'undefined' ? validateRedditCandidateUrl : undefined;
-globalThis.resolveRedditFrameBlobMedia = typeof resolveRedditFrameBlobMedia !== 'undefined' ? resolveRedditFrameBlobMedia : undefined;`;
+globalThis.resolveRedditFrameBlobMedia = typeof resolveRedditFrameBlobMedia !== 'undefined' ? resolveRedditFrameBlobMedia : undefined;
+globalThis.resolvePawchiveOriginalPlan = resolvePawchiveOriginalPlan;
+globalThis.parsePawchiveMediaUrl = parsePawchiveMediaUrl;
+globalThis.parsePawchivePostUrl = parsePawchivePostUrl;
+globalThis.fetchPawchivePostHtml = typeof fetchPawchivePostHtml !== 'undefined' ? fetchPawchivePostHtml : undefined;
+globalThis.parsePawchivePostHtml = typeof parsePawchivePostHtml !== 'undefined' ? parsePawchivePostHtml : undefined;`;
 
 // Подготавливаем окружение с моками Chrome API
 const downloadedCalls = [];
@@ -463,6 +468,7 @@ const sandbox = {
   setTimeout: setTimeout,
   clearTimeout: clearTimeout,
   AbortController: global.AbortController,
+  TextDecoder: global.TextDecoder,
   fetch: async (url, opts) => {
     const urlStr = url.toString();
     // Мок Pixiv Ajax API
@@ -32314,6 +32320,272 @@ async function runTests() {
       sandbox.window.location = prevLocation;
       sandbox.console.warn = prevWarn;
       sandbox.console.log = prevLog;
+    }
+  }
+
+
+  // ── Тест 265: SITE-PAWCHIVE-01 — originals from Pawchive previews (captured layout of /fanbox/user/37736420, post 12637115) ──
+  {
+    console.log('\n--- Тест 265: Pawchive originals from previews (SITE-PAWCHIVE-01) ---');
+    const prevFetch = sandbox.fetch;
+    const prevWarn = sandbox.console.warn;
+    try {
+      sandbox.console.warn = () => {};
+      const SVC = 'fanbox';
+      const USER = '37736420';
+      const POST = '12637115';
+      const POST_URL = `https://pawchive.pw/${SVC}/user/${USER}/post/${POST}`;
+      const CREATOR_URL = `https://pawchive.pw/${SVC}/user/${USER}`;
+      const COVER_HASH = '9b31b482bbffa165a89bf936e21d34c5af64dd4a481eb2f30a2af3dfd106e0b2';
+      const VIDEO_HASH = 'cdb118ca3f778185baaee9c934d54dd991de5b0c06d7b054c762c81edb6b1904';
+      const OTHER_HASH = 'a45baf5db6ce7a9e70c1ddbb05dcab152150dda285add9bb964847f41552ed85';
+      const thumb = (h, ext = 'jpeg') => `https://img.pawchive.pw/thumbnail/data/${h.slice(0, 2)}/${h.slice(2, 4)}/${h}.${ext}`;
+      const file = (h, ext, q) => `https://file.pawchive.pw/data/${h.slice(0, 2)}/${h.slice(2, 4)}/${h}.${ext}${q ? '?f=' + q : ''}`;
+      const COVER_THUMB = thumb(COVER_HASH);
+      const COVER = file(COVER_HASH, 'jpeg', 'cover.jpeg');
+      const VIDEO = file(VIDEO_HASH, 'mp4', '0001_3.mp4');
+
+      // the layout of the captured post page, reduced to what carries media: meta identity, .post__videos, .post__attachments, .post__files a.fileThumb
+      const esc = (s) => s.replace(/&/g, '&amp;');
+      const postHtml = ({ id = POST, videos = [VIDEO], attachments = [VIDEO], covers = [{ href: COVER, thumb: COVER_THUMB }], canonical = POST_URL, meta = true, videoHtml = null } = {}) => `<!DOCTYPE html><html><head>
+  ${meta ? `<meta name="service" content="${SVC}"> <meta name="id" content="${id}"> <meta name="user" content="${USER}">` : ''}
+  <link rel="canonical" href="${canonical}"></head><body>
+  <ul class="post__videos" style="text-align: center;">${videoHtml !== null ? videoHtml : videos.map((v) => `<li><summary>v</summary><video id="kemono-player0" controls class="post__video"><source src="${esc(v)}" type="video/mp4"/></video></li>`).join('')}</ul>
+  <h2>Downloads</h2><ul class="post__attachments">${attachments.map((a) => `<li class="post__attachment"><a class="post__attachment-link" href="${esc(a)}" download="x">Download</a></li>`).join('')}</ul>
+  <h2>Files</h2><div class="post__files">${covers.map((c) => `<div class="post__thumbnail"><figure><a class="fileThumb" href="${esc(c.href)}" download="cover.jpeg"><img data-src="${c.thumb}" src="${c.thumb}"></a></figure></div>`).join('')}</div>
+  </body></html>`;
+
+      let calls = [];
+      let routes = {};
+      const mk = (status, headers, text) => ({ ok: status >= 200 && status < 300, status, type: 'basic', redirected: false, headers: new Map(Object.entries(headers || {})), text: async () => text || '' });
+      sandbox.fetch = async (url, opts) => {
+        const u = typeof url === 'string' ? url : (url?.url || '');
+        calls.push({ url: u, method: (opts && opts.method) || 'GET', redirect: opts && opts.redirect, credentials: opts && opts.credentials });
+        const r = routes[u];
+        if (typeof r === 'function') return r(opts);
+        if (r) return r;
+        return mk(404, { 'content-type': 'text/html' }, 'not found');
+      };
+      const media = (type, len = 1000) => mk(200, { 'content-type': type, 'content-length': String(len) });
+      const html = (text, extra = {}) => mk(200, { 'content-type': 'text/html; charset=utf-8', ...extra }, text);
+      const reset = (r) => { calls = []; routes = r; sandbox.resetActiveOffscreenTasks(0); };
+      const click = async (info) => {
+        const before = downloadedCalls.length;
+        await mockChrome.contextMenus._handler({ menuItemId: 'save-image-item', ...info }, { id: 265001 });
+        return downloadedCalls.slice(before);
+      };
+      const plan = (info) => sandbox.resolveOriginalMediaPlan(info);
+      const fileCalls = () => calls.filter((c) => c.url.includes('file.pawchive.pw'));
+      const imgCalls = () => calls.filter((c) => c.url.includes('img.pawchive.pw'));
+
+      // 265.1: the feed card selects its post's single video; the cover (different hash) and the thumbnail are never saved or probed
+      reset({ [POST_URL]: html(postHtml()), [VIDEO]: media('video/mp4', 37711544), [COVER]: media('image/jpeg', 149899), [COVER_THUMB]: media('image/jpeg', 31190) });
+      let dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+      assert(dl.length === 1 && dl[0].url === VIDEO && /\.mp4$/.test(dl[0].filename), '265.1: Карточка ленты → единственное видео поста с точным query и расширением .mp4: ' + JSON.stringify(dl.map((d) => [d.url, d.filename])));
+      assert(calls.length === 2 && calls[0].url === POST_URL && calls[1].url === VIDEO && calls[1].method === 'HEAD', '265.1b: запросы — страница поста и HEAD видео; нет 20 догадок, нет обложки и превью: ' + JSON.stringify(calls.map((c) => c.method + ' ' + c.url.slice(-40))));
+      assert(calls[0].credentials === 'omit' && calls[0].redirect === 'manual', '265.1c: страница поста запрашивается без cookies и без редиректов');
+
+      // 265.2: identical declarations (source + attachment, listed twice) are one video
+      reset({ [POST_URL]: html(postHtml({ videos: [VIDEO, VIDEO], attachments: [VIDEO, VIDEO] })), [VIDEO]: media('video/mp4') });
+      dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+      assert(dl.length === 1 && dl[0].url === VIDEO, '265.2: Одинаковые объявления видео сведены к одному');
+
+      // 265.3: explicit cover (link to the original of the same hash) → that image, no post page request
+      reset({ [COVER]: media('image/jpeg', 149899), [POST_URL]: html(postHtml()), [VIDEO]: media('video/mp4') });
+      dl = await click({ srcUrl: COVER_THUMB, pageUrl: POST_URL, linkUrl: COVER });
+      assert(dl.length === 1 && dl[0].url === COVER && /\.jpe?g$/.test(dl[0].filename) && calls.length === 1 && calls[0].url === COVER, '265.3: Явная обложка (fileThumb) → её оригинал, видео не выбирается: ' + JSON.stringify(calls.map((c) => c.url.slice(-30))));
+
+      // 265.4: a thumbnail inside the post page without a file link → exactly that image (never the video)
+      reset({ [POST_URL]: html(postHtml()), [COVER]: media('image/jpeg'), [VIDEO]: media('video/mp4') });
+      dl = await click({ srcUrl: COVER_THUMB, pageUrl: POST_URL, linkUrl: null });
+      assert(dl.length === 1 && dl[0].url === COVER && !calls.some((c) => c.url === VIDEO), '265.4: Превью внутри страницы поста → именно это изображение');
+
+      // 265.5: an image-only post: the card selects its uniquely associated image
+      const IMG_HASH = 'a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f';
+      const IMG = file(IMG_HASH, 'png', 'art.png');
+      reset({ [POST_URL]: html(postHtml({ videos: [], attachments: [], covers: [{ href: IMG, thumb: thumb(IMG_HASH, 'png') }] })), [IMG]: media('image/png', 5000) });
+      dl = await click({ srcUrl: thumb(IMG_HASH, 'png'), pageUrl: CREATOR_URL, linkUrl: POST_URL });
+      assert(dl.length === 1 && dl[0].url === IMG && /\.png$/.test(dl[0].filename), '265.5: Пост только с изображением → его оригинал (png) по однозначной связи');
+
+      // 265.6: direct original image: exactly the clicked address (query kept), no guessed twins
+      reset({ [COVER]: media('image/jpeg', 149899) });
+      dl = await click({ srcUrl: COVER, pageUrl: POST_URL, linkUrl: null });
+      assert(dl.length === 1 && dl[0].url === COVER && calls.length === 1, '265.6: Прямое изображение file.pawchive.pw сохраняется как есть, без догадок');
+
+      // 265.7: refusals — nothing is downloaded, the thumbnail and the cover are never used as a fallback
+      const refusals = [
+        ['две разные видеозаписи', { [POST_URL]: html(postHtml({ videos: [VIDEO, file(OTHER_HASH, 'mp4', 'b.mp4')], attachments: [] })) }, {}],
+        ['видео объявлено с чужого хоста', { [POST_URL]: html(postHtml({ videos: ['https://file.evil.example/data/cd/b1/' + VIDEO_HASH + '.mp4?f=x'], attachments: [] })) }, {}],
+        ['вложение-видео с относительным адресом', { [POST_URL]: html(postHtml({ videos: [], attachments: ['/data/cd/b1/' + VIDEO_HASH + '.mp4'] })) }, {}],
+        ['пост другого id в метаданных', { [POST_URL]: html(postHtml({ id: '999' })) }, {}],
+        ['canonical другого поста', { [POST_URL]: html(postHtml({ canonical: `https://pawchive.pw/${SVC}/user/${USER}/post/777` })) }, {}],
+        ['нет метаданных поста', { [POST_URL]: html(postHtml({ meta: false })) }, {}],
+        ['превью другого поста', { [POST_URL]: html(postHtml()) }, { srcUrl: thumb(OTHER_HASH) }],
+        ['ссылка на оригинал другого актива', { [COVER]: media('image/jpeg') }, { srcUrl: thumb(OTHER_HASH), linkUrl: COVER }],
+        ['ссылка не на пост Pawchive', { [POST_URL]: html(postHtml()) }, { linkUrl: 'https://evil.example/fanbox/user/37736420/post/12637115' }],
+        ['страница не HTML', { [POST_URL]: mk(200, { 'content-type': 'application/json' }, '{}') }, {}],
+        ['страница больше предела (заголовок)', { [POST_URL]: html(postHtml(), { 'content-length': '2000000' }) }, {}],
+        ['страница больше предела (тело)', { [POST_URL]: html('<html>' + 'x'.repeat(1024 * 1024 + 10)) }, {}],
+        ['редирект страницы', { [POST_URL]: mk(301, { location: 'https://evil.example/' }, '') }, {}],
+        ['страница, перенаправленная браузером', { [POST_URL]: { ...html(postHtml()), redirected: true } }, {}],
+        ['оригинал отдаёт не видео', { [POST_URL]: html(postHtml()), [VIDEO]: media('image/jpeg') }, {}],
+        ['оригинал — HTML', { [POST_URL]: html(postHtml()), [VIDEO]: media('text/html') }, {}],
+        ['пост без видео и без своего изображения', { [POST_URL]: html(postHtml({ videos: [], attachments: [], covers: [] })) }, {}]
+      ];
+      for (const [name, r, over] of refusals) {
+        reset(r);
+        const info = { srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL, ...over };
+        const p = await plan(info);
+        const d = await click(info);
+        assert(p === null && d.length === 0, '265.7: Отказ — ' + name + ': ни загрузки, ни превью/обложки/догадок: ' + JSON.stringify({ p: p && p.primaryUrl, d: d.map((x) => x.url) }));
+        assert(!imgCalls().length && !calls.some((c) => c.url === COVER && c.method === 'GET') && calls.length <= 4, '265.7b: ' + name + ': нет запросов превью/догадок: ' + JSON.stringify(calls.map((c) => c.method + ' ' + c.url.slice(-45))));
+      }
+
+      // 265.8: HTTP statuses of the post page and of the original are reported as they are; the preview is never the answer
+      const statusCases = [[401, 'AUTH_REQUIRED'], [403, 'AUTH_REQUIRED'], [429, 'RATE_LIMIT'], [404, 'NOT_FOUND']];
+      for (const [status, err] of statusCases) {
+        reset({ [POST_URL]: mk(status, { 'content-type': 'text/html' }, 'x') });
+        let p = await plan({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+        assert(p && p.error === err && p._verificationStatus === status && p.score === 0, `265.8a: Страница поста HTTP ${status} → ${err}: ${JSON.stringify(p && [p.error, p._verificationStatus])}`);
+        reset({ [POST_URL]: html(postHtml()), [VIDEO]: mk(status, { 'content-type': 'video/mp4' }) });
+        p = await plan({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+        assert(p && p.error === err && p._verificationStatus === status && p.score === 0, `265.8b: Видео HTTP ${status} → ${err}, а не обложка и не превью`);
+        dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+        assert(dl.length === 0 && !calls.some((c) => c.url === COVER || c.url === COVER_THUMB), `265.8c: HTTP ${status}: ничего не скачано, обложка не запрашивалась`);
+      }
+      reset({ [POST_URL]: mk(500, { 'content-type': 'text/html' }, 'x') });
+      assert((await plan({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL })) === null, '265.8d: HTTP 500 страницы поста — отказ без фолбэка');
+
+      // 265.9: not Pawchive / not a Pawchive media address: the resolver stays out of the way
+      for (const src of ['https://example.com/a.jpg', 'https://img.pawchive.pw/icons/fanbox/37736420', 'https://img.pawchive.pw/thumbnail/data/zz/yy/notahash.jpeg', 'https://img.pawchive.pw.evil.example/thumbnail/data/9b/31/' + COVER_HASH + '.jpeg', 'http://img.pawchive.pw/thumbnail/data/9b/31/' + COVER_HASH + '.jpeg', 'https://img.pawchive.pw/thumbnail/data/aa/bb/' + COVER_HASH + '.jpeg']) {
+        assert((await sandbox.resolvePawchiveOriginalPlan({ srcUrl: src, pageUrl: CREATOR_URL, linkUrl: POST_URL })) === undefined, '265.9: не обрабатывается Pawchive-резолвером: ' + src.slice(0, 70));
+      }
+      assert(sandbox.parsePawchivePostUrl('https://pawchive.pw.evil.example/fanbox/user/1/post/2') === null && sandbox.parsePawchivePostUrl('http://pawchive.pw/fanbox/user/1/post/2') === null && sandbox.parsePawchivePostUrl('https://pawchive.pw/fanbox/user/1') === null, '265.9b: адрес поста — только https://pawchive.pw/<service>/user/<id>/post/<id>');
+      assert(sandbox.parsePawchiveMediaUrl('https://file.pawchive.pw/data/9b/31/' + COVER_HASH + '.jpeg#x') === null && sandbox.parsePawchiveMediaUrl('https://u:p@file.pawchive.pw/data/9b/31/' + COVER_HASH + '.jpeg') === null && sandbox.parsePawchiveMediaUrl('https://file.pawchive.pw/data/9b/31/' + COVER_HASH + '.jpeg?f=cover.jpeg').url.endsWith('?f=cover.jpeg'), '265.9c: адрес медиа — точный хост, без учётных данных и фрагмента, query сохранён');
+
+      // 265.10: an ordinary non-Pawchive save is untouched by the resolver (generic pipeline, no Pawchive requests)
+      reset({ 'https://example.com/photo.jpg': media('image/jpeg', 90000) });
+      dl = await click({ srcUrl: 'https://example.com/photo.jpg', pageUrl: 'https://example.com/', linkUrl: null });
+      assert(dl.length === 1 && dl[0].url === 'https://example.com/photo.jpg' && !calls.some((c) => /pawchive/.test(c.url)), '265.10: Обычное изображение сохраняется как раньше');
+
+      const routedFetch = sandbox.fetch;
+      // ── F1 (a): the post-page transfer ends on every exit. A streamed body (getReader/cancel) and its request signal are observed; text()-only mocks cannot see this.
+      const streamed = ({ status = 200, headers = { 'content-type': 'text/html; charset=utf-8' }, chunks = [], type = 'basic', redirected = false, failAfter = null } = {}) => {
+        const probe = { signal: null, bodyCancelled: false, readerCancelled: false, reads: 0 };
+        const response = () => {
+          let i = 0;
+          const body = {
+            locked: false,
+            cancel: async () => { probe.bodyCancelled = true; },
+            getReader() {
+              body.locked = true;
+              return {
+                read: async () => {
+                  probe.reads++;
+                  if (failAfter !== null && i >= failAfter) throw new Error('stream failed');
+                  return i < chunks.length ? { done: false, value: chunks[i++] } : { done: true };
+                },
+                cancel: async () => { probe.readerCancelled = true; }
+              };
+            }
+          };
+          return { ok: status >= 200 && status < 300, status, type, redirected, headers: new Map(Object.entries(headers)), body };
+        };
+        return { probe, fetch: async (_u, opts) => { probe.signal = opts.signal; return response(); } };
+      };
+      const enc = new TextEncoder();
+      const runStream = async (spec) => {
+        const m = streamed(spec);
+        sandbox.fetch = m.fetch;
+        const result = await sandbox.fetchPawchivePostHtml(POST_URL);
+        return { result, ...m.probe };
+      };
+      const terminated = (r) => r.signal && r.signal.aborted === true;
+      let r = await runStream({ headers: { 'content-type': 'video/mp4' }, chunks: [enc.encode('x')] });
+      assert(r.result.refused === true && terminated(r) && r.bodyCancelled && r.reads === 0, '266.1: Не HTML — отказ, запрос прерван, тело отменено, ничего не прочитано: ' + JSON.stringify(r.result));
+      r = await runStream({ headers: { 'content-type': 'text/html', 'content-length': '2000000' }, chunks: [enc.encode('x')] });
+      assert(r.result.refused === true && terminated(r) && r.bodyCancelled && r.reads === 0, '266.2: Content-Length выше предела — отказ без чтения, запрос прерван, тело отменено');
+      r = await runStream({ status: 503, chunks: [enc.encode('x')] });
+      assert(r.result.status === 503 && terminated(r) && r.bodyCancelled, '266.3: HTTP 503 — статус сохранён, запрос прерван, тело отменено');
+      r = await runStream({ status: 302, headers: { 'content-type': 'text/html', location: 'https://evil.example/' }, chunks: [enc.encode('x')] });
+      assert(r.result.refused === true && terminated(r) && r.bodyCancelled, '266.4: Редирект 302 — отказ, запрос прерван, тело отменено');
+      r = await runStream({ type: 'opaqueredirect', status: 0, chunks: [] });
+      assert(r.result.refused === true && terminated(r) && r.bodyCancelled, '266.4b: opaqueredirect — отказ, запрос прерван');
+      r = await runStream({ redirected: true, chunks: [enc.encode('<html></html>')] });
+      assert(r.result.refused === true && terminated(r) && r.bodyCancelled, '266.4c: redirected — отказ, запрос прерван');
+      const big = new Uint8Array(600 * 1024).fill(97);
+      r = await runStream({ chunks: [big, big, big, big] });
+      assert(r.result.refused === true && terminated(r) && r.readerCancelled && r.reads === 2, '266.5: Тело без Content-Length сверх 1 MiB — чтение остановлено на втором куске, читатель отменён, запрос прерван: reads=' + r.reads);
+      r = await runStream({ chunks: [enc.encode('<html>'), enc.encode('</html>')], failAfter: 1 });
+      assert(r.result.refused === true && terminated(r), '266.6: Ошибка потока посреди чтения — отказ, запрос прерван');
+      r = await runStream({ chunks: [enc.encode('<html>'), enc.encode('ok</html>')] });
+      assert(r.result.html === '<html>ok</html>' && terminated(r), '266.7: Полное чтение — страница получена, транспорт освобождён');
+      sandbox.fetch = async () => { throw new TypeError('network'); };
+      assert((await sandbox.fetchPawchivePostHtml(POST_URL)).refused === true, '266.8: Сетевая ошибка — отказ');
+      sandbox.fetch = routedFetch;
+
+      // ── F1 (b): a <video> that is present must declare a usable video; a contradiction is a refusal, never an image-only post
+      const noVideoPlan = async (name, over) => {
+        reset({ [POST_URL]: html(postHtml(over)), [VIDEO]: media('video/mp4'), [COVER]: media('image/jpeg', 149899) });
+        const info = { srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL };
+        const p = await plan(info);
+        const d = await click(info);
+        assert(p === null && d.length === 0 && !calls.some((c) => c.url === COVER), '267: ' + name + ' — отказ, обложка не сохраняется и не запрашивается: ' + JSON.stringify({ p: p && p.primaryUrl, d: d.map((x) => x.url), calls: calls.map((c) => c.method + ' ' + c.url.slice(-40)) }));
+      };
+      const SRC_TYPE = (src, type) => `<li><video id="kemono-player0" controls class="post__video"><source src="${esc(src)}" type="${type}"/></video></li>`;
+      await noVideoPlan('source — JPEG-обложка с type video/mp4, без вложения (захваченная страница с подменой)', { videos: [COVER], attachments: [] });
+      await noVideoPlan('то же, но вложение остаётся', { videos: [COVER], attachments: [VIDEO] });
+      await noVideoPlan('video без source и без src', { videoHtml: '<li><video id="kemono-player0" controls class="post__video"></video></li>', attachments: [] });
+      await noVideoPlan('source без src', { videoHtml: '<li><video controls><source type="video/mp4"/></video></li>', attachments: [] });
+      await noVideoPlan('source с мусорным src', { videoHtml: SRC_TYPE('not a url', 'video/mp4'), attachments: [] });
+      await noVideoPlan('source с пустым src', { videoHtml: SRC_TYPE('', 'video/mp4'), attachments: [] });
+      await noVideoPlan('source видео-расширения, но type image/jpeg', { videoHtml: SRC_TYPE(VIDEO, 'image/jpeg'), attachments: [VIDEO] });
+      await noVideoPlan('source с адресом .jpeg и type image/jpeg внутри video', { videoHtml: SRC_TYPE(COVER, 'image/jpeg'), attachments: [] });
+      await noVideoPlan('video с неподдерживаемым расширением', { videoHtml: SRC_TYPE(file(VIDEO_HASH, 'bin', 'x.bin'), 'video/mp4'), attachments: [] });
+      // what stays: the captured valid MP4, a WebM, a post whose videos list is present but empty (image-only), explicit cover
+      reset({ [POST_URL]: html(postHtml()), [VIDEO]: media('video/mp4') });
+      dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+      assert(dl.length === 1 && dl[0].url === VIDEO, '267.1: Захваченный корректный MP4 по-прежнему выбирается точным адресом');
+      const WEBM = file(VIDEO_HASH, 'webm', 'clip.webm');
+      reset({ [POST_URL]: html(postHtml({ videoHtml: SRC_TYPE(WEBM, 'video/webm'), attachments: [] })), [WEBM]: media('video/webm') });
+      dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+      assert(dl.length === 1 && dl[0].url === WEBM, '267.2: Корректный WebM принимается');
+      reset({ [POST_URL]: html(postHtml({ videoHtml: '', attachments: [] })), [COVER]: media('image/jpeg', 149899) });
+      dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+      assert(dl.length === 1 && dl[0].url === COVER, '267.3: Пост с пустым списком видео и своей обложкой — по-прежнему изображение');
+      reset({ [COVER]: media('image/jpeg', 149899), [POST_URL]: html(postHtml({ videos: [COVER], attachments: [] })) });
+      dl = await click({ srcUrl: COVER_THUMB, pageUrl: POST_URL, linkUrl: COVER });
+      assert(dl.length === 1 && dl[0].url === COVER && calls.length === 1, '267.4: Явный выбор обложки не зависит от страницы поста и по-прежнему сохраняет изображение');
+
+      // ── F2 (SITE-PAWCHIVE-01 F2-01): every <video> declares a usable video itself; one valid player elsewhere does not prove the media set
+      const GOOD = SRC_TYPE(VIDEO, 'video/mp4');
+      const NO_SRC_VIDEO = '<li><video controls class="post__video"></video></li>';
+      const NO_SRC_SOURCE = '<li><video controls class="post__video"><source type="video/mp4"/></video></li>';
+      await noVideoPlan('F2: рабочий плеер, затем video без src', { videoHtml: GOOD + NO_SRC_VIDEO });
+      await noVideoPlan('F2: video без src, затем рабочий плеер', { videoHtml: NO_SRC_VIDEO + GOOD });
+      await noVideoPlan('F2: рабочий плеер, затем source без src во втором video', { videoHtml: GOOD + NO_SRC_SOURCE });
+      await noVideoPlan('F2: source без src во втором video, затем рабочий плеер', { videoHtml: NO_SRC_SOURCE + GOOD });
+      await noVideoPlan('F2: рабочий плеер и source без src вне video', { videoHtml: GOOD + '<source type="video/mp4"/>' });
+      await noVideoPlan('F2: рабочий плеер, второй плеер с мусорным src', { videoHtml: GOOD + SRC_TYPE('not a url', 'video/mp4') });
+      await noVideoPlan('F2: рабочий плеер, второй плеер с JPEG-обложкой', { videoHtml: GOOD + SRC_TYPE(COVER, 'video/mp4') });
+      const retained = [
+        ['один плеер: два одинаковых source', { videoHtml: `<li><video controls><source src="${esc(VIDEO)}" type="video/mp4"/><source src="${esc(VIDEO)}" type="video/mp4"/></video></li>`, attachments: [] }],
+        ['два плеера с одним и тем же адресом (src на video и в source)', { videoHtml: `<li><video controls src="${esc(VIDEO)}"></video></li>` + GOOD }],
+        ['src прямо на video', { videoHtml: `<li><video controls src="${esc(VIDEO)}"></video></li>`, attachments: [] }],
+        ['source внутри video (захваченная форма)', { videoHtml: GOOD }],
+        ['один плеер: рабочий source и source без src', { videoHtml: `<li><video controls><source type="video/mp4"/><source src="${esc(VIDEO)}" type="video/mp4"/></video></li>`, attachments: [] }]
+      ];
+      for (const [name, over] of retained) {
+        reset({ [POST_URL]: html(postHtml(over)), [VIDEO]: media('video/mp4') });
+        dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+        assert(dl.length === 1 && dl[0].url === VIDEO && !calls.some((c) => c.url === COVER), '267.F2: Принимается — ' + name + ': ' + JSON.stringify(dl.map((d) => d.url)));
+      }
+      // two distinct resolved players are still ambiguous, not "the first"
+      reset({ [POST_URL]: html(postHtml({ videoHtml: GOOD + SRC_TYPE(file(OTHER_HASH, 'mp4', 'b.mp4'), 'video/mp4'), attachments: [] })), [VIDEO]: media('video/mp4') });
+      assert((await plan({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL })) === null, '267.F2b: Два разных рабочих плеера — по-прежнему отказ');
+    } finally {
+      sandbox.fetch = prevFetch;
+      sandbox.console.warn = prevWarn;
     }
   }
 

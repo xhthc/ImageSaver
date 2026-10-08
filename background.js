@@ -7625,6 +7625,254 @@ async function resolveMediaTarget(options = {}) {
   };
 }
 
+// ---- SITE-PAWCHIVE-01: originals from Pawchive previews ----------------------------------------------------------------------------------------------
+// A creator-feed card shows img.pawchive.pw/thumbnail/data/aa/bb/<sha256>.<ext>; the post page (https://pawchive.pw/<service>/user/<id>/post/<id>) declares
+// the originals on file.pawchive.pw/data/aa/bb/<sha256>.<ext>?f=<name>: a video in .post__videos and .post__attachments, the cover in a.fileThumb. The
+// video and its cover have different hashes, so no address can be derived from the thumbnail. Rules: a card's post link selects the post's single distinct
+// video (its cover only when the post has no video); a link to an original, or a thumbnail inside a post page, selects exactly that image; ambiguity,
+// a mismatch, foreign metadata or an unusable original is a refusal, never the thumbnail, never a guessed path.
+const PAWCHIVE_HTML_MAX_BYTES = 1024 * 1024;
+const PAWCHIVE_HTML_TIMEOUT_MS = 8000;
+const PAWCHIVE_VIDEO_EXTS = new Set(['mp4', 'webm', 'm4v', 'mov', 'mkv', 'avi']);
+const PAWCHIVE_IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif']);
+
+// kind 'thumb' (img.pawchive.pw/thumbnail/data/...) or 'file' (file.pawchive.pw/data/...): exact host, https, no credentials or port, aa/bb = the hash start
+function parsePawchiveMediaUrl(raw, base) {
+  if (typeof raw !== 'string' || !raw || raw.length > 2048 || /\s/.test(raw)) return null;
+  let u;
+  try { u = new URL(raw, base); } catch (_) { return null; }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port || u.hash) return null;
+  const host = u.hostname.toLowerCase();
+  const m = u.pathname.match(/^\/(thumbnail\/)?data\/([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})\.([A-Za-z0-9]{1,5})$/);
+  if (!m || (m[1] ? host !== 'img.pawchive.pw' : host !== 'file.pawchive.pw')) return null;
+  if (m[4].slice(0, 2) !== m[2] || m[4].slice(2, 4) !== m[3]) return null;
+  return { kind: m[1] ? 'thumb' : 'file', hash: m[4], ext: m[5].toLowerCase(), url: raw };
+}
+
+function parsePawchivePostUrl(raw, base) {
+  if (typeof raw !== 'string' || !raw || raw.length > 2048) return null;
+  let u;
+  try { u = new URL(raw, base); } catch (_) { return null; }
+  if (u.protocol !== 'https:' || u.hostname.toLowerCase() !== 'pawchive.pw' || u.username || u.password || u.port) return null;
+  const m = u.pathname.match(/^\/([a-z0-9_-]{1,32})\/user\/([A-Za-z0-9_-]{1,64})\/post\/([A-Za-z0-9_-]{1,64})\/?$/);
+  return m ? { service: m[1], user: m[2], id: m[3], url: `https://pawchive.pw/${m[1]}/user/${m[2]}/post/${m[3]}` } : null;
+}
+
+const decodePawchiveAttr = (s) => String(s).replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (all, e) => {
+  const k = e.toLowerCase();
+  if (k === 'amp') return '&';
+  if (k === 'quot') return '"';
+  if (k === 'apos') return "'";
+  if (k === 'lt') return '<';
+  if (k === 'gt') return '>';
+  const code = k[1] === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
+  return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : all;
+});
+const pawchiveAttr = (tag, name) => {
+  const m = new RegExp(`\\s${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'i').exec(tag);
+  return m ? decodePawchiveAttr(m[2] !== undefined ? m[2] : m[3]) : null;
+};
+
+// One bounded GET of the post page: no cookies, no redirect, HTML only, at most PAWCHIVE_HTML_MAX_BYTES within PAWCHIVE_HTML_TIMEOUT_MS.
+// Resolves { html } or { status } (an HTTP answer that is not 2xx) or { refused: true }. Every exit (answer, refusal, error, timeout) ends the transfer:
+// an unread or partly read body is cancelled and the request is aborted, so a refused page is never left streaming.
+async function fetchPawchivePostHtml(postUrl) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PAWCHIVE_HTML_TIMEOUT_MS);
+  let res = null;
+  try {
+    res = await fetch(postUrl, { method: 'GET', credentials: 'omit', redirect: 'manual', headers: { Accept: 'text/html' }, signal: controller.signal });
+    if (!res || res.type === 'opaqueredirect' || res.redirected || (res.status >= 300 && res.status < 400)) return { refused: true };
+    if (!res.ok) return { status: res.status };
+    if (!/^(text\/html|application\/xhtml\+xml)\b/i.test(res.headers.get('content-type') || '')) return { refused: true };
+    const declared = parseInt(res.headers.get('content-length') || '', 10);
+    if (declared > PAWCHIVE_HTML_MAX_BYTES) return { refused: true };
+    if (res.body && typeof res.body.getReader === 'function') {
+      const reader = res.body.getReader();
+      const chunks = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > PAWCHIVE_HTML_MAX_BYTES) { try { await reader.cancel(); } catch (_) {} return { refused: true }; }
+        chunks.push(value);
+      }
+      const all = new Uint8Array(total);
+      let at = 0;
+      for (const c of chunks) { all.set(c, at); at += c.byteLength; }
+      return { html: new TextDecoder('utf-8').decode(all) };
+    }
+    const text = await res.text();
+    return text.length > PAWCHIVE_HTML_MAX_BYTES ? { refused: true } : { html: text };
+  } catch (_) {
+    return { refused: true };
+  } finally {
+    clearTimeout(timer);
+    try { if (res && res.body && !res.body.locked && typeof res.body.cancel === 'function') await res.body.cancel(); } catch (_) {}
+    controller.abort();
+  }
+}
+
+// What the post page declares about itself and its media. Anything that does not fit the layout makes the whole page unusable (refused), so that a
+// foreign or malformed declaration can never leave a different, unrelated original as the "only" candidate.
+// -> { videos: [url], images: [{ url, hash, thumbHash }] } (deduplicated by exact address) or null
+function parsePawchivePostHtml(html, post) {
+  const meta = (name) => { const m = new RegExp(`<meta\\b[^>]*\\sname\\s*=\\s*"${name}"[^>]*>`, 'i').exec(html); return m ? pawchiveAttr(m[0], 'content') : null; };
+  if (meta('service') !== post.service || meta('user') !== post.user || meta('id') !== post.id) return null;
+  const canonical = /<link\b[^>]*\srel\s*=\s*"canonical"[^>]*>/i.exec(html);
+  if (canonical) {
+    const c = parsePawchivePostUrl(pawchiveAttr(canonical[0], 'href') || '', post.url);
+    if (!c || c.url !== post.url) return null;
+  }
+  const region = (marker, close) => {
+    const at = html.search(new RegExp(`class\\s*=\\s*"[^"]*\\b${marker}\\b`, 'i'));
+    if (at < 0) return '';
+    const end = html.indexOf(close, at);
+    return html.slice(at, end < 0 ? html.length : end);
+  };
+  const videos = [];
+  const images = [];
+  let unusable = false;
+  // true when the address is accepted as a video of the page
+  const declare = (raw, role) => {
+    const p = parsePawchiveMediaUrl(raw, post.url);
+    let ext = '';
+    try { ext = ((new URL(raw, post.url).pathname.match(/\.([A-Za-z0-9]{1,5})$/) || [])[1] || '').toLowerCase(); } catch (_) {}
+    const mediaLike = role !== 'attachment' || PAWCHIVE_VIDEO_EXTS.has(ext) || PAWCHIVE_IMAGE_EXTS.has(ext);
+    if (!p || p.kind !== 'file') { if (mediaLike) unusable = true; return false; }
+    if (PAWCHIVE_VIDEO_EXTS.has(p.ext)) { if (!videos.includes(p.url)) videos.push(p.url); return true; }
+    // a video element or source never declares an image: that contradiction makes the page unusable instead of an image-only post
+    if (role === 'video') { unusable = true; return false; }
+    if (PAWCHIVE_IMAGE_EXTS.has(p.ext)) { if (!images.some((i) => i.url === p.url)) images.push({ url: p.url, hash: p.hash, thumbHash: null }); }
+    else if (role !== 'attachment') unusable = true;
+    return false;
+  };
+  // Every <video> must declare a usable video of its own (src on it or on one of its <source> children, of a video type): a player left unresolved makes
+  // the page unusable, whatever other players declare. Several sources of one player may repeat a video; a <source> outside a <video> is a player by itself.
+  let player = null;
+  const players = [];
+  for (const tag of region('post__videos', '</ul>').match(/<\/?(?:source|video)\b[^>]*>/gi) || []) {
+    if (tag[1] === '/') { player = null; continue; }
+    const isVideo = /^<video\b/i.test(tag);
+    if (isVideo || !player) { player = { resolved: false }; players.push(player); }
+    const type = pawchiveAttr(tag, 'type');
+    if (type && !/^video\//i.test(type.trim())) unusable = true;
+    const src = pawchiveAttr(tag, 'src');
+    if (src && declare(src, 'video')) player.resolved = true;
+  }
+  if (players.some((pl) => !pl.resolved)) unusable = true;
+  for (const tag of region('post__attachments', '</ul>').match(/<a\b[^>]*>/gi) || []) {
+    const href = pawchiveAttr(tag, 'href');
+    if (href) declare(href, 'attachment');
+  }
+  const files = region('post__files', '</section>');
+  const anchors = files.match(/<a\b[^>]*\sclass\s*=\s*"[^"]*\bfileThumb\b[^"]*"[^>]*>(?:(?!<\/a>)[\s\S])*/gi) || [];
+  for (const block of anchors) {
+    const href = pawchiveAttr(/^<a\b[^>]*>/i.exec(block)[0], 'href');
+    if (!href) continue;
+    declare(href, 'file');
+    const img = /<img\b[^>]*>/i.exec(block);
+    const th = img ? parsePawchiveMediaUrl(pawchiveAttr(img[0], 'data-src') || pawchiveAttr(img[0], 'src') || '', post.url) : null;
+    const entry = images.find((i) => i.url === href);
+    if (entry && th && th.kind === 'thumb') entry.thumbHash = th.hash;
+  }
+  return unusable ? null : { videos, images };
+}
+
+// Verifies the exact declared original with the shared probe: a real response of the expected kind, or a failure that is reported as it is.
+// -> { plan } for a verified group, { fail: plan } for a refusal that carries a status, or { refused: true }
+async function probePawchiveOriginal(parsed, postUrl, srcUrl) {
+  const isVideo = PAWCHIVE_VIDEO_EXTS.has(parsed.ext);
+  const probe = { url: parsed.url, source: 'specialized_provider', finalScore: 96, baseScore: 96, rawWidth: 0, rawHeight: 0, allowVideo: isVideo, isBooruCandidate: isVideo, verified: false, contentLength: 0, contentType: '', status: 0 };
+  const ok = await probeCandidate(probe);
+  if (!ok) {
+    const status = probe.status;
+    if (status === 429 || status === 401 || status === 403 || status === 404 || status === 410) {
+      return { fail: adaptCandidateToGroup({
+        url: srcUrl, source: 'initial_src', tier: 'preview', score: 0, _rateLimited: status === 429, _verificationStatus: status,
+        error: status === 429 ? 'RATE_LIMIT' : (status === 404 || status === 410 ? 'NOT_FOUND' : 'AUTH_REQUIRED')
+      }) };
+    }
+    return { refused: true };
+  }
+  const mime = String(probe.contentType || '').split(';')[0].trim().toLowerCase();
+  if (!(isVideo ? mime.startsWith('video/') : mime.startsWith('image/'))) return { refused: true };
+  const group = createCandidateGroup({
+    id: `pawchive_original_${parsed.hash}`,
+    source: 'specialized_provider',
+    provider: 'pawchive',
+    tier: 'original',
+    score: 96,
+    validationMode: 'probe',
+    transport: 'direct',
+    variants: [{ url: parsed.url, expectedExtension: `.${parsed.ext}`, verified: true, verifiedUrl: parsed.url, mimeEvidence: MIME_EVIDENCE.HTTP_RESPONSE, contentType: mime, contentLength: probe.contentLength }],
+    metadata: { verified: true, verifiedUrl: parsed.url, mimeEvidence: MIME_EVIDENCE.HTTP_RESPONSE, contentType: mime, contentLength: probe.contentLength, mediaType: isVideo ? 'video' : 'image', hash: parsed.hash, postUrl: postUrl || '' }
+  });
+  group.verified = true;
+  if (isVideo) group.allowVideo = true;
+  return { plan: group };
+}
+
+/**
+ * The Pawchive resolver of resolveOriginalMediaPlan. Handles exactly the selections whose clicked address is a Pawchive thumbnail or original:
+ * returns undefined when the selection is not one (the generic pipeline continues), otherwise a verified original plan, an error plan (HTTP 401/403/404/429
+ * of the post page or the original) or null (refused: ambiguous, mismatched, foreign, malformed, unusable). It never returns the clicked thumbnail.
+ */
+async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl }) {
+  const clicked = parsePawchiveMediaUrl(srcUrl, pageUrl || undefined);
+  if (!clicked) return undefined;
+  const refuse = (why) => { console.warn('[Image Saver] Pawchive: сохранение оригинала отклонено (' + why + '):', sanitizeUrlForLog(srcUrl)); return null; };
+
+  // the selection is itself an original: exactly that address
+  if (clicked.kind === 'file') {
+    const out = await probePawchiveOriginal(clicked, '', srcUrl);
+    return out.plan || out.fail || refuse('original');
+  }
+
+  // a link to an original of the same hash selects that original; a link to another asset is a mismatched selection
+  const linkedFile = linkUrl ? parsePawchiveMediaUrl(linkUrl, pageUrl || undefined) : null;
+  if (linkedFile) {
+    if (linkedFile.kind !== 'file' || linkedFile.hash !== clicked.hash) return refuse('link of another asset');
+    const out = await probePawchiveOriginal(linkedFile, '', srcUrl);
+    return out.plan || out.fail || refuse('original');
+  }
+
+  // otherwise the post decides: the card's own post link (a feed preview), or the post page the thumbnail is shown in (an image inside the post)
+  const linkedPost = linkUrl ? parsePawchivePostUrl(linkUrl, pageUrl || undefined) : null;
+  const pagePost = pageUrl ? parsePawchivePostUrl(pageUrl) : null;
+  const post = linkedPost || pagePost;
+  if (!post) return refuse('no post');
+  const fetched = await fetchPawchivePostHtml(post.url);
+  if (fetched.status !== undefined) {
+    const status = fetched.status;
+    if (status === 429 || status === 401 || status === 403 || status === 404 || status === 410) {
+      return adaptCandidateToGroup({ url: srcUrl, source: 'initial_src', tier: 'preview', score: 0, _rateLimited: status === 429, _verificationStatus: status, error: status === 429 ? 'RATE_LIMIT' : (status === 404 || status === 410 ? 'NOT_FOUND' : 'AUTH_REQUIRED') });
+    }
+    return refuse('post page HTTP ' + status);
+  }
+  if (!fetched.html) return refuse('post page');
+  const declared = parsePawchivePostHtml(fetched.html, post);
+  if (!declared) return refuse('post identity or declarations');
+  // the selected preview must be one of this post's own images (its cover)
+  const mine = declared.images.filter((i) => i.hash === clicked.hash || i.thumbHash === clicked.hash);
+  if (mine.length === 0) return refuse('preview is not of this post');
+
+  let chosen = null;
+  if (linkedPost) {
+    // a feed card: the post's single video; its cover only for a post without a video
+    if (declared.videos.length > 1) return refuse('several videos');
+    if (declared.videos.length === 1) chosen = parsePawchiveMediaUrl(declared.videos[0], post.url);
+    else if (mine.length === 1) chosen = parsePawchiveMediaUrl(mine[0].url, post.url);
+  } else if (mine.length === 1) {
+    // a thumbnail inside the post page itself: that image
+    chosen = parsePawchiveMediaUrl(mine[0].url, post.url);
+  }
+  if (!chosen) return refuse('ambiguous');
+  const out = await probePawchiveOriginal(chosen, post.url, srcUrl);
+  return out.plan || out.fail || refuse('original');
+}
+
 /**
  * Universal candidate resolution pipeline returning a structured CandidateGroup (Resolution Plan).
  * Supports Candidate Groups with variant failover policies, provenance scoring, and deferred validation.
@@ -7816,6 +8064,10 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
     await flashBadge('ERR', '#ef4444');
     return null;
   }
+
+  // SITE-PAWCHIVE-01: a Pawchive thumbnail or original is resolved by the post that declares it (no speculative probes, no thumbnail fallback)
+  const pawchivePlan = await resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl });
+  if (pawchivePlan !== undefined) return pawchivePlan;
 
   // 1. Initial source URL
   if (srcUrl) {
