@@ -53,7 +53,8 @@ try {
   fs.mkdirSync(directory, { recursive: true });
   const archive = path.join(directory, name + '.zip');
   const names = [...files.keys()].sort();
-  git('archive', '--format=zip', '--output=' + archive, source, '--', ...names);
+  // Archive committed bytes even when the user's Windows checkout converts text to CRLF.
+  git('-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'archive', '--format=zip', '--output=' + archive, source, '--', ...names);
   const archiveHash = hash(fs.readFileSync(archive));
   const metadata = {
     source_commit: source, manifest_version: manifest.version, archive: path.basename(archive), sha256: archiveHash,
