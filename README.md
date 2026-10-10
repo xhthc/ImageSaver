@@ -4,7 +4,7 @@
 
 MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**. Source discovery starts after you choose Save; the menu title stays fixed.
 
-> **Preview status:** the published **v2.0.0.25** download still uses the **Image Saver** name and Russian interface. MediaLatch branding and the English / Русский language selector are prepared for the next release.
+> **Current preview: [v2.0.0.26](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.26).** Includes the MediaLatch name/logo and a persistent English / Русский interface choice. Existing preferences and save folders stay compatible with Image Saver.
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
@@ -34,7 +34,7 @@ Kemono, Sankaku and broader booru compatibility need further integration and liv
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. The current preview is `ImageSaver-2.0.0.25-98bca837dbd4.zip`; future renamed packages use `MediaLatch-*.zip`. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.26-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -44,15 +44,19 @@ Alternatively, clone and load the repository root:
 git clone https://github.com/xhthc/MediaLatch.git
 ```
 
+To update an unpacked installation, replace the files in its existing folder, then click **Reload** on the browser's extensions page and refresh site tabs. Keep the same folder to retain the extension's identity and settings.
+
 The committed `popup/` pages are ready to use. Node/npm are needed only for development. Unpacked installs update manually; store updates will be a separate distribution path.
 
 ## Use and settings
 
-Right-click an image, video or supported post preview and select **Save media** from the extension's context-menu item: **Image Saver: Save media** in the current preview, **MediaLatch: Save media** in the renamed build. On X, Shift + right-click can open the browser menu when the site handles right-click itself.
+Right-click an image, video or supported post preview and select **MediaLatch: Save media**. On X, Shift + right-click can open the browser menu when the site handles right-click itself.
 
 The toolbar popup shows recent results. Its full page contains history, saving preferences, notifications, link settings and release checks. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
 
-**In the next release:** choose **Language** at the top of the full page to switch between English and Russian. The saved choice applies immediately to extension pages, notifications and inline buttons. With no saved choice, a Russian browser uses Russian; other browsers use English. The menu title stays **MediaLatch: Save media** in both languages. Renaming preserves existing preferences and save folders.
+Choose **Language** at the top of the full page to switch between English and Russian. The saved choice applies immediately to extension pages, notifications and inline buttons. With no saved choice, a Russian browser uses Russian; other browsers use English. The menu title stays **MediaLatch: Save media** in both languages. Renaming preserves existing preferences and save folders.
+
+To discover this preview in **Updates**, set **Update channel** to **Regular and beta releases**, or download it directly from Releases. Unpacked installations update manually.
 
 Paths are relative to the browser's Downloads directory. Arbitrary drive paths and author folders are planned. The browser owns ordinary transfers; eligible `NETWORK_FAILED` downloads get one native resume attempt.
 

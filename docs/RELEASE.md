@@ -35,7 +35,7 @@ Privacy URL: https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md
 
 Support URL: https://github.com/xhthc/MediaLatch/issues
 
-The current source has an English / Русский interface choice with persistent preferences, translated notifications and inline labels. The first public preview predates localization and the MediaLatch branding; publish a reviewed build before using this listing.
+The v2.0.0.26 preview includes MediaLatch branding and an English / Русский interface choice with persistent preferences, translated notifications and inline labels. It remains an early preview; store submission and the broader browser/site matrix are separate gates.
 
 ## Permission and privacy disclosures
 

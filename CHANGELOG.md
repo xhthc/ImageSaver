@@ -1,12 +1,15 @@
 # Changelog
 
-## Unreleased
+## 2.0.0.26 — MediaLatch and English / Russian
 
-- Rename the product and repository to MediaLatch with a new M/download mark; keep existing preferences and save folders compatible. Future runtime assets use the MediaLatch prefix.
+- Rename the product and repository to MediaLatch with a new M/download mark; keep existing preferences and save folders compatible. Runtime assets use the MediaLatch prefix.
 - Add a persistent English / Russian interface choice across extension pages, notifications and inline labels.
 - Keep the context-menu action fixed as MediaLatch: Save media; original discovery still starts after choosing it.
 
-The first public preview below retains its original Image Saver name and asset names. These changes are local and have not been published in a new release.
+- Fix stale inline translations, language-change write races and repeated RedGIFs subscriptions; keep compact Russian save-all labels within their existing width.
+- Update release checks and current project links after the repository rename.
+
+The first public preview below retains its original Image Saver name and asset names.
 
 ## 2.0.0.25 — first public preview
 
