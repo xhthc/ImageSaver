@@ -1,10 +1,12 @@
-<p align="center"><img src="docs/assets/banner.svg" alt="Image Saver — save available originals" width="880"></p>
+<p align="center"><img src="docs/assets/banner.svg" alt="MediaLatch — save available originals" width="880"></p>
 
-<p align="center"><a href="README.ru.md">Русский</a> · <a href="https://github.com/xhthc/ImageSaver/releases">Downloads</a> · <a href="docs/PRIVACY.md">Privacy</a> · <a href="LICENSE">GPL-3.0</a></p>
+<p align="center"><a href="README.ru.md">Русский</a> · <a href="https://github.com/xhthc/MediaLatch/releases">Downloads</a> · <a href="docs/PRIVACY.md">Privacy</a> · <a href="LICENSE">GPL-3.0</a></p>
 
-Image Saver is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Image Saver: Save media**. Source discovery runs after that click, so the menu title stays predictable.
+MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**. Source discovery starts after you choose Save; the menu title stays fixed.
 
-**Early release:** tested primarily in Helium on Windows. Site layouts and access rules change; support is specific to the paths below. Firefox and Chrome Web Store distribution are planned.
+> **Preview status:** the published **v2.0.0.25** download still uses the **Image Saver** name and Russian interface. MediaLatch branding and the English / Русский language selector are prepared for the next release.
+
+Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
 ## Features
 
@@ -32,23 +34,25 @@ Kemono, Sankaku and broader booru compatibility need further integration and liv
 
 ## Install
 
-1. Download the **ImageSaver-*.zip runtime asset** from [Releases](https://github.com/xhthc/ImageSaver/releases) and extract it. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. The current preview is `ImageSaver-2.0.0.25-98bca837dbd4.zip`; future renamed packages use `MediaLatch-*.zip`. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
 Alternatively, clone and load the repository root:
 
 ```bash
-git clone https://github.com/xhthc/ImageSaver.git
+git clone https://github.com/xhthc/MediaLatch.git
 ```
 
 The committed `popup/` pages are ready to use. Node/npm are needed only for development. Unpacked installs update manually; store updates will be a separate distribution path.
 
 ## Use and settings
 
-Right-click an image, video or supported post preview and select **Image Saver: Save media**. On X, Shift + right-click can open the browser menu when the site handles right-click itself.
+Right-click an image, video or supported post preview and select **Save media** from the extension's context-menu item: **Image Saver: Save media** in the current preview, **MediaLatch: Save media** in the renamed build. On X, Shift + right-click can open the browser menu when the site handles right-click itself.
 
 The toolbar popup shows recent results. Its full page contains history, saving preferences, notifications, link settings and release checks. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
+
+**In the next release:** choose **Language** at the top of the full page to switch between English and Russian. The saved choice applies immediately to extension pages, notifications and inline buttons. With no saved choice, a Russian browser uses Russian; other browsers use English. The menu title stays **MediaLatch: Save media** in both languages. Renaming preserves existing preferences and save folders.
 
 Paths are relative to the browser's Downloads directory. Arbitrary drive paths and author folders are planned. The browser owns ordinary transfers; eligible `NETWORK_FAILED` downloads get one native resume attempt.
 
@@ -62,7 +66,7 @@ There is no telemetry or extension backend. History is off by default; reports a
 
 ## Roadmap
 
-These capabilities are planned and are **not in this release**:
+These capabilities are planned and are **not in the published preview**:
 
 - Integrate Kemono originals; expand Sankaku, booru and generic resolver coverage.
 - Tiny universal inline controls and optional post/media multi-selection.
