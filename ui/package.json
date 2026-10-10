@@ -2,7 +2,7 @@
   "name": "image-saver-ui",
   "private": true,
   "version": "0.0.0",
-  "description": "UI-only development build of the Image Saver extension pages. Output is committed to ../popup so the extension loads without a build.",
+  "description": "UI-only development build of the MediaLatch extension pages. Output is committed to ../popup so the extension loads without a build.",
   "type": "module",
   "scripts": {
     "build": "vite build",

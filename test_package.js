@@ -51,6 +51,7 @@ try {
   const run = () => spawnSync(process.execPath, ['tools/package.mjs', 'HEAD'], { cwd: root, encoding: 'utf8' });
   const ok = run(); assert.equal(ok.status, 0, ok.stderr);
   const output = JSON.parse(ok.stdout);
+  assert.equal(path.basename(output.archive), `MediaLatch-${manifest.version}-${source.slice(0, 12)}.zip`);
   const metadata = JSON.parse(fs.readFileSync(output.archive.replace(/\.zip$/, '.json')));
   assert.equal(metadata.source_commit, source);
   assert.equal(metadata.sha256, sha(fs.readFileSync(output.archive)));

@@ -48,7 +48,7 @@ try {
       }
     }
   }
-  const name = `ImageSaver-${manifest.version}-${source.slice(0, 12)}`;
+  const name = `MediaLatch-${manifest.version}-${source.slice(0, 12)}`;
   const directory = path.join(root, 'local-notes', 'releases');
   fs.mkdirSync(directory, { recursive: true });
   const archive = path.join(directory, name + '.zip');

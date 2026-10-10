@@ -1482,8 +1482,8 @@
     const root = typeof host.attachShadow === 'function' ? host.attachShadow({ mode: 'closed' }) : host;
     const btn = document.createElement('button');
     btn.setAttribute('type', 'button');
-    isLabel(btn, 'aria-label', 'inline.saveClipAria', 'Image Saver: Save this clip');
-    isLabel(btn, 'title', 'inline.saveClipAria', 'Image Saver: Save this clip');
+    isLabel(btn, 'aria-label', 'inline.saveClipAria', 'MediaLatch: Save this clip');
+    isLabel(btn, 'title', 'inline.saveClipAria', 'MediaLatch: Save this clip');
     // the download icon and the single-button look of the X and Reddit inline controls (same path, colors and border), as a 32 px round button
     const icon = inlineIcon();
     if (icon) btn.appendChild(icon);

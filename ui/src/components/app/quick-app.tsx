@@ -26,7 +26,7 @@ export function QuickApp({ quick }: { quick: QuickController }) {
         <header className={empty ? "flex items-center gap-3" : "flex items-center gap-3 border-b pb-3"}>
           <BrandMark />
           <div className="min-w-0 flex-1">
-            <h1 className="text-base font-bold tracking-tight">Image Saver</h1>
+            <h1 className="text-base font-bold tracking-tight">MediaLatch</h1>
             {showList ? (
               <p className="text-xs text-muted-foreground" id="quickSubtitle">
                 {t("quick.recent")}

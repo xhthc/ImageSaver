@@ -569,7 +569,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     const rec = await env.last();
     const evil = '<img src=x onerror=alert(1)> https://evil.example/?token=NOTESECRET C:\\Users\\Ivan\\a.png ' + 'Z'.repeat(5000);
     const report = FBLib.buildReport(rec, { notes: evil, env: { version: '2.0.0', browser: 'Chromium 126' }, now: 1700000000000 });
-    assert(report.length <= FBLib.LIMITS.report && report.startsWith('Image Saver bug report'), '11a: report is bounded and starts with a title');
+    assert(report.length <= FBLib.LIMITS.report && report.startsWith('MediaLatch bug report'), '11a: report is bounded and starts with a title');
     assert(!/NOTESECRET|Ivan|ZZZZZZZZ|https?:\/\//.test(report), '11b: user notes are redacted (URLs, local paths, opaque strings) and bounded');
     assert(/correlation_id: op-/.test(report) && /extension_version: 2\.0\.0/.test(report) && /browser: Chromium 126/.test(report) && /timestamp: 2023-/.test(report), '11c: report has version, browser (when reliable), timestamp and correlation ID');
     assert(/http_status: (not observed|403)/.test(report) && /source_host: example\.com/.test(report) && !/example\.com\/i\//.test(report), '11d: status is observed-or-"not observed"; only the safe host is included');
@@ -623,7 +623,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
 
     const failedRec = ls.records.find((r) => present.hasReport(r));
     const rep0 = present.buildReportText(FBLib, failedRec, '', { version: list.env.version, browser: list.env.browser });
-    assert(rep0.startsWith('Image Saver bug report') && /browser: Chromium 126/.test(rep0) && FBLib.LIMITS.notes === 500, '12e: details build a report (with browser only when reliable) and notes are bounded');
+    assert(rep0.startsWith('MediaLatch bug report') && /browser: Chromium 126/.test(rep0) && FBLib.LIMITS.notes === 500, '12e: details build a report (with browser only when reliable) and notes are bounded');
     const rep1 = present.buildReportText(FBLib, failedRec, 'save fails <b>bold</b> https://x.test/?token=NOTE123', { version: list.env.version, browser: list.env.browser });
     assert(/user_notes: save fails/.test(rep1) && !/NOTE123|https?:/.test(rep1), '12f: reproduction notes enter the report and are redacted');
     await present.copyText(rep1, navi);

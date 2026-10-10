@@ -211,9 +211,9 @@
     if (typeof console !== 'undefined' && typeof console.debug === 'function') {
       try {
         if (details) {
-          console.debug(`[Image Saver Instagram] ${message}`, details);
+          console.debug(`[MediaLatch Instagram] ${message}`, details);
         } else {
-          console.debug(`[Image Saver Instagram] ${message}`);
+          console.debug(`[MediaLatch Instagram] ${message}`);
         }
       } catch (_) {}
     }
@@ -223,7 +223,7 @@
     if (typeof console !== 'undefined' && typeof console.warn === 'function') {
       try {
         const payload = { reason, ...(details || {}) };
-        console.warn(`[Image Saver Instagram] URL resolution rejected: ${reason}`, payload);
+        console.warn(`[MediaLatch Instagram] URL resolution rejected: ${reason}`, payload);
       } catch (_) {}
     }
   }
@@ -1050,7 +1050,7 @@
     wrap.className = 'image-saver-ig-copy-wrap';
     wrap.setAttribute('role', 'button');
     wrap.setAttribute('tabindex', '0');
-    isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
+    isLabel(wrap, 'title', 'inline.copyPost', 'MediaLatch: Скопировать ссылку на пост');
     isLabel(wrap, 'aria-label', 'inline.copyPostAria', 'Copy post link');
 
     // Layout detection: vertical Reel rail vs standard horizontal row
@@ -1107,7 +1107,7 @@
         wrap.setAttribute('data-diagnostic-clipboard', 'failure');
         wrap.setAttribute('data-diagnostic-method', 'none');
         wrap.classList.add('is-error');
-        isLabel(wrap, 'title', 'inline.postUnknown', 'Image Saver: Не удалось определить ссылку на пост');
+        isLabel(wrap, 'title', 'inline.postUnknown', 'MediaLatch: Не удалось определить ссылку на пост');
 
         const rejectionInfo = {
           hasCard: Boolean(liveCard),
@@ -1121,13 +1121,13 @@
 
         if (typeof console !== 'undefined' && typeof console.warn === 'function') {
           try {
-            console.warn('[Image Saver Instagram] Failed to resolve post/Reel share URL:', rejectionInfo);
+            console.warn('[MediaLatch Instagram] Failed to resolve post/Reel share URL:', rejectionInfo);
           } catch (_) {}
         }
 
         setTimeout(() => {
           wrap.classList.remove('is-error');
-          isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
+          isLabel(wrap, 'title', 'inline.copyPost', 'MediaLatch: Скопировать ссылку на пост');
         }, 2000);
         return;
       }
@@ -1185,7 +1185,7 @@
       wrap.setAttribute('data-diagnostic-clipboard', copied ? 'success' : 'failure');
       wrap.setAttribute('data-diagnostic-method', usedMethod);
       try {
-        console.debug('[Image Saver Instagram]', { hasCard: Boolean(liveCard), hasRail: Boolean(liveRail), urlResolved: true, copied, method: usedMethod });
+        console.debug('[MediaLatch Instagram]', { hasCard: Boolean(liveCard), hasRail: Boolean(liveRail), urlResolved: true, copied, method: usedMethod });
       } catch (_) {}
 
       if (copied) {
@@ -1195,7 +1195,7 @@
         setTimeout(() => {
           wrap.classList.remove('is-success');
           btn.innerHTML = SVG_LINK_ICON;
-          isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
+          isLabel(wrap, 'title', 'inline.copyPost', 'MediaLatch: Скопировать ссылку на пост');
         }, 1800);
       } else {
         wrap.classList.add('is-error');

@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Image Saver",
+  "name": "MediaLatch",
   "version": "2.0.0.25",
   "description": "Save available original images, videos and GIFs from the context menu, with selected site support and local save history.",
-  "homepage_url": "https://github.com/xhthc/ImageSaver",
+  "homepage_url": "https://github.com/xhthc/MediaLatch",
   "minimum_chrome_version": "120",
   "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
   "permissions": [
@@ -23,7 +23,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Image Saver",
+    "default_title": "MediaLatch",
     "default_icon": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png" },
     "default_popup": "popup/quick.html"
   },

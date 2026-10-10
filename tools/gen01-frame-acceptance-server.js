@@ -294,7 +294,7 @@ ${[1, 2, 3, 4].map((k) => `<img src="${ORIGIN}/b/gal-${k}.png" width="200" heigh
 <p>Open each saved video: C1/C2 must carry audio, C3 must not. Not covered (pending, out of scope): blob/MSE, HLS/DASH, DRM players.</p>`),
     '/css.html': page('GEN-01 CSS and overlay', `<style>.cbox{width:240px;height:160px;background-size:cover;border:1px solid #888}.ovc{position:relative;width:240px;height:160px}.ovc img{display:block;margin:0;border:0;width:240px;height:160px}.ov{position:absolute;left:0;top:0;width:240px;height:160px;display:block}.ovc .cbox{border:0}</style>
 <h3>CSS backgrounds and simple overlays</h3>
-<p>These have no image/video context in the native menu. Right-click, choose <b>Image Saver: Save media</b>. Reload the extension and refresh this page first (the capture script is injected at page load).</p>
+<p>These have no image/video context in the native menu. Right-click, choose <b>MediaLatch: Save media</b>. Reload the extension and refresh this page first (the capture script is injected at page load).</p>
 <div class="box"><b>CSS1/CSS2 two CSS cards (neighbours)</b><div class="row">
 <div><div class="cbox" style="background-image:url(${ORIGIN}/css/card-a.png)"></div>card A</div>
 <div><div class="cbox" style="background-image:url(${ORIGIN}/css/card-b.png)"></div>card B</div></div></div>
@@ -459,14 +459,14 @@ ${[1, 2, 3, 4].map((k) => `<img src="${ORIGIN}/b/gal-${k}.png" width="200" heigh
 <div class="box"><b>MS9 text link straight to a GIF file</b><a href="/anim-top.gif">Download the animation (a file)</a></div>
 <div class="box"><b>MS10 background card (type of its asset not known)</b><div class="cbox" style="background-image:url(/css/card-a.png)"></div></div>
 <table><tr><th>#</th><th>Right-click</th><th>Expected</th><th>Wrong</th></tr>
-<tr><td>MS1</td><td>the image</td><td>one item "Image Saver: Save media"; plain.png</td><td>any other title, a submenu</td></tr>
-<tr><td>MS2</td><td>the GIF</td><td>one item "Image Saver: Save media"; anim-top.gif (native, 3 frames)</td><td>any other title, a still frame</td></tr>
-<tr><td>MS3</td><td>the video</td><td>one item "Image Saver: Save media"; video-a.mp4</td><td>any other title, a poster</td></tr>
-<tr><td>MS4, MS7, MS8</td><td>the empty area, the sentence, the link text</td><td><b>no Image Saver item</b> in the menu</td><td>a greyed-out item</td></tr>
-<tr><td>MS5</td><td>inside the dashed empty container</td><td><b>no Image Saver item</b></td><td>any item (an empty container is not media)</td></tr>
-<tr><td>MS6</td><td>the video inside the shadow root</td><td>one item "Image Saver: Save media"; video-b.webm</td><td>no item (a real shadow-DOM player is a target)</td></tr>
-<tr><td>MS9</td><td>the link text</td><td>one item "Image Saver: Save media"; anim-top.gif</td><td>no item, any other title</td></tr>
-<tr><td>MS10</td><td>the card</td><td>one item "Image Saver: Save media" (the type of the asset is decided by the save, after the click); card-a.png</td><td>any other title</td></tr>
+<tr><td>MS1</td><td>the image</td><td>one item "MediaLatch: Save media"; plain.png</td><td>any other title, a submenu</td></tr>
+<tr><td>MS2</td><td>the GIF</td><td>one item "MediaLatch: Save media"; anim-top.gif (native, 3 frames)</td><td>any other title, a still frame</td></tr>
+<tr><td>MS3</td><td>the video</td><td>one item "MediaLatch: Save media"; video-a.mp4</td><td>any other title, a poster</td></tr>
+<tr><td>MS4, MS7, MS8</td><td>the empty area, the sentence, the link text</td><td><b>no MediaLatch item</b> in the menu</td><td>a greyed-out item</td></tr>
+<tr><td>MS5</td><td>inside the dashed empty container</td><td><b>no MediaLatch item</b></td><td>any item (an empty container is not media)</td></tr>
+<tr><td>MS6</td><td>the video inside the shadow root</td><td>one item "MediaLatch: Save media"; video-b.webm</td><td>no item (a real shadow-DOM player is a target)</td></tr>
+<tr><td>MS9</td><td>the link text</td><td>one item "MediaLatch: Save media"; anim-top.gif</td><td>no item, any other title</td></tr>
+<tr><td>MS10</td><td>the card</td><td>one item "MediaLatch: Save media" (the type of the asset is decided by the save, after the click); card-a.png</td><td>any other title</td></tr>
 <tr><td>sequence</td><td>MS2, MS1, MS3, MS4, MS1 without reload</td><td>Save media, Save media, Save media, absent, Save media</td><td>any other title</td></tr></table>
 <script>
 (function () {

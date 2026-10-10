@@ -1358,7 +1358,7 @@
     wrap.className = 'image-saver-x-copy-wrap';
     wrap.setAttribute('role', 'button');
     wrap.setAttribute('tabindex', '0');
-    isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
+    isLabel(wrap, 'title', 'inline.copyPost', 'MediaLatch: Скопировать ссылку на пост');
     isLabel(wrap, 'aria-label', 'inline.copyPostAria', 'Copy post link');
 
     const btn = document.createElement('div');
@@ -1374,10 +1374,10 @@
       const shareUrl = tweetUrl ? formatXShareUrl(tweetUrl, cachedXShareHost) : null;
       if (!shareUrl) {
         wrap.classList.add('is-error');
-        isLabel(wrap, 'title', 'inline.postUnknown', 'Image Saver: Не удалось определить ссылку на пост');
+        isLabel(wrap, 'title', 'inline.postUnknown', 'MediaLatch: Не удалось определить ссылку на пост');
         setTimeout(() => {
           wrap.classList.remove('is-error');
-          isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
+          isLabel(wrap, 'title', 'inline.copyPost', 'MediaLatch: Скопировать ссылку на пост');
         }, 2000);
         return;
       }
@@ -1413,7 +1413,7 @@
         setTimeout(() => {
           wrap.classList.remove('is-success');
           btn.innerHTML = SVG_LINK_ICON;
-          isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
+          isLabel(wrap, 'title', 'inline.copyPost', 'MediaLatch: Скопировать ссылку на пост');
         }, 1800);
       } else {
         wrap.classList.add('is-error');
@@ -1903,8 +1903,8 @@
       hs.setProperty('align-items', tier === 'compact' ? 'center' : 'flex-end');
       hs.setProperty('justify-content', 'flex-end');
     }
-    isLabel(btn, 'aria-label', 'inline.saveThisAria', 'Image Saver: Save this media');
-    isLabel(btn, 'title', 'inline.saveThisAria', 'Image Saver: Save this media');
+    isLabel(btn, 'aria-label', 'inline.saveThisAria', 'MediaLatch: Save this media');
+    isLabel(btn, 'title', 'inline.saveThisAria', 'MediaLatch: Save this media');
     // wide: the words; compact: icons only, the count on "Save all"; the accessible names are the full words in every tier
     isLabel(lbl, 'textContent', tier === 'wide' ? 'inline.saveThis' : null, tier === 'wide' ? 'Save this' : '');
     lbl.style.setProperty('display', tier === 'wide' ? 'inline' : 'none');
@@ -1912,8 +1912,8 @@
     lblAll.style.setProperty('display', multi ? 'inline' : 'none');
     if (multi) {
       btnAll.removeAttribute('hidden');
-      isLabel(btnAll, 'aria-label', 'inline.saveAllAria', `Image Saver: Save all ${n} media in this post`, { n });
-      isLabel(btnAll, 'title', 'inline.saveAllAria', `Image Saver: Save all ${n} media in this post`, { n });
+      isLabel(btnAll, 'aria-label', 'inline.saveAllAria', `MediaLatch: Save all ${n} media in this post`, { n });
+      isLabel(btnAll, 'title', 'inline.saveAllAria', `MediaLatch: Save all ${n} media in this post`, { n });
     } else {
       btnAll.setAttribute('hidden', '');
       isLabel(btnAll, 'aria-label', null, null);

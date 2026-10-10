@@ -336,7 +336,7 @@
     wrap.className = 'image-saver-yt-copy-wrap';
     wrap.setAttribute('role', 'button');
     wrap.setAttribute('tabindex', '0');
-    isLabel(wrap, 'title', 'inline.copyShort', 'Image Saver: Скопировать ссылку на Short');
+    isLabel(wrap, 'title', 'inline.copyShort', 'MediaLatch: Скопировать ссылку на Short');
     isLabel(wrap, 'aria-label', 'inline.copyShortAria', 'Copy Short link');
 
     const btn = document.createElement('div');
@@ -392,11 +392,11 @@
         wrap.setAttribute('data-diagnostic-fail-branch', 'no_share_url');
         wrap.setAttribute('data-diagnostic-clipboard', 'failure');
         wrap.classList.add('is-error');
-        isLabel(wrap, 'title', 'inline.shortUnknown', 'Image Saver: Не удалось определить ссылку на Short');
+        isLabel(wrap, 'title', 'inline.shortUnknown', 'MediaLatch: Не удалось определить ссылку на Short');
 
         setTimeout(() => {
           wrap.classList.remove('is-error');
-          isLabel(wrap, 'title', 'inline.copyShort', 'Image Saver: Скопировать ссылку на Short');
+          isLabel(wrap, 'title', 'inline.copyShort', 'MediaLatch: Скопировать ссылку на Short');
         }, 2000);
         return;
       }
@@ -463,7 +463,7 @@
         setTimeout(() => {
           wrap.classList.remove('is-success');
           btn.innerHTML = SVG_LINK_ICON;
-          isLabel(wrap, 'title', 'inline.copyShort', 'Image Saver: Скопировать ссылку на Short');
+          isLabel(wrap, 'title', 'inline.copyShort', 'MediaLatch: Скопировать ссылку на Short');
         }, 1800);
       } else {
         wrap.classList.add('is-error');

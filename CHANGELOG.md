@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Rename the product and repository to MediaLatch with a new M/download mark; keep existing preferences and save folders compatible. Future runtime assets use the MediaLatch prefix.
+- Add a persistent English / Russian interface choice across extension pages, notifications and inline labels.
+- Keep the context-menu action fixed as MediaLatch: Save media; original discovery still starts after choosing it.
+
+The first public preview below retains its original Image Saver name and asset names. These changes are local and have not been published in a new release.
+
 ## 2.0.0.25 — first public preview
 
 ### Release preparation

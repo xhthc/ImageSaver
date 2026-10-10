@@ -1,13 +1,20 @@
-import { ImageDown } from "lucide-react"
+import { useId } from "react"
 
-/** The Image Saver mark: a rounded tile with the save-image glyph, kept in the extension's blue accent. */
 export function BrandMark({ className = "" }: { className?: string }) {
+  const gradient = useId()
   return (
-    <div
-      aria-hidden="true"
-      className={`flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-gradient-to-br from-primary/90 to-primary/50 text-primary-foreground shadow-sm ${className}`}
-    >
-      <ImageDown className="size-5" />
-    </div>
+    <svg aria-hidden="true" viewBox="16 16 96 96" className={`size-10 shrink-0 rounded-xl shadow-sm ${className}`}>
+      <defs>
+        <linearGradient id={gradient} x1="0" y1="0" x2="1" y2="1">
+          <stop stopColor="#4f46e5" />
+          <stop offset="1" stopColor="#2456d4" />
+        </linearGradient>
+      </defs>
+      <rect x="16" y="16" width="96" height="96" rx="24" fill={`url(#${gradient})`} />
+      <g fill="none" stroke="#fff" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M38 78V45L64 67L90 45V78" />
+        <path d="M64 67V88M55 79L64 88L73 79" />
+      </g>
+    </svg>
   )
 }

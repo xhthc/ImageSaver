@@ -1,4 +1,4 @@
-// content_reddit.js - Reddit DOM detection and post metadata extraction for Image Saver
+// content_reddit.js - Reddit DOM detection and post metadata extraction for MediaLatch
 (() => {
   const isI18n = globalThis.ImageSaverI18n;
   const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
@@ -1809,16 +1809,16 @@
       hs.setProperty('align-items', tier === 'compact' ? 'center' : 'flex-end');
       hs.setProperty('justify-content', 'flex-end');
     }
-    isLabel(btn, 'aria-label', 'inline.saveThisAria', 'Image Saver: Save this media');
-    isLabel(btn, 'title', 'inline.saveThisAria', 'Image Saver: Save this media');
+    isLabel(btn, 'aria-label', 'inline.saveThisAria', 'MediaLatch: Save this media');
+    isLabel(btn, 'title', 'inline.saveThisAria', 'MediaLatch: Save this media');
     isLabel(lbl, 'textContent', tier === 'wide' ? 'inline.saveThis' : null, tier === 'wide' ? 'Save this' : '');
     lbl.style.setProperty('display', tier === 'wide' ? 'inline' : 'none');
     isLabel(lblAll, 'textContent', tier === 'wide' ? 'inline.saveAll' : null, tier === 'wide' ? `Save all (${n})` : (tier === 'compact' ? String(n) : ''), { n });
     lblAll.style.setProperty('display', multi ? 'inline' : 'none');
     if (multi) {
       btnAll.removeAttribute('hidden');
-      isLabel(btnAll, 'aria-label', 'inline.saveAllAria', `Image Saver: Save all ${n} media in this post`, { n });
-      isLabel(btnAll, 'title', 'inline.saveAllAria', `Image Saver: Save all ${n} media in this post`, { n });
+      isLabel(btnAll, 'aria-label', 'inline.saveAllAria', `MediaLatch: Save all ${n} media in this post`, { n });
+      isLabel(btnAll, 'title', 'inline.saveAllAria', `MediaLatch: Save all ${n} media in this post`, { n });
     } else {
       btnAll.setAttribute('hidden', '');
       isLabel(btnAll, 'aria-label', null, null);

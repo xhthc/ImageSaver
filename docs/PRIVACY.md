@@ -1,10 +1,10 @@
 # Privacy policy
 
-Effective date: 2026-10-10. Product: Image Saver. Maintainer: [xhthc/ImageSaver](https://github.com/xhthc/ImageSaver). Questions and issues: [GitHub Issues](https://github.com/xhthc/ImageSaver/issues).
+Effective date: 2026-10-10. Product: MediaLatch. Maintainer: [xhthc/MediaLatch](https://github.com/xhthc/MediaLatch). Questions and issues: [GitHub Issues](https://github.com/xhthc/MediaLatch/issues).
 
 ## Purpose and access
 
-Image Saver processes page content and media addresses to identify the selected source, save accessible media and provide save feedback. Content scripts inspect selected targets, their owning post/player and relevant page metadata. Supported inline controls also inspect nearby post structures. This access is needed on HTTP/HTTPS sites and in relevant frames.
+MediaLatch processes page content and media addresses to identify the selected source, save accessible media and provide save feedback. Content scripts inspect selected targets, their owning post/player and relevant page metadata. Supported inline controls also inspect nearby post structures. This access is needed on HTTP/HTTPS sites and in relevant frames.
 
 The extension has no analytics, advertising, telemetry endpoint or developer-operated media server. It does not upload save history or diagnostic reports automatically. It does not sell user data.
 

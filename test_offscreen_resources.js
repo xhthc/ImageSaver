@@ -228,7 +228,7 @@ function createTestSandbox(overrides = {}) {
 }
 
 async function runAllSuites() {
-  console.log('=== Image Saver: Offscreen Media Validation & Resource Lifetime Regressions ===\n');
+  console.log('=== MediaLatch: Offscreen Media Validation & Resource Lifetime Regressions ===\n');
 
   // ---------------------------------------------------------------------------
   // Suite 1: Valid media formats at validation boundary

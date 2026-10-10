@@ -228,7 +228,7 @@ function makeChrome(state) {
     assert(/имя запланировано, не подтверждено/.test(present.rowParts(FB, rec({ filename: 'q.jpg', filenameKind: 'intended' })).meta) && !/запланировано/.test(present.rowParts(FB, rl).meta), '24f: an unconfirmed name is marked in the row, a confirmed one is not');
     assert(present.hasReport(noMedia) && !present.hasReport(other) && present.hasReport(rec({ state: 'interrupted', output: {}, failure: failure('download', 'download_interrupted') })) && !present.hasReport(rec({ state: 'cancelled', output: {}, failure: failure('save', 'cancelled') })), '24g: only failed and interrupted results offer the retry hint and the report');
     const rep = present.buildReportText(FB, noMedia, 'save fails <b>bold</b> https://x.test/?token=NOTE123', { version: '2.0.0', browser: 'Chromium 126' });
-    assert(rep.startsWith('Image Saver bug report') && /browser: Chromium 126/.test(rep) && /user_notes: save fails/.test(rep) && !/NOTE123|https?:/.test(rep), '24h: the report carries the browser only when reliable and redacts the notes');
+    assert(rep.startsWith('MediaLatch bug report') && /browser: Chromium 126/.test(rep) && /user_notes: save fails/.test(rep) && !/NOTE123|https?:/.test(rep), '24h: the report carries the browser only when reliable and redacts the notes');
     assert(/одна попытка возобновить/.test(present.RETRY_HINT) && /не отправляется автоматически/.test(present.REPORT_PRIVACY), '24i: the bounded native resume and the no-submission promise are stated');
     let clip = null;
     await present.copyText('abc', { clipboard: { writeText: async (t) => { clip = t; } } });
@@ -1115,7 +1115,7 @@ function makeChrome(state) {
     assert(enKeys.every((k) => I18n.STRINGS.en[k].trim() && I18n.STRINGS.ru[k].trim() && !/<[a-z/!]/i.test(I18n.STRINGS.en[k] + I18n.STRINGS.ru[k])), '33c: no empty text and no markup in the catalogue (texts are rendered as text)');
     const same = enKeys.filter((k) => I18n.STRINGS.en[k] === I18n.STRINGS.ru[k]);
     assert(JSON.stringify(same) === JSON.stringify(['stats.type.gif', 'tab.embed', 'type.gif']), '33d: every text is translated except names that are the same in both languages: ' + same.join(', '));
-    assert(I18n.MENU_TITLE === 'Image Saver: Save media' && !enKeys.some((k) => /Save (image|video|GIF)\b/.test(I18n.STRINGS.en[k]) && /^menu/.test(k)), '33e: the native menu title is the fixed "Image Saver: Save media" in both languages (no per-type titles)');
+    assert(I18n.MENU_TITLE === 'MediaLatch: Save media' && !enKeys.some((k) => /Save (image|video|GIF)\b/.test(I18n.STRINGS.en[k]) && /^menu/.test(k)), '33e: the native menu title is the fixed "MediaLatch: Save media" in both languages (no per-type titles)');
     // keys used by the sources exist in the catalogue
     const uiSrc = ['ui/src/components/app', 'ui/src/core', 'ui/src/hooks'].flatMap((d) => fs.readdirSync(path.resolve(ROOT, d)).map((f) => read(`${d}/${f}`))).join('\n')
       + ['content_x.js', 'content_reddit.js', 'content_redgifs.js', 'content_instagram.js', 'content_tiktok.js', 'content_youtube.js', 'lib/feedback_tracker.js'].map(read).join('\n');
@@ -1262,7 +1262,7 @@ function makeChrome(state) {
     assert(present.filenameLine(okRec, 'en') === 'File name: Фото «оригинал».jpg (actual, reported by Chrome)', '33zi: the file-name line is translated around the unchanged name');
     const enStats = present.statsView(FB, [okRec, failRec], 'ok', true, 'en');
     assert(enStats.tiles[0].label === 'Operations in history' && /^Known total size: at least 981 KB\. Size measured for 1 of 1 successful saves\.$/.test(enStats.sizeText) && /50 operations/.test(enStats.note), '33zj: statistics are presented in English');
-    assert(FB.buildReport(failRec, { env: { version: '2.0.0' } }) === FB.buildReport(failRec, { env: { version: '2.0.0' } }) && /^Image Saver bug report\n/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })) && /http_status: 500/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })), '33zk: the copied bug report keeps its single format');
+    assert(FB.buildReport(failRec, { env: { version: '2.0.0' } }) === FB.buildReport(failRec, { env: { version: '2.0.0' } }) && /^MediaLatch bug report\n/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })) && /http_status: 500/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })), '33zk: the copied bug report keeps its single format');
     const t0 = Date.UTC(2026, 9, 10, 15, 5);
     assert(present.formatDateTime(t0, 'en-US') !== present.formatDateTime(t0, 'ru-RU') && /\d/.test(present.formatTime(t0, 'en-US')), '33zl: dates are formatted with the locale of the language');
 
@@ -1276,11 +1276,11 @@ function makeChrome(state) {
       return sink;
     };
     let n = await notifyWith({ getLang: async () => 'en' });
-    assert(n[0].title === 'Image Saver: Server error' && n[0].contextMessage === 'Click to open the details' && n[1].title === 'example.com: saved' && !/Resource/.test(n[1].message), '33zm: a saved English choice gives English notifications');
+    assert(n[0].title === 'MediaLatch: Server error' && n[0].contextMessage === 'Click to open the details' && n[1].title === 'example.com: saved' && !/Resource/.test(n[1].message), '33zm: a saved English choice gives English notifications');
     n = await notifyWith({ getLang: async () => 'ru' });
-    assert(n[0].title === 'Image Saver: Ошибка сервера' && n[0].contextMessage === 'Нажмите, чтобы открыть подробности' && n[1].title === 'example.com: сохранено' && !/Ресурс/.test(n[1].message), '33zn: a saved Russian choice gives Russian notifications');
+    assert(n[0].title === 'MediaLatch: Ошибка сервера' && n[0].contextMessage === 'Нажмите, чтобы открыть подробности' && n[1].title === 'example.com: сохранено' && !/Ресурс/.test(n[1].message), '33zn: a saved Russian choice gives Russian notifications');
     n = await notifyWith({ getLang: async () => { throw new Error('UNREADABLE'); } });
-    assert(n[0].title === 'Image Saver: Server error', '33zo: an unreadable choice falls back to the browser rule (no Russian browser here -> English) and the notification is still shown');
+    assert(n[0].title === 'MediaLatch: Server error', '33zo: an unreadable choice falls back to the browser rule (no Russian browser here -> English) and the notification is still shown');
     n = await notifyWith({ getLang: async () => 'de' });
     assert(n.length === 2 && n[1].title === 'example.com: saved', '33zp: an invalid saved value falls back to the browser rule');
   }

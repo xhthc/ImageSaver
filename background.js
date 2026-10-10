@@ -1,4 +1,4 @@
-// ba kground.js - Service Worker for Image Saver extension (v2.0.0)
+// ba kground.js - Service Worker for MediaLatch extension (v2.0.0)
 // Universal modular architecture for downloading maximum resolution images across the web
 
 // Shared download-folder rules (also used by popup/popup.js so preview == runtime).
@@ -396,7 +396,7 @@ function sanitizePathSegment(segment, fallback = 'unknown') {
  */
 function sanitizeRootSubfolder(subfolder) {
   return FolderPath.resolveRoot(subfolder, (reason) => {
-    console.warn('[Image Saver] Корневая папка отклонена (' + reason + '), используется корень по умолчанию:', FolderPath.DEFAULT_ROOT);
+    console.warn('[MediaLatch] Корневая папка отклонена (' + reason + '), используется корень по умолчанию:', FolderPath.DEFAULT_ROOT);
   });
 }
 
@@ -1059,7 +1059,7 @@ async function setupDeclarativeNetRequestRules() {
           settled = true;
           const lastErr = chrome.runtime?.lastError;
           if (lastErr) {
-            console.error('[Image Saver] updateDynamicRules error:', lastErr.message);
+            console.error('[MediaLatch] updateDynamicRules error:', lastErr.message);
             reject(new Error(`updateDynamicRules failed: ${lastErr.message}`));
           } else {
             resolve();
@@ -1068,7 +1068,7 @@ async function setupDeclarativeNetRequestRules() {
       } catch (syncErr) {
         if (!settled) {
           settled = true;
-          console.error('[Image Saver] updateDynamicRules sync error:', syncErr);
+          console.error('[MediaLatch] updateDynamicRules sync error:', syncErr);
           reject(syncErr);
         }
         return;
@@ -1084,7 +1084,7 @@ async function setupDeclarativeNetRequestRules() {
           (promiseErr) => {
             if (!settled) {
               settled = true;
-              console.error('[Image Saver] updateDynamicRules promise reject:', promiseErr);
+              console.error('[MediaLatch] updateDynamicRules promise reject:', promiseErr);
               reject(promiseErr);
             }
           }
@@ -1092,7 +1092,7 @@ async function setupDeclarativeNetRequestRules() {
       }
     });
   } catch (err) {
-    console.error('[Image Saver] Ошибка в setupDeclarativeNetRequestRules():', err?.message || err);
+    console.error('[MediaLatch] Ошибка в setupDeclarativeNetRequestRules():', err?.message || err);
   } finally {
     isDnrSetupInProgress = false;
   }
@@ -1103,7 +1103,7 @@ setupDeclarativeNetRequestRules();
 
 const CSS_MEDIA_MENU_ID = 'save-css-media-item';
 // The one title of the command, at registration and always: the type of the original is decided by the save, after the click.
-const STABLE_MENU_TITLE = 'Image Saver: Save media';
+const STABLE_MENU_TITLE = 'MediaLatch: Save media';
 
 function setupContextMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -1117,7 +1117,7 @@ function setupContextMenus() {
     });
     contextTargetVisible = true;
     menuClick = null;
-    console.log('[Image Saver] Пункты контекстного меню успешно зарегистрированы');
+    console.log('[MediaLatch] Пункты контекстного меню успешно зарегистрированы');
   });
 }
 
@@ -1905,7 +1905,7 @@ function scoreCandidateUrl(url, source, rawWidth = 0, rawHeight = 0) {
   return score;
 }
 
-// Recognized static image extensions across Image Saver
+// Recognized static image extensions across MediaLatch
 const IMAGE_EXTENSIONS_REGEX = /\.(jpe?g|png|gif|webp|svg|avif|bmp|ico)$/i;
 
 const EXPLICIT_NON_IMAGE_MIMES = new Set([
@@ -2166,18 +2166,18 @@ async function resolveFromLinkUrl(linkUrl, srcUrl) {
       const cleanUrl = cleaned.toString();
 
       if (await verifyImageUrl(cleanUrl)) {
-        console.log('[Image Saver] [Уровень 1: Link] Подтверждён URL из ссылки <a> (очищенный):', cleanUrl);
+        console.log('[MediaLatch] [Уровень 1: Link] Подтверждён URL из ссылки <a> (очищенный):', cleanUrl);
         return cleanUrl;
       }
 
       // Option 2: Original linkUrl (if query parameters were required for CDN authentication)
       if (linkUrl !== cleanUrl && await verifyImageUrl(linkUrl)) {
-        console.log('[Image Saver] [Уровень 1: Link] Подтверждён исходный URL из ссылки <a>:', linkUrl);
+        console.log('[MediaLatch] [Уровень 1: Link] Подтверждён исходный URL из ссылки <a>:', linkUrl);
         return linkUrl;
       }
     }
   } catch (e) {
-    console.warn('[Image Saver] Ошибка проверки linkUrl:', e);
+    console.warn('[MediaLatch] Ошибка проверки linkUrl:', e);
   }
 
   return null;
@@ -2244,7 +2244,7 @@ function resolveTwitterOriginalUrl(url) {
 
     return null;
   } catch (err) {
-    console.warn('[Image Saver] Ошибка при парсинге URL X.com:', err);
+    console.warn('[MediaLatch] Ошибка при парсинге URL X.com:', err);
     return null;
   }
 }
@@ -4069,7 +4069,7 @@ const BOORU_ENGINE_RESOLVERS = [
                   allowVideo: isVid
                 }));
               } else if (fileUrl) {
-                console.warn('[Image Saver] Отклонен недоверенный или несовпадающий URL медиа e621 API:', sanitizeUrlForLog(fileUrl));
+                console.warn('[MediaLatch] Отклонен недоверенный или несовпадающий URL медиа e621 API:', sanitizeUrlForLog(fileUrl));
               }
             }
           }
@@ -5189,7 +5189,7 @@ async function resolveFrameLocalMedia(options = {}) {
           sendOptions
         );
       } catch (injectErr) {
-        console.warn('[Image Saver] Не удалось внедрить content_redgifs.js во фрейм ' + targetFrameId + ':', injectErr);
+        console.warn('[MediaLatch] Не удалось внедрить content_redgifs.js во фрейм ' + targetFrameId + ':', injectErr);
       }
     }
   }
@@ -5197,7 +5197,7 @@ async function resolveFrameLocalMedia(options = {}) {
   // RG-03: what the frame learned from the provider's own clip declaration (a fixed code only, never page, provider or session data)
   const providerNote = response && response.diagnostics ? response.diagnostics.providerAudio : null;
   if (typeof providerNote === 'string' && /^(?:present|[A-Z_]{3,24})$/.test(providerNote)) {
-    console.log('[Image Saver] RedGIFs provider audio:', providerNote);
+    console.log('[MediaLatch] RedGIFs provider audio:', providerNote);
   }
 
   if (response && response.success && response.targetUrl) {
@@ -5217,7 +5217,7 @@ async function resolveFrameLocalMedia(options = {}) {
       const targetState = candidateAudio[validated.url] || 'unknown';
       // an inline Save must receive a file of the very clip the frame says it resolved
       if (inlineToken && !(clipId && redGifsClipKey(validated.url) === clipId)) {
-        console.warn('[Image Saver] Inline RedGIFs answer does not name its selected clip: refused');
+        console.warn('[MediaLatch] Inline RedGIFs answer does not name its selected clip: refused');
         return { success: false, error: 'UNRESOLVED_BLOB_MEDIA', diagnostics: response.diagnostics || {} };
       }
       return {
@@ -5233,7 +5233,7 @@ async function resolveFrameLocalMedia(options = {}) {
         diagnostics: response.diagnostics || {}
       };
     } else {
-      console.warn('[Image Saver] Кандидат RedGIFs отклонен валидатором:', validated.error, sanitizeUrlForLog(response.targetUrl));
+      console.warn('[MediaLatch] Кандидат RedGIFs отклонен валидатором:', validated.error, sanitizeUrlForLog(response.targetUrl));
       return {
         success: false,
         error: 'UNRESOLVED_BLOB_MEDIA',
@@ -5324,7 +5324,7 @@ async function resolveRedditFrameBlobMedia({ tabId, frameId, clickedSrc, pageUrl
           { frameId: targetFrameId }
         );
       } catch (injectErr) {
-        console.warn('[Image Saver Reddit] Не удалось внедрить content_reddit.js во фрейм ' + targetFrameId + ':', injectErr);
+        console.warn('[MediaLatch Reddit] Не удалось внедрить content_reddit.js во фрейм ' + targetFrameId + ':', injectErr);
       }
     }
   }
@@ -5347,7 +5347,7 @@ async function resolveRedditFrameBlobMedia({ tabId, frameId, clickedSrc, pageUrl
         diagnostics: response.diagnostics || {}
       };
     } else {
-      console.warn('[Image Saver Reddit] Кандидат Reddit отклонен валидатором:', validated.error, sanitizeUrlForLog(response.targetUrl));
+      console.warn('[MediaLatch Reddit] Кандидат Reddit отклонен валидатором:', validated.error, sanitizeUrlForLog(response.targetUrl));
       return {
         success: false,
         error: 'UNRESOLVED_BLOB_MEDIA',
@@ -6480,7 +6480,7 @@ async function recoverXPostMp4Variant(tabId, mediaDescriptor) {
       // The page returned nothing usable (no result, or a result without a reason): the caller reports the generic code.
       return { ok: false, error: 'NO_MP4_VARIANT_FOUND', detail: 'no-script-result' };
     } catch (e) {
-      console.warn('[Image Saver] Ошибка выполнения скрипта восстановления MP4 в main world:', e?.message || e);
+      console.warn('[MediaLatch] Ошибка выполнения скрипта восстановления MP4 в main world:', e?.message || e);
       return { ok: false, error: 'EXECUTE_SCRIPT_ERROR', detail: 'script-threw' };
     }
   }
@@ -6771,7 +6771,7 @@ async function resolveMediaTarget(options = {}) {
         mediaDesc.isBlobPlayer = false;
       } else {
         const failErr = recovery.isHlsOnly ? 'HLS_ONLY' : (recovery.error || 'NO_MP4_VARIANT_FOUND');
-        console.warn('[Image Saver] Не удалось восстановить проверенный MP4 для постера X видео:', sanitizeUrlForLog(mediaDesc.poster || mediaDesc.src), describeXRecoveryFailure(recovery));
+        console.warn('[MediaLatch] Не удалось восстановить проверенный MP4 для постера X видео:', sanitizeUrlForLog(mediaDesc.poster || mediaDesc.src), describeXRecoveryFailure(recovery));
         await flashBadge('ERR', '#ef4444');
         return {
           targetUrl: null,
@@ -6783,7 +6783,7 @@ async function resolveMediaTarget(options = {}) {
         };
       }
     } else {
-      console.warn('[Image Saver] Не удалось восстановить проверенный MP4 для постера X видео (отсутствует tabId):', sanitizeUrlForLog(mediaDesc.poster || mediaDesc.src));
+      console.warn('[MediaLatch] Не удалось восстановить проверенный MP4 для постера X видео (отсутствует tabId):', sanitizeUrlForLog(mediaDesc.poster || mediaDesc.src));
       await flashBadge('ERR', '#ef4444');
       return {
         targetUrl: null,
@@ -6826,7 +6826,7 @@ async function resolveMediaTarget(options = {}) {
           frameRes.error === 'FRAME_CHANGED'
         );
         if (isStaleContext) {
-          console.warn('[Image Saver] RedGIFs: frame changed during direct silent audio lookup; refusing stale direct context-menu save');
+          console.warn('[MediaLatch] RedGIFs: frame changed during direct silent audio lookup; refusing stale direct context-menu save');
           await flashBadge('ERR', '#ef4444');
           return {
             targetUrl: null,
@@ -6878,7 +6878,7 @@ async function resolveMediaTarget(options = {}) {
           }
 
           if (authoritativeError) {
-            console.warn('[Image Saver] RedGIFs: authoritative media-asset failure on promoted audio rendition:', authoritativeError);
+            console.warn('[MediaLatch] RedGIFs: authoritative media-asset failure on promoted audio rendition:', authoritativeError);
             if (authoritativeError.error === 'AUTH_REQUIRED') {
               await flashBadge('AUTH', '#f59e0b');
               return {
@@ -6901,7 +6901,7 @@ async function resolveMediaTarget(options = {}) {
           }
 
           if (chosenAudioUrl) {
-            console.log('[Image Saver] RedGIFs: selected the same-clip rendition declared to carry audio over the -silent source:', sanitizeUrlForLog(chosenAudioUrl));
+            console.log('[MediaLatch] RedGIFs: selected the same-clip rendition declared to carry audio over the -silent source:', sanitizeUrlForLog(chosenAudioUrl));
             videoUrl = chosenAudioUrl;
             mediaDesc.src = videoUrl;
             mediaDesc.currentSrc = videoUrl;
@@ -6946,7 +6946,7 @@ async function resolveMediaTarget(options = {}) {
           mediaDesc.currentSrc = frameResolvedUrl;
           mediaDesc.type = 'video';
         } else if (embedProof) {
-          console.warn('[Image Saver] Embedded RedGIFs clip not resolved in its frame (UNRESOLVED_BLOB_MEDIA); no ID-derived guess for an inline embed save');
+          console.warn('[MediaLatch] Embedded RedGIFs clip not resolved in its frame (UNRESOLVED_BLOB_MEDIA); no ID-derived guess for an inline embed save');
           await flashBadge('ERR', '#ef4444');
           return {
             targetUrl: null,
@@ -7081,7 +7081,7 @@ async function resolveMediaTarget(options = {}) {
         reason: frameRes?.reason || null,
         streamType: frameRes?.diagnostics?.streamType || null
       };
-      console.warn(`[Image Saver] Не удалось разрешить blob video URL (UNRESOLVED_BLOB_MEDIA): ${JSON.stringify(diagObj)}`);
+      console.warn(`[MediaLatch] Не удалось разрешить blob video URL (UNRESOLVED_BLOB_MEDIA): ${JSON.stringify(diagObj)}`);
       await flashBadge('ERR', '#ef4444');
       return {
         targetUrl: null,
@@ -7104,7 +7104,7 @@ async function resolveMediaTarget(options = {}) {
 
     // A. Success: confirmed real video source (wins over poster)
     if (probeDetails.ok) {
-      console.log('[Image Saver] Подтверждён реальный видео-источник (wins over poster):', sanitizeUrlForLog(videoUrl));
+      console.log('[MediaLatch] Подтверждён реальный видео-источник (wins over poster):', sanitizeUrlForLog(videoUrl));
       mediaDesc.contentType = probeDetails.contentType || 'video/mp4';
       mediaDesc.verified = true;
       mediaDesc.mimeEvidence = MIME_EVIDENCE.HTTP_RESPONSE;
@@ -7163,7 +7163,7 @@ async function resolveMediaTarget(options = {}) {
         ? 'Reddit video requires an active Reddit session'
         : `Video requires authorization (HTTP ${probeDetails.status})`;
 
-      console.warn(`[Image Saver] ${failureMsg}:`, sanitizeUrlForLog(videoUrl));
+      console.warn(`[MediaLatch] ${failureMsg}:`, sanitizeUrlForLog(videoUrl));
       await flashBadge('AUTH', '#f59e0b');
 
       // CRITICAL: Do NOT silently download poster when video authorization failed!
@@ -7185,7 +7185,7 @@ async function resolveMediaTarget(options = {}) {
     const isXPosterDesc = Boolean(isXPosterTarget) || isXVideoPosterUrl(mediaDesc.poster);
     const allowPosterFallback = isMissingStream && mediaDesc.poster && !isXPosterDesc && !mediaDesc.isGuessedRedGifs;
     if (allowPosterFallback) {
-      console.log(`[Image Saver] Видео-источник отсутствует (HTTP ${probeDetails.status}), fallback на poster:`, sanitizeUrlForLog(mediaDesc.poster));
+      console.log(`[MediaLatch] Видео-источник отсутствует (HTTP ${probeDetails.status}), fallback на poster:`, sanitizeUrlForLog(mediaDesc.poster));
       const targetImageUrl = await resolveOriginalImageUrl({
         srcUrl: mediaDesc.poster,
         pageUrl: mediaDesc.pageUrl || pageUrl,
@@ -7205,7 +7205,7 @@ async function resolveMediaTarget(options = {}) {
     // D. Rate limited (HTTP 429)
     if (probeDetails.status === 429 || probeDetails.error === 'RATE_LIMIT') {
       const failureMsg = 'Video rate limited (HTTP 429)';
-      console.warn(`[Image Saver] ${failureMsg}:`, sanitizeUrlForLog(videoUrl));
+      console.warn(`[MediaLatch] ${failureMsg}:`, sanitizeUrlForLog(videoUrl));
       await flashBadge('RATE', '#f59e0b');
       return {
         targetUrl: null,
@@ -7239,7 +7239,7 @@ async function resolveMediaTarget(options = {}) {
       failError = 'VIDEO_UNAVAILABLE';
     }
 
-    console.warn(`[Image Saver] ${failMsg}:`, sanitizeUrlForLog(videoUrl));
+    console.warn(`[MediaLatch] ${failMsg}:`, sanitizeUrlForLog(videoUrl));
     await flashBadge('ERR', '#ef4444');
 
     return {
@@ -7501,7 +7501,7 @@ function selectPawchivePostOriginal(clicked, post, isFeedCard, declared) {
 async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPostMedia = false }) {
   const clicked = parsePawchiveMediaUrl(srcUrl, pageUrl || undefined);
   if (!clicked) return undefined;
-  const refuse = (why) => { console.warn('[Image Saver] Pawchive: сохранение оригинала отклонено (' + why + '):', sanitizeUrlForLog(srcUrl)); return null; };
+  const refuse = (why) => { console.warn('[MediaLatch] Pawchive: сохранение оригинала отклонено (' + why + '):', sanitizeUrlForLog(srcUrl)); return null; };
 
   // the selection is itself an original: exactly that address
   if (clicked.kind === 'file') {
@@ -7585,7 +7585,7 @@ async function savePawchivePostMedia(batch, info, tab) {
     await onContextMenuClicked(itemInfo, tab);
   }
   if (batch.items.length > urls.length) await pawchiveItemFailed(info, tab, batch.postUrl, { stage: 'resolve', code: 'NO_MEDIA' });
-  console.info('[Image Saver] Pawchive post media:', tally);
+  console.info('[MediaLatch] Pawchive post media:', tally);
 }
 
 /**
@@ -7724,7 +7724,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
     }
   }
 
-  console.log('[Image Saver] Старт универсального конвейера поиска медиаплана:', {
+  console.log('[MediaLatch] Старт универсального конвейера поиска медиаплана:', {
     srcUrl: sanitizeUrlForLog(srcUrl),
     pageUrl: sanitizeUrlForLog(pageUrl),
     linkUrl: sanitizeUrlForLog(linkUrl),
@@ -7776,7 +7776,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
         }
       }
     }
-    console.warn('[Image Saver] Не удалось восстановить проверенный MP4 для постера X видео:', sanitizeUrlForLog(srcUrl), posterRecovery && !posterRecovery.ok ? describeXRecoveryFailure(posterRecovery) : 'reason=PROBE_FAILED');
+    console.warn('[MediaLatch] Не удалось восстановить проверенный MP4 для постера X видео:', sanitizeUrlForLog(srcUrl), posterRecovery && !posterRecovery.ok ? describeXRecoveryFailure(posterRecovery) : 'reason=PROBE_FAILED');
     await flashBadge('ERR', '#ef4444');
     return null;
   }
@@ -8042,7 +8042,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
       grp.verified = false;
       verifiedGroups.push(grp);
       if (grp.finalScore > bestVerifiedScore) bestVerifiedScore = grp.finalScore;
-      console.log(`[Image Saver] Группа принята с отложенной валидацией (${grp.provider}, tier: ${grp.tier}, score: ${grp.finalScore}):`, sanitizeGroupIdForLog(grp.id));
+      console.log(`[MediaLatch] Группа принята с отложенной валидацией (${grp.provider}, tier: ${grp.tier}, score: ${grp.finalScore}):`, sanitizeGroupIdForLog(grp.id));
     } else {
       if (bestVerifiedScore !== -Infinity && (grp.finalScore + MAX_VERIFICATION_BONUS) <= bestVerifiedScore) {
         const grpTw = tierWeight[grp.tier] !== undefined ? tierWeight[grp.tier] : 20;
@@ -8092,7 +8092,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
       }
 
       if (!isOk) {
-        console.warn(`[Image Saver] Группа не подтверждена (${grp.provider}, HTTP: ${(probeTarget && probeTarget.status) || 'не наблюдался'}):`, sanitizeUrlForLog((probeTarget && probeTarget.url) || grp.primaryUrl));
+        console.warn(`[MediaLatch] Группа не подтверждена (${grp.provider}, HTTP: ${(probeTarget && probeTarget.status) || 'не наблюдался'}):`, sanitizeUrlForLog((probeTarget && probeTarget.url) || grp.primaryUrl));
         if (probeTarget && (probeTarget.status === 429 || probeTarget.status === 403 || probeTarget.status === 401)) {
           lastFailureStatus = probeTarget.status;
         }
@@ -8123,7 +8123,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
         }
         verifiedGroups.push(grp);
         if (grp.finalScore > bestVerifiedScore) bestVerifiedScore = grp.finalScore;
-        console.log(`[Image Saver] Группа подтверждена (${grp.provider}, score: ${grp.finalScore}):`, sanitizeGroupIdForLog(grp.id));
+        console.log(`[MediaLatch] Группа подтверждена (${grp.provider}, score: ${grp.finalScore}):`, sanitizeGroupIdForLog(grp.id));
       }
     }
   }
@@ -8221,7 +8221,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
     const forbiddenDowngrade = isForbiddenCandidateDowngrade(winner, failedAuthoritativeOriginals, srcUrl);
     if (forbiddenDowngrade) {
       const failStatus = forbiddenDowngrade.status;
-      console.warn(`[Image Saver] Отмена медиаплана: оригинальный кандидат вернул ошибку (HTTP ${failStatus}), отсекаем fallback/превью/постер`);
+      console.warn(`[MediaLatch] Отмена медиаплана: оригинальный кандидат вернул ошибку (HTTP ${failStatus}), отсекаем fallback/превью/постер`);
       return adaptCandidateToGroup({
         url: srcUrl,
         source: 'initial_src',
@@ -8233,13 +8233,13 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
       });
     }
 
-    console.log(`[Image Saver] Выбран лучший медиаплан (${winner.provider}, tier: ${winner.tier}, score: ${winner.finalScore}):`, sanitizeGroupIdForLog(winner.id));
+    console.log(`[MediaLatch] Выбран лучший медиаплан (${winner.provider}, tier: ${winner.tier}, score: ${winner.finalScore}):`, sanitizeGroupIdForLog(winner.id));
     return winner;
   }
 
   // If a candidate explicitly failed with 429 or 403/401, do not mask with thumbnail!
   if (lastFailureStatus === 429 || lastFailureStatus === 403 || lastFailureStatus === 401) {
-    console.warn('[Image Saver] Отмена медиаплана: ошибка авторизации или лимита запросов (HTTP ' + lastFailureStatus + ')');
+    console.warn('[MediaLatch] Отмена медиаплана: ошибка авторизации или лимита запросов (HTTP ' + lastFailureStatus + ')');
     return adaptCandidateToGroup({
       url: srcUrl,
       source: 'initial_src',
@@ -8259,7 +8259,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
   });
   if (failedOrigVideo) {
     const failStatus = failedOrigVideo.status;
-    console.warn(`[Image Saver] Отмена медиаплана: оригинальное видео вернуло ошибку (HTTP ${failStatus}), отсекаем fallback на превью`);
+    console.warn(`[MediaLatch] Отмена медиаплана: оригинальное видео вернуло ошибку (HTTP ${failStatus}), отсекаем fallback на превью`);
     return adaptCandidateToGroup({
       url: srcUrl,
       source: 'initial_src',
@@ -8273,7 +8273,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
 
   // 6. Level 7: Fallback to initial srcUrl
   if (srcUrl && !srcUrl.startsWith('blob:') && !srcUrl.startsWith('data:') && !srcUrl.startsWith('javascript:')) {
-    console.log('[Image Saver] [Уровень 7: Fallback] Проверенный оригинал не найден, возврат исходного srcUrl:', srcUrl);
+    console.log('[MediaLatch] [Уровень 7: Fallback] Проверенный оригинал не найден, возврат исходного srcUrl:', srcUrl);
     return adaptCandidateToGroup({
       url: srcUrl,
       source: 'initial_src',
@@ -8367,7 +8367,7 @@ async function addTrackedDownloadId(id) {
         }
       }
     } catch (e) {
-      console.warn('[Image Saver] Не удалось сохранить trackedDownloadIds:', e);
+      console.warn('[MediaLatch] Не удалось сохранить trackedDownloadIds:', e);
     }
   });
 }
@@ -8387,7 +8387,7 @@ async function removeTrackedDownloadId(id) {
         await storageApi.set({ trackedDownloadIds: updated });
       }
     } catch (e) {
-      console.warn('[Image Saver] Не удалось обновить trackedDownloadIds:', e);
+      console.warn('[MediaLatch] Не удалось обновить trackedDownloadIds:', e);
     }
   });
 }
@@ -8413,7 +8413,7 @@ async function setBadge(text, backgroundColor) {
       await chrome.action.setBadgeBackgroundColor({ color: backgroundColor });
     }
   } catch (err) {
-    console.warn('[Image Saver] Не удалось установить бейдж:', err);
+    console.warn('[MediaLatch] Не удалось установить бейдж:', err);
   }
 }
 
@@ -8434,7 +8434,7 @@ async function flashBadge(text, backgroundColor, durationMs = 2500) {
       await restoreOrClearBadge();
     }, durationMs);
   } catch (err) {
-    console.warn('[Image Saver] Не удалось обновить бейдж:', err);
+    console.warn('[MediaLatch] Не удалось обновить бейдж:', err);
   }
 }
 
@@ -8629,7 +8629,7 @@ function getFilenameFromUrl(url) {
 
     return `${base}.${ext}`;
   } catch (err) {
-    console.warn('[Image Saver] Не удалось разобрать имя файла из URL:', err);
+    console.warn('[MediaLatch] Не удалось разобрать имя файла из URL:', err);
     return `image_${Date.now()}.jpg`;
   }
 }
@@ -8660,7 +8660,7 @@ var feedbackNotifier = (typeof globalThis.ImageSaverFeedbackTracker?.createNotif
       getPrefs: () => chrome.storage.local.get({ notifySuccess: true }),
       // the saved interface language; an invalid or unreadable value leaves the notifier on the browser-language rule
       getLang: async () => (await chrome.storage.local.get({ uiLanguage: null }))?.uiLanguage,
-      log: (...args) => console.warn('[Image Saver] feedback:', ...args)
+      log: (...args) => console.warn('[MediaLatch] feedback:', ...args)
     })
   : async () => false;
 
@@ -8672,7 +8672,7 @@ var feedbackHistory = (typeof globalThis.ImageSaverFeedbackHistory?.createHistor
         set: (key, value) => chrome.storage.local.set({ [key]: value })
       },
       isEnabled: async () => (await chrome.storage.local.get({ [globalThis.ImageSaverFeedbackHistory.ENABLED_KEY]: false }))[globalThis.ImageSaverFeedbackHistory.ENABLED_KEY],
-      log: (...args) => console.warn('[Image Saver] history:', ...args)
+      log: (...args) => console.warn('[MediaLatch] history:', ...args)
     })
   : null;
 // Persistent retention cleanup at service-worker start (also runs on every list/record); best effort.
@@ -8703,7 +8703,7 @@ if (typeof globalThis.ImageSaverFeedbackTracker?.createTracker === 'function') {
     notify: feedbackNotifyRecord,
     onFinished: (record) => (feedbackHistory ? feedbackHistory.record(record) : false),
     onChange: () => { if (!flashBadgeTimeout) restoreOrClearBadge(); },
-    log: (...args) => console.warn('[Image Saver] feedback:', ...args)
+    log: (...args) => console.warn('[MediaLatch] feedback:', ...args)
   });
 }
 
@@ -8997,10 +8997,10 @@ async function decideNativeResume(id, errorCode) {
     try {
       await chrome.downloads.resume(id);
     } catch (err) {
-      console.warn(`[Image Saver] Загрузка ${id}: resume отклонён:`, err?.message || err);
+      console.warn(`[MediaLatch] Загрузка ${id}: resume отклонён:`, err?.message || err);
       return refuseNativeResume(id, finalError);
     }
-    console.log(`[Image Saver] Загрузка ${id} прервана (NETWORK_FAILED): запрошено одно возобновление`);
+    console.log(`[MediaLatch] Загрузка ${id} прервана (NETWORK_FAILED): запрошено одно возобновление`);
     return { resumed: true };
   } catch (_) {
     return refuseNativeResume(id, errorCode);
@@ -9062,7 +9062,7 @@ if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
         await untrackDownloadProtectedBlob(delta.id);
         await removeTrackedDownloadId(delta.id);
         activeDownloadsMetadata.delete(delta.id);
-        console.log(`[Image Saver] Загрузка ${delta.id} успешно завершена`);
+        console.log(`[MediaLatch] Загрузка ${delta.id} успешно завершена`);
         await flashBadge('OK', '#22c55e');
         if (activeOffscreenTasks === 0 && !hasActiveProtectedDownloads()) {
           await closeOffscreenDocument().catch(() => {});
@@ -9073,18 +9073,18 @@ if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
         const meta = activeDownloadsMetadata.get(delta.id);
         activeDownloadsMetadata.delete(delta.id);
         if (errorCode === 'USER_CANCELED') {
-          console.log(`[Image Saver] Загрузка ${delta.id} отменена пользователем (USER_CANCELED)`);
+          console.log(`[MediaLatch] Загрузка ${delta.id} отменена пользователем (USER_CANCELED)`);
           await restoreOrClearBadge();
         } else if (errorCode === 'SERVER_FORBIDDEN' || errorCode === 'SERVER_UNAUTHORIZED') {
           if (isRedditHostedMediaUrl(meta?.url)) {
-            console.warn(`[Image Saver] Reddit video requires an active Reddit session (${errorCode}):`, sanitizeUrlForLog(meta.url));
+            console.warn(`[MediaLatch] Reddit video requires an active Reddit session (${errorCode}):`, sanitizeUrlForLog(meta.url));
             await flashBadge('AUTH', '#f59e0b');
           } else {
-            console.error(`[Image Saver] Загрузка ${delta.id} прервана (${errorCode}):`, sanitizeUrlForLog(meta?.url || ''));
+            console.error(`[MediaLatch] Загрузка ${delta.id} прервана (${errorCode}):`, sanitizeUrlForLog(meta?.url || ''));
             await flashBadge('ERR', '#ef4444');
           }
         } else {
-          console.error(`[Image Saver] Загрузка ${delta.id} прервана с ошибкой:`, errorCode || 'interrupted');
+          console.error(`[MediaLatch] Загрузка ${delta.id} прервана с ошибкой:`, errorCode || 'interrupted');
           await flashBadge('ERR', '#ef4444');
         }
         if (activeOffscreenTasks === 0 && !hasActiveProtectedDownloads()) {
@@ -9119,7 +9119,7 @@ if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
  * as the download manager saves pre-fetched data locally without a secondary external network request.
  */
 async function fetchPixivImageAsDataUrl(targetImageUrl) {
-  console.log('[Image Saver] [Pixiv Download Path] Загрузка изображения через fetch:', sanitizeUrlForLog(targetImageUrl));
+  console.log('[MediaLatch] [Pixiv Download Path] Загрузка изображения через fetch:', sanitizeUrlForLog(targetImageUrl));
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 20000);
   const maxBytes = 50 * 1024 * 1024;
@@ -9165,7 +9165,7 @@ async function fetchPixivImageAsDataUrl(targetImageUrl) {
       base64 = Buffer.from(bytes).toString('base64');
     } else throw new Error('Image base64 encoder unavailable');
     if (controller.signal.aborted) throw new Error('TIMEOUT: Pixiv fetch aborted');
-    console.log(`[Image Saver] [Pixiv Download Path] Изображение успешно получено в память (${bytes.length} байт, ${contentType})`);
+    console.log(`[MediaLatch] [Pixiv Download Path] Изображение успешно получено в память (${bytes.length} байт, ${contentType})`);
     return `data:${contentType};base64,${base64}`;
   } finally {
     controller.abort();
@@ -9236,7 +9236,7 @@ async function settleEarlyTerminalDownload(downloadId) {
   await removeTrackedDownloadId(downloadId);
   activeDownloadsMetadata.delete(downloadId);
   if (earlyTerminal.state === 'complete') {
-    console.log(`[Image Saver] Загрузка ${downloadId} успешно завершена (early)`);
+    console.log(`[MediaLatch] Загрузка ${downloadId} успешно завершена (early)`);
     await flashBadge('OK', '#22c55e');
   } else if (earlyTerminal.errorCode === 'USER_CANCELED') {
     await restoreOrClearBadge();
@@ -9257,7 +9257,7 @@ async function settleEarlyTerminalDownload(downloadId) {
 async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options = {}) {
   const group = plan?.isCandidateGroup ? plan : adaptCandidateToGroup(plan);
   if (!group || !Array.isArray(group.variants) || group.variants.length === 0) {
-    console.warn('[Image Saver] executeMediaPlan: Недопустимый план или отсутствуют варианты:', plan);
+    console.warn('[MediaLatch] executeMediaPlan: Недопустимый план или отсутствуют варианты:', plan);
     await flashBadge('ERR', '#ef4444');
     return { success: false, error: 'INVALID_PLAN', status: 400 };
   }
@@ -9281,7 +9281,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
   })(primaryUrl);
 
   if (isHtmlPage) {
-    console.warn('[Image Saver] Отмена: целевой URL является веб-страницей (HTML), а не файлом медиа:', primaryUrl);
+    console.warn('[MediaLatch] Отмена: целевой URL является веб-страницей (HTML), а не файлом медиа:', primaryUrl);
     await flashBadge('ERR', '#ef4444');
     return { success: false, error: 'HTML_PAGE', status: 400 };
   }
@@ -9308,7 +9308,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
         validReusedBlob._matchingIndex = matchingVariantIndex;
       } else {
         // Missing or mismatching identity: strictly reject foreign or unassociated Blob and clean up its resources safely.
-        console.warn('[Image Saver] Отклонение verifiedBlob из-за отсутствия положительной связи с вариантами плана:', sanitizeUrlForLog(blobUrlIdentity || '(empty)'));
+        console.warn('[MediaLatch] Отклонение verifiedBlob из-за отсутствия положительной связи с вариантами плана:', sanitizeUrlForLog(blobUrlIdentity || '(empty)'));
         if (candidateReusedBlob.probeTaskKey || candidateReusedBlob.blobUrl) {
           await releaseOffscreenTask(candidateReusedBlob.probeTaskKey, candidateReusedBlob.blobUrl).catch(() => {});
           delete candidateReusedBlob.probeTaskKey;
@@ -9321,7 +9321,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
   for (let i = 0; i < group.variants.length; i++) {
     const variant = group.variants[i];
     const targetUrl = variant.url;
-    console.log(`[Image Saver] Выполнение варианта [${i + 1}/${group.variants.length}] (${group.transport}):`, sanitizeUrlForLog(targetUrl));
+    console.log(`[MediaLatch] Выполнение варианта [${i + 1}/${group.variants.length}] (${group.transport}):`, sanitizeUrlForLog(targetUrl));
 
     if (group.transport === 'protectedBlob') {
       if (validReusedBlob) {
@@ -9388,12 +9388,12 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
 
         // Check if advanceable (404, 410)
         if (advanceOnCodes.has(status)) {
-          console.warn(`[Image Saver] Вариант вернул HTTP ${status}, переход к следующему варианту:`, sanitizeUrlForLog(targetUrl));
+          console.warn(`[MediaLatch] Вариант вернул HTTP ${status}, переход к следующему варианту:`, sanitizeUrlForLog(targetUrl));
           continue;
         }
 
         // Non-advanceable error! Stop entire operation!
-        console.error(`[Image Saver] Критическая ошибка варианта (status: ${status}):`, errMsg);
+        console.error(`[MediaLatch] Критическая ошибка варианта (status: ${status}):`, errMsg);
 
         if (status === 401 || status === 403) {
           await flashBadge('AUTH', '#f59e0b');
@@ -9407,11 +9407,11 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
         }
       } catch (err) {
         await releaseOffscreenTask(variantKey);
-        console.error('[Image Saver] Исключение при выполнении варианта:', err);
+        console.error('[MediaLatch] Исключение при выполнении варианта:', err);
         const status = resolveCandidateHttpStatus(err?.status, err?.message);
         const errMsg = err?.message || 'VARIANT_ERROR';
         if (advanceOnCodes.has(status)) {
-          console.warn(`[Image Saver] Исключение варианта с переходящим статусом HTTP ${status}, переход к следующему варианту:`, sanitizeUrlForLog(targetUrl));
+          console.warn(`[MediaLatch] Исключение варианта с переходящим статусом HTTP ${status}, переход к следующему варианту:`, sanitizeUrlForLog(targetUrl));
           continue;
         }
         if (status === 401 || status === 403) {
@@ -9444,7 +9444,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
         };
         break;
       } catch (pixivErr) {
-        console.error('[Image Saver] Ошибка Pixiv fetch:', pixivErr);
+        console.error('[MediaLatch] Ошибка Pixiv fetch:', pixivErr);
         await flashBadge('ERR', '#ef4444');
         return { success: false, error: pixivErr.message, status: pixivErr.status || 500 };
       }
@@ -9474,7 +9474,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
     if (activeOffscreenTasks === 0) {
       await closeOffscreenDocument().catch(() => {});
     }
-    console.warn('[Image Saver] Все варианты логической группы отклонены (404/410 NOT_FOUND):', sanitizeGroupIdForLog(group.id));
+    console.warn('[MediaLatch] Все варианты логической группы отклонены (404/410 NOT_FOUND):', sanitizeGroupIdForLog(group.id));
     await flashBadge('ERR', '#ef4444');
     return {
       success: false,
@@ -9499,7 +9499,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
 
   const downloadSourceUrl = structuredResult.blobUrl || structuredResult.dataUrl || structuredResult.resolvedUrl;
 
-  console.log('[Image Saver] Запуск основного скачивания целевого медиа:', sanitizeUrlForLog({
+  console.log('[MediaLatch] Запуск основного скачивания целевого медиа:', sanitizeUrlForLog({
     url: structuredResult.resolvedUrl,
     downloadSourceUrl: structuredResult.blobUrl ? '(blob URL)' : structuredResult.resolvedUrl,
     filename: finalPath,
@@ -9529,10 +9529,10 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
           settled = true;
           const lastErr = chrome.runtime?.lastError;
           if (lastErr) {
-            console.error('[Image Saver] Ошибка chrome.downloads.download:', lastErr.message);
+            console.error('[MediaLatch] Ошибка chrome.downloads.download:', lastErr.message);
             reject(new Error(lastErr.message));
           } else if (id === undefined) {
-            console.error('[Image Saver] chrome.downloads.download вернул undefined');
+            console.error('[MediaLatch] chrome.downloads.download вернул undefined');
             reject(new Error('chrome.downloads.download returned undefined downloadId'));
           } else {
             resolve(id);
@@ -9541,7 +9541,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
       } catch (syncErr) {
         if (!settled) {
           settled = true;
-          console.error('[Image Saver] Исключение при chrome.downloads.download:', syncErr);
+          console.error('[MediaLatch] Исключение при chrome.downloads.download:', syncErr);
           reject(syncErr);
         }
         return;
@@ -9552,7 +9552,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
           (promiseErr) => {
             if (!settled) {
               settled = true;
-              console.error('[Image Saver] Ошибка chrome.downloads.download (Promise):', promiseErr);
+              console.error('[MediaLatch] Ошибка chrome.downloads.download (Promise):', promiseErr);
               reject(promiseErr);
             }
           }
@@ -9592,7 +9592,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
     }
 
     if (primaryDownloadError?.message?.includes('User cancelled') || primaryDownloadError?.message?.includes('user cancelled')) {
-      console.log('[Image Saver] Пользователь отменил выбор файла в системном диалоге сохранения');
+      console.log('[MediaLatch] Пользователь отменил выбор файла в системном диалоге сохранения');
       return { success: false, cancelled: true };
     }
 
@@ -9625,7 +9625,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
     );
 
     if (disallowEmergencyFallback) {
-      console.warn('[Image Saver] Сбой загрузки оригинального медиа, аварийный fallback запрещен:', primaryDownloadError);
+      console.warn('[MediaLatch] Сбой загрузки оригинального медиа, аварийный fallback запрещен:', primaryDownloadError);
       throw primaryDownloadError;
     }
 
@@ -9707,7 +9707,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
  */
 async function executeMediaDownload({ targetImageUrl, rawImageUrl, settings = {}, mediaPlan = null, disallowFallback = false, checkCancelled = null, pageUrl = '', feedbackOp = null }) {
   if (targetImageUrl && targetImageUrl.startsWith('blob:')) {
-    console.warn('[Image Saver] Попытка скачать blob URL напрямую отклонена (UNRESOLVED_BLOB_MEDIA):', sanitizeUrlForLog(targetImageUrl));
+    console.warn('[MediaLatch] Попытка скачать blob URL напрямую отклонена (UNRESOLVED_BLOB_MEDIA):', sanitizeUrlForLog(targetImageUrl));
     await fbFail(feedbackOp, { stage: 'resolve', code: 'UNRESOLVED_BLOB_MEDIA' });
     await flashBadge('ERR', '#ef4444');
     return {
@@ -9964,7 +9964,7 @@ async function executeXTweetVideoGifDownload(videoUrl, settings = {}, options = 
         saveAs: false
       });
     } catch (dlErr) {
-      console.error('[Image Saver] Ошибка вызова chrome.downloads.download для сконвертированного GIF:', dlErr);
+      console.error('[MediaLatch] Ошибка вызова chrome.downloads.download для сконвертированного GIF:', dlErr);
       await fbFail(feedbackOp, { stage: 'save', code: dlErr?.message });
       await releaseOffscreenTask(convResult.taskKey, convResult.blobUrl).catch(() => {});
       await flashBadge('ERR', '#ef4444');
@@ -9979,7 +9979,7 @@ async function executeXTweetVideoGifDownload(videoUrl, settings = {}, options = 
     await settleEarlyTerminalDownload(downloadId);
     return { success: true, downloadId };
   } catch (err) {
-    console.error('[Image Saver] Не удалось сконвертировать и скачать X tweet_video в GIF:', err);
+    console.error('[MediaLatch] Не удалось сконвертировать и скачать X tweet_video в GIF:', err);
     await fbFail(feedbackOp, { stage: convResult ? 'save' : 'convert', code: err?.message });
     await flashBadge('ERR', '#ef4444');
     return { success: false, error: err?.message || String(err) };
@@ -10104,7 +10104,7 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
         saveAs: false
       });
     } catch (dlErr) {
-      console.error('[Image Saver] Ошибка вызова chrome.downloads.download для сконвертированного Reddit GIF:', dlErr);
+      console.error('[MediaLatch] Ошибка вызова chrome.downloads.download для сконвертированного Reddit GIF:', dlErr);
       await fbFail(feedbackOp, { stage: 'save', code: dlErr?.message });
       await releaseOffscreenTask(convResult.taskKey, convResult.blobUrl).catch(() => {});
       await flashBadge('ERR', '#ef4444');
@@ -10119,7 +10119,7 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
     await settleEarlyTerminalDownload(downloadId);
     return { success: true, downloadId };
   } catch (err) {
-    console.error('[Image Saver] Не удалось сконвертировать и скачать Reddit анимацию в GIF:', err);
+    console.error('[MediaLatch] Не удалось сконвертировать и скачать Reddit анимацию в GIF:', err);
     await fbFail(feedbackOp, { stage: convResult ? 'save' : 'convert', code: err?.message });
     await flashBadge('ERR', '#ef4444');
     return { success: false, error: err?.message || String(err) };
@@ -10190,7 +10190,7 @@ async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) 
       // the worker log keeps only a bounded code and status: never an address, its query or text a server sent
       const logCode = res && typeof res.error === 'string' && /^[A-Z][A-Z_]{1,31}$/.test(res.error) ? res.error : 'ASSEMBLE_FAILED';
       const logStatus = res && Number.isInteger(res.status) && res.status >= 100 && res.status <= 599 ? ` ${res.status}` : '';
-      console.warn(`[Image Saver] Reddit HLS assembly failed: ${logCode}${logStatus}`);
+      console.warn(`[MediaLatch] Reddit HLS assembly failed: ${logCode}${logStatus}`);
       await fbFail(feedbackOp, failure);
       await releaseOffscreenTask(taskKey).catch(() => {});
       taskKey = null;
@@ -10212,7 +10212,7 @@ async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) 
     try {
       downloadId = await chrome.downloads.download({ url: blobUrl, filename, saveAs: false });
     } catch (dlErr) {
-      console.error('[Image Saver] Ошибка chrome.downloads.download для собранного Reddit HLS видео:', dlErr);
+      console.error('[MediaLatch] Ошибка chrome.downloads.download для собранного Reddit HLS видео:', dlErr);
       await fbFail(feedbackOp, { stage: 'save', code: dlErr?.message });
       await releaseOffscreenTask(taskKey, blobUrl).catch(() => {});
       taskKey = null;
@@ -10228,7 +10228,7 @@ async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) 
     await settleEarlyTerminalDownload(downloadId);
     return { success: true, downloadId };
   } catch (err) {
-    console.error('[Image Saver] Не удалось собрать и скачать Reddit HLS видео:', err);
+    console.error('[MediaLatch] Не удалось собрать и скачать Reddit HLS видео:', err);
     await fbFail(feedbackOp, { stage: 'resolve', code: 'ASSEMBLE_FAILED' });
     if (taskKey) await releaseOffscreenTask(taskKey, blobUrl).catch(() => {});
     await flashBadge('ERR', '#ef4444');
@@ -10266,7 +10266,7 @@ async function closeOffscreenDocument() {
       if (activeOffscreenTasks > 0 || hasActiveProtectedDownloads()) return;
       await chrome.offscreen.closeDocument();
     } catch (err) {
-      console.warn('[Image Saver] Не удалось закрыть offscreen document:', err);
+      console.warn('[MediaLatch] Не удалось закрыть offscreen document:', err);
     } finally {
       offscreenClosingPromise = null;
     }
@@ -10483,7 +10483,7 @@ function reconcileActiveOffscreenDownloads() {
       for (const entry of cleanup) await untrackDownloadProtectedBlob(entry.downloadId);
       offscreenOwnershipKnown = true;
     } catch (err) {
-      console.warn('[Image Saver] Ошибка сверки active offscreen downloads при запуске:', err);
+      console.warn('[MediaLatch] Ошибка сверки active offscreen downloads при запуске:', err);
     }
   })();
   offscreenRecoveryPromise = run.finally(async () => {
@@ -10568,7 +10568,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
                              errStr.includes('could not establish connection') ||
                              errStr.includes('receiving end does not exist');
           if (isConnLoss) {
-            console.warn('[Image Saver] Message channel closed during protected probe, retrying once:', sendErr.message);
+            console.warn('[MediaLatch] Message channel closed during protected probe, retrying once:', sendErr.message);
             await ensureOffscreenDocument();
             probeRes = await chrome.runtime.sendMessage({
               action,
@@ -10607,7 +10607,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
             transferredTask = true;
             return verifiedContentType;
           }
-          console.warn('[Image Saver] Protected probe returned invalid/non-media MIME:', verifiedContentType);
+          console.warn('[MediaLatch] Protected probe returned invalid/non-media MIME:', verifiedContentType);
           return null;
         }
 
@@ -10615,7 +10615,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
         const errMsg = probeRes?.error || (status ? `HTTP ${status}` : 'Protected probe failed');
 
         if (status === 429) {
-          console.warn('[Image Saver] HTTP 429 received during protected probe:', sanitizeUrlForLog(currentUrl));
+          console.warn('[MediaLatch] HTTP 429 received during protected probe:', sanitizeUrlForLog(currentUrl));
           if (mediaPlan) {
             mediaPlan._rateLimited = true;
             mediaPlan._verificationStatus = 429;
@@ -10626,7 +10626,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
         }
 
         if (status === 403 || status === 401) {
-          console.warn('[Image Saver] HTTP 403/401 received during protected probe:', sanitizeUrlForLog(currentUrl));
+          console.warn('[MediaLatch] HTTP 403/401 received during protected probe:', sanitizeUrlForLog(currentUrl));
           if (mediaPlan) {
             mediaPlan._verificationStatus = status;
             mediaPlan.error = 'AUTH_REQUIRED';
@@ -10636,14 +10636,14 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
         }
 
         if (advanceOnCodes.has(status)) {
-          console.warn(`[Image Saver] Вариант вернул HTTP ${status}, переход к следующему варианту:`, sanitizeUrlForLog(currentUrl));
+          console.warn(`[MediaLatch] Вариант вернул HTTP ${status}, переход к следующему варианту:`, sanitizeUrlForLog(currentUrl));
           continue;
         }
 
-        console.warn(`[Image Saver] Защищенный зонд завершился с непереходной ошибкой (status: ${status}):`, errMsg);
+        console.warn(`[MediaLatch] Защищенный зонд завершился с непереходной ошибкой (status: ${status}):`, errMsg);
         return null;
       } catch (e) {
-        console.warn('[Image Saver] Protected probe failed for MIME verification:', e);
+        console.warn('[MediaLatch] Protected probe failed for MIME verification:', e);
         const status = resolveCandidateHttpStatus(e?.status, e?.message);
         if (status === 429) {
           if (mediaPlan) {
@@ -10661,7 +10661,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
           await flashBadge('AUTH', '#f59e0b');
           return null;
         } else if (advanceOnCodes.has(status)) {
-          console.warn(`[Image Saver] Исключение зонда с переходящим статусом HTTP ${status}, переход к следующему варианту:`, sanitizeUrlForLog(currentUrl));
+          console.warn(`[MediaLatch] Исключение зонда с переходящим статусом HTTP ${status}, переход к следующему варианту:`, sanitizeUrlForLog(currentUrl));
           continue;
         }
         return null;
@@ -10688,7 +10688,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
       const currentUrl = variants[i].url;
       const probe = await probeVideoUrlDetails(currentUrl);
       if (probe && (probe.status === 429 || probe.error === 'RATE_LIMIT')) {
-        console.warn('[Image Saver] HTTP 429 received during video probe:', sanitizeUrlForLog(currentUrl));
+        console.warn('[MediaLatch] HTTP 429 received during video probe:', sanitizeUrlForLog(currentUrl));
         if (mediaPlan) {
           mediaPlan._rateLimited = true;
           mediaPlan._verificationStatus = 429;
@@ -10697,7 +10697,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
         return null;
       }
       if (probe && (probe.status === 401 || probe.status === 403 || probe.requiresAuth)) {
-        console.warn(`[Image Saver] HTTP ${probe.status} received during video probe:`, sanitizeUrlForLog(currentUrl));
+        console.warn(`[MediaLatch] HTTP ${probe.status} received during video probe:`, sanitizeUrlForLog(currentUrl));
         if (mediaPlan) {
           mediaPlan._verificationStatus = probe.status;
           mediaPlan.error = 'AUTH_REQUIRED';
@@ -10724,7 +10724,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
       }
       const status = probe?.status || (probe?.error === 'NOT_FOUND' ? 404 : (probe?.error === 'GONE' ? 410 : 0));
       if (advanceOnCodes.has(status)) {
-        console.warn(`[Image Saver] Direct video variant returned HTTP ${status}, advancing to next variant:`, sanitizeUrlForLog(currentUrl));
+        console.warn(`[MediaLatch] Direct video variant returned HTTP ${status}, advancing to next variant:`, sanitizeUrlForLog(currentUrl));
         continue;
       }
       if (mediaPlan) {
@@ -10749,7 +10749,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
   };
   const isOk = await probeCandidate(probeTarget);
   if (probeTarget.status === 429) {
-    console.warn('[Image Saver] HTTP 429 received during image probe:', sanitizeUrlForLog(targetUrl));
+    console.warn('[MediaLatch] HTTP 429 received during image probe:', sanitizeUrlForLog(targetUrl));
     if (mediaPlan) {
       mediaPlan._rateLimited = true;
       mediaPlan._verificationStatus = 429;
@@ -10759,7 +10759,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
     return null;
   }
   if (probeTarget.status === 403 || probeTarget.status === 401) {
-    console.warn(`[Image Saver] HTTP ${probeTarget.status} received during image probe:`, sanitizeUrlForLog(targetUrl));
+    console.warn(`[MediaLatch] HTTP ${probeTarget.status} received during image probe:`, sanitizeUrlForLog(targetUrl));
     if (mediaPlan) {
       mediaPlan._verificationStatus = probeTarget.status;
       mediaPlan.error = 'AUTH_REQUIRED';
@@ -10781,7 +10781,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
   }
 
   if (!isOk) {
-    console.warn(`[Image Saver] Финальная проверка изображения не подтвердила тип (HTTP: ${probeTarget.status || 'не наблюдался'}):`, sanitizeUrlForLog(targetUrl));
+    console.warn(`[MediaLatch] Финальная проверка изображения не подтвердила тип (HTTP: ${probeTarget.status || 'не наблюдался'}):`, sanitizeUrlForLog(targetUrl));
     if (mediaPlan) {
       mediaPlan._verificationStatus = probeTarget.status || 500;
       mediaPlan._verificationStatusObserved = Boolean(probeTarget.status);
@@ -10804,7 +10804,7 @@ async function onContextMenuClicked(info, tab) {
     console.log('[Chooser Profiler] 1. context menu received (t=0.0ms)');
     let rawImageUrl = (info.srcUrl || '').trim();
     const rawLinkUrl = (info.linkUrl || '').trim();
-    console.log('[Image Saver] Клик по контекстному меню для медиа:', sanitizeUrlForLog(rawImageUrl || rawLinkUrl));
+    console.log('[MediaLatch] Клик по контекстному меню для медиа:', sanitizeUrlForLog(rawImageUrl || rawLinkUrl));
 
     // Admission of the selected owner, the one gate of every save path: a source or media link from Chrome never
     // bypasses it, and no provider recovery, probe or download runs before it passes.
@@ -10813,8 +10813,8 @@ async function onContextMenuClicked(info, tab) {
     const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || pawchiveItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '' });
     if (owner === 'refused' || owner === 'preview') {
       console.warn(owner === 'preview'
-        ? '[Image Saver] The selected video is a seek preview, not the media of the post: save refused without requests'
-        : '[Image Saver] Владелец выбранной цели удалён, заменён или изменён после жеста — сохранение отклонено без запросов');
+        ? '[MediaLatch] The selected video is a seek preview, not the media of the post: save refused without requests'
+        : '[MediaLatch] Владелец выбранной цели удалён, заменён или изменён после жеста — сохранение отклонено без запросов');
       const staleOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, '') });
       await fbFail(staleOp, { stage: 'resolve', code: 'NO_MEDIA' });
       await fbBadgeReporter(staleOp)('ERR', '#ef4444');
@@ -10895,18 +10895,18 @@ async function onContextMenuClicked(info, tab) {
           gesturePlayer = true;
           gestureDocumentId = gestureMedia.documentId || '';
           gestureAt = gestureMedia.gestureAt;
-          console.log('[Image Saver] Плеер RedGIFs без адреса выбран по жесту (разрешение в кадре)');
+          console.log('[MediaLatch] Плеер RedGIFs без адреса выбран по жесту (разрешение в кадре)');
         }
       } else if (gestureMedia && (!isXPageUrl(info.pageUrl || tab?.url) || gestureMedia.kind === 'img')) {
         rawImageUrl = gestureMedia.url;
         gestureKind = gestureMedia.kind === 'video' ? 'video' : '';
-        console.log('[Image Saver] Медиа выбрано по жесту (CSS-фон/overlay):', sanitizeUrlForLog(rawImageUrl));
+        console.log('[MediaLatch] Медиа выбрано по жесту (CSS-фон/overlay):', sanitizeUrlForLog(rawImageUrl));
       }
     }
 
     // 1. Prevent non-media text/navigation links from falling through to page-level OpenGraph metadata.
     if (!gesturePlayer && !hasMediaAssociation(rawImageUrl, rawLinkUrl)) {
-      console.log('[Image Saver] Клик контекстного меню вызван без ассоциации с медиа — отмена разрешения');
+      console.log('[MediaLatch] Клик контекстного меню вызван без ассоциации с медиа — отмена разрешения');
       // No proven selected target (blank area, text, caption, a plain navigation link, a container): nothing is
       // resolved, probed or saved, before any provider or generic resolver runs. A click on the page entry or on a
       // link (the only way the image entry is reached without media) is refused visibly, not silently.
@@ -10924,7 +10924,7 @@ async function onContextMenuClicked(info, tab) {
       ? `gesture-player:${tab.id}:${info.frameId ?? 0}:${inlineRedGifs.documentId}:${inlineRedGifs.player}`
       : `gesture-player:${tab.id}:${info.frameId ?? 0}`);
     if (inFlightRequests.has(dedupeKey)) {
-      console.warn('[Image Saver] Запрос на сохранение данного медиа уже выполняется, игнорируем дубликат:', dedupeKey);
+      console.warn('[MediaLatch] Запрос на сохранение данного медиа уже выполняется, игнорируем дубликат:', dedupeKey);
       return;
     }
     inFlightRequests.add(dedupeKey);
@@ -10978,7 +10978,7 @@ async function onContextMenuClicked(info, tab) {
           const domRes = await queryBooruDomMetadata(tab.id, clickedTarget);
           if (isValidDanbooruMetadata(domRes, clickedTarget)) {
             booruDomMeta = domRes;
-            console.log('[Image Saver] Получены валидные DOM метаданные Danbooru (Fast Path):', sanitizeUrlForLog(booruDomMeta.originalUrl));
+            console.log('[MediaLatch] Получены валидные DOM метаданные Danbooru (Fast Path):', sanitizeUrlForLog(booruDomMeta.originalUrl));
           }
         } catch (_) {}
       }
@@ -11088,19 +11088,19 @@ async function onContextMenuClicked(info, tab) {
 
       if (!targetMediaUrl || !mediaPlan || mediaPlan?._rateLimited || mediaPlan?._verificationStatus === 429 || mediaPlan?.error === 'RATE_LIMIT' || mediaPlan?._verificationStatus === 403 || mediaPlan?._verificationStatus === 401 || mediaPlan?.error === 'AUTH_REQUIRED' || mediaPlan?.error === 'NOT_FOUND') {
         if (mediaPlan?._rateLimited || mediaPlan?._verificationStatus === 429 || mediaPlan?.error === 'RATE_LIMIT' || mediaResolution?.error === 'RATE_LIMIT' || mediaResolution?.status === 429) {
-          console.warn('[Image Saver] Отмена скачивания из-за HTTP 429 (RATE_LIMIT):', sanitizeUrlForLog(rawImageUrl || rawLinkUrl));
+          console.warn('[MediaLatch] Отмена скачивания из-за HTTP 429 (RATE_LIMIT):', sanitizeUrlForLog(rawImageUrl || rawLinkUrl));
           await fbFail(op, { stage: 'resolve', code: 'RATE_LIMIT', status: fbStatusIn([mediaPlan?._verificationStatus, mediaResolution?.status], [429]) });
           await flashBadge('RATE', '#f59e0b');
           return;
         }
         if (mediaPlan?._verificationStatus === 403 || mediaPlan?._verificationStatus === 401 || mediaPlan?.error === 'AUTH_REQUIRED' || mediaResolution?.error === 'AUTH_REQUIRED') {
-          console.warn('[Image Saver] Отмена скачивания: ' + (mediaPlan?.message || mediaResolution?.message || 'требуется активная сессия'));
+          console.warn('[MediaLatch] Отмена скачивания: ' + (mediaPlan?.message || mediaResolution?.message || 'требуется активная сессия'));
           await fbFail(op, { stage: 'resolve', code: 'AUTH_REQUIRED', status: fbStatusIn([mediaPlan?._verificationStatus, mediaResolution?.status], [401, 403]) });
           await flashBadge('AUTH', '#f59e0b');
           return;
         }
         if (mediaResolution?.error === 'UNRESOLVED_BLOB_MEDIA') {
-          console.warn('[Image Saver] Отмена скачивания: не удалось разрешить blob URL (UNRESOLVED_BLOB_MEDIA)');
+          console.warn('[MediaLatch] Отмена скачивания: не удалось разрешить blob URL (UNRESOLVED_BLOB_MEDIA)');
           // a positively identified stream that cannot be saved is an unsupported source, not an unresolved element
           const unsupportedStream = mediaResolution.reason === 'UNSUPPORTED_DASH_STREAM' || mediaResolution.reason === 'UNSUPPORTED_STREAM';
           await fbFail(op, { stage: 'resolve', code: unsupportedStream ? 'UNSUPPORTED_SOURCE' : 'UNRESOLVED_BLOB_MEDIA' });
@@ -11108,7 +11108,7 @@ async function onContextMenuClicked(info, tab) {
           return;
         }
         if (!targetMediaUrl || !mediaPlan || mediaPlan?.error === 'NOT_FOUND') {
-          console.warn('[Image Saver] Не удалось определить медиа для сохранения');
+          console.warn('[MediaLatch] Не удалось определить медиа для сохранения');
           const notFound = mediaPlan?.error === 'NOT_FOUND';
           await fbFail(op, {
             stage: 'resolve',
@@ -11137,21 +11137,21 @@ async function onContextMenuClicked(info, tab) {
       }
 
       if (mediaPlan?._rateLimited || mediaPlan?._verificationStatus === 429 || mediaPlan?.error === 'RATE_LIMIT') {
-        console.warn('[Image Saver] Остановка конвейера сохранения из-за HTTP 429 (RATE_LIMIT):', sanitizeUrlForLog(targetMediaUrl));
+        console.warn('[MediaLatch] Остановка конвейера сохранения из-за HTTP 429 (RATE_LIMIT):', sanitizeUrlForLog(targetMediaUrl));
         await fbFail(op, { stage: 'verify', code: 'RATE_LIMIT', status: fbStatusIn([mediaPlan?._verificationStatus], [429]) });
         await flashBadge('RATE', '#f59e0b');
         return;
       }
 
       if (mediaPlan?._verificationStatus === 403 || mediaPlan?._verificationStatus === 401 || mediaPlan?.error === 'AUTH_REQUIRED') {
-        console.warn('[Image Saver] Отмена скачивания: требуется авторизация (HTTP 403/401):', sanitizeUrlForLog(targetMediaUrl));
+        console.warn('[MediaLatch] Отмена скачивания: требуется авторизация (HTTP 403/401):', sanitizeUrlForLog(targetMediaUrl));
         await fbFail(op, { stage: 'verify', code: 'AUTH_REQUIRED', status: fbStatusIn([mediaPlan?._verificationStatus], [401, 403]) });
         await flashBadge('AUTH', '#f59e0b');
         return;
       }
 
       if (!verifiedMime && (isVideo || isProtected || mediaPlan?._domFastPath || mediaPlan?._probeFailed)) {
-        console.warn('[Image Saver] Финальная верификация MIME завершилась неудачей, скачивание отклонено:', sanitizeUrlForLog(targetMediaUrl));
+        console.warn('[MediaLatch] Финальная верификация MIME завершилась неудачей, скачивание отклонено:', sanitizeUrlForLog(targetMediaUrl));
         await fbFail(op, { stage: 'verify', code: 'MIME_NOT_VERIFIED' });
         if (mediaPlan?.verifiedBlob?.probeTaskKey) {
           await releaseOffscreenTask(mediaPlan.verifiedBlob.probeTaskKey, mediaPlan.verifiedBlob.blobUrl).catch(() => {});
@@ -11196,7 +11196,7 @@ async function onContextMenuClicked(info, tab) {
         await releaseOffscreenTask(mediaPlan.verifiedBlob.probeTaskKey, mediaPlan.verifiedBlob.blobUrl).catch(() => {});
         delete mediaPlan.verifiedBlob;
       }
-      console.error('[Image Saver] Критическая ошибка при сохранении:', downloadError);
+      console.error('[MediaLatch] Критическая ошибка при сохранении:', downloadError);
       await fbFail(op, { code: downloadError?.message });
       await flashBadge('ERR', '#ef4444');
     } finally {
@@ -11208,7 +11208,7 @@ async function onContextMenuClicked(info, tab) {
     }
   } else if (info.menuItemId === 'save-x-media-item') {
     if (!tab?.id) {
-      console.warn('[Image Saver] Клик по X media меню без активного tab.id');
+      console.warn('[MediaLatch] Клик по X media меню без активного tab.id');
       return;
     }
 
@@ -11233,13 +11233,13 @@ async function onContextMenuClicked(info, tab) {
             mediaResult = await chrome.tabs.sendMessage(tab.id, { action: 'GET_X_MEDIA_AT_CURSOR' });
           }
         } catch (injectErr) {
-          console.warn('[Image Saver] Не удалось связаться с content_x.js:', injectErr);
+          console.warn('[MediaLatch] Не удалось связаться с content_x.js:', injectErr);
         }
       }
 
       const rawMediaUrl = mediaResult?.url || mediaResult?.src;
       if (!mediaResult || !rawMediaUrl) {
-        console.warn('[Image Saver] Медиа под курсором на странице X не найдено');
+        console.warn('[MediaLatch] Медиа под курсором на странице X не найдено');
         await fbFail(op, { stage: 'resolve', code: 'NO_MEDIA' });
         await flashBadge('ERR', '#ef4444');
         return;
@@ -11281,7 +11281,7 @@ async function onContextMenuClicked(info, tab) {
         } catch (e) {}
 
         if (!isValidTweetVideo) {
-          console.warn('[Image Saver] Отклонен неподходящий URL X tweet_video:', sanitizeUrlForLog(mediaResult.url));
+          console.warn('[MediaLatch] Отклонен неподходящий URL X tweet_video:', sanitizeUrlForLog(mediaResult.url));
           await fbFail(op, { stage: 'verify', code: 'INVALID_MEDIA' });
           await flashBadge('ERR', '#ef4444');
           return;
@@ -11289,7 +11289,7 @@ async function onContextMenuClicked(info, tab) {
 
         const dedupeKey = mediaResult.url;
         if (inFlightRequests.has(dedupeKey)) {
-          console.warn('[Image Saver] Загрузка этого X медиа уже выполняется:', sanitizeUrlForLog(dedupeKey));
+          console.warn('[MediaLatch] Загрузка этого X медиа уже выполняется:', sanitizeUrlForLog(dedupeKey));
           await fbDiscard(op);
           return;
         }
@@ -11299,7 +11299,7 @@ async function onContextMenuClicked(info, tab) {
         try {
           await executeXTweetVideoGifDownload(mediaResult.url, settings, { pageUrl: tab.url || info.pageUrl || '', feedbackOp: op });
         } catch (err) {
-          console.error('[Image Saver] Ошибка конвертации и скачивания X tweet video:', err);
+          console.error('[MediaLatch] Ошибка конвертации и скачивания X tweet video:', err);
           await flashBadge('ERR', '#ef4444');
         } finally {
           activeResolvingCount--;
@@ -11315,7 +11315,7 @@ async function onContextMenuClicked(info, tab) {
         if (mediaResult.recoveredMp4Url) {
           rawVideoUrl = mediaResult.recoveredMp4Url;
         } else if (mediaResult.isHlsOnly && !isBlobOrManifest) {
-          console.warn('[Image Saver] Видео в посте X доступно только в виде HLS-потока (m3u8) без прямого MP4 варианта:', sanitizeUrlForLog(mediaResult.postUrl || rawVideoUrl));
+          console.warn('[MediaLatch] Видео в посте X доступно только в виде HLS-потока (m3u8) без прямого MP4 варианта:', sanitizeUrlForLog(mediaResult.postUrl || rawVideoUrl));
           await fbFail(op, { stage: 'resolve', code: 'HLS_ONLY' });
           await flashBadge('ERR', '#ef4444');
           return;
@@ -11325,12 +11325,12 @@ async function onContextMenuClicked(info, tab) {
           if (recovery.ok && recovery.mp4Url) {
             rawVideoUrl = recovery.mp4Url;
           } else if (recovery.isHlsOnly) {
-            console.warn('[Image Saver] Видео в посте X доступно только в виде HLS-потока (m3u8) без прямого MP4 варианта:', sanitizeUrlForLog(mediaResult.postUrl || rawVideoUrl));
+            console.warn('[MediaLatch] Видео в посте X доступно только в виде HLS-потока (m3u8) без прямого MP4 варианта:', sanitizeUrlForLog(mediaResult.postUrl || rawVideoUrl));
           await fbFail(op, { stage: 'resolve', code: 'HLS_ONLY' });
             await flashBadge('ERR', '#ef4444');
             return;
           } else {
-            console.warn('[Image Saver] Не удалось восстановить прямой MP4 из метаданных поста X для blob-плеера:', sanitizeUrlForLog(mediaResult.postUrl || rawVideoUrl), describeXRecoveryFailure(recovery));
+            console.warn('[MediaLatch] Не удалось восстановить прямой MP4 из метаданных поста X для blob-плеера:', sanitizeUrlForLog(mediaResult.postUrl || rawVideoUrl), describeXRecoveryFailure(recovery));
             await fbFail(op, { stage: 'resolve', code: 'NO_MEDIA' });
             await flashBadge('ERR', '#ef4444');
             return;
@@ -11338,7 +11338,7 @@ async function onContextMenuClicked(info, tab) {
         }
 
         if (!isValidXVideoCdnUrl(rawVideoUrl)) {
-          console.warn('[Image Saver] Невалидный CDN хост для видео X:', sanitizeUrlForLog(rawVideoUrl));
+          console.warn('[MediaLatch] Невалидный CDN хост для видео X:', sanitizeUrlForLog(rawVideoUrl));
           await flashBadge('ERR', '#ef4444');
           return;
         }
@@ -11347,19 +11347,19 @@ async function onContextMenuClicked(info, tab) {
         try {
           parsedUrl = new URL(rawVideoUrl);
         } catch (_) {
-          console.warn('[Image Saver] Некорректный URL видео с X:', sanitizeUrlForLog(rawVideoUrl));
+          console.warn('[MediaLatch] Некорректный URL видео с X:', sanitizeUrlForLog(rawVideoUrl));
           await flashBadge('ERR', '#ef4444');
           return;
         }
         if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
-          console.warn('[Image Saver] Неподдерживаемый протокол видео с X:', sanitizeUrlForLog(rawVideoUrl));
+          console.warn('[MediaLatch] Неподдерживаемый протокол видео с X:', sanitizeUrlForLog(rawVideoUrl));
           await flashBadge('ERR', '#ef4444');
           return;
         }
 
         const dedupeKey = rawVideoUrl;
         if (inFlightRequests.has(dedupeKey)) {
-          console.warn('[Image Saver] Загрузка этого видео уже выполняется:', sanitizeUrlForLog(dedupeKey));
+          console.warn('[MediaLatch] Загрузка этого видео уже выполняется:', sanitizeUrlForLog(dedupeKey));
           await fbDiscard(op);
           return;
         }
@@ -11370,19 +11370,19 @@ async function onContextMenuClicked(info, tab) {
           await setBadge('...', '#3b82f6');
           const probe = await probeVideoUrlDetails(rawVideoUrl);
           if (probe && (probe.status === 401 || probe.status === 403 || probe.requiresAuth)) {
-            console.warn('[Image Saver] Ошибка авторизации видео с X (HTTP 401/403):', sanitizeUrlForLog(rawVideoUrl));
+            console.warn('[MediaLatch] Ошибка авторизации видео с X (HTTP 401/403):', sanitizeUrlForLog(rawVideoUrl));
             await fbFail(op, { stage: 'verify', code: 'AUTH_REQUIRED', status: fbStatusIn([probe?.status], [401, 403]) });
             await flashBadge('AUTH', '#f59e0b');
             return;
           }
           if (probe && (probe.status === 429 || probe.error === 'RATE_LIMIT')) {
-            console.warn('[Image Saver] Превышен лимит запросов для видео с X (HTTP 429):', sanitizeUrlForLog(rawVideoUrl));
+            console.warn('[MediaLatch] Превышен лимит запросов для видео с X (HTTP 429):', sanitizeUrlForLog(rawVideoUrl));
             await fbFail(op, { stage: 'verify', code: 'RATE_LIMIT', status: fbStatusIn([probe?.status], [429]) });
             await flashBadge('RATE', '#f59e0b');
             return;
           }
           if (!probe || !probe.ok) {
-            console.warn('[Image Saver] Ошибка проверки доступности видео с X:', probe?.error || probe?.status);
+            console.warn('[MediaLatch] Ошибка проверки доступности видео с X:', probe?.error || probe?.status);
             await fbFail(op, { stage: 'verify', code: probe?.error, status: Number.isInteger(probe?.status) ? probe.status : null });
             await flashBadge('ERR', '#ef4444');
             return;
@@ -11395,7 +11395,7 @@ async function onContextMenuClicked(info, tab) {
              isDirectVideoUrl(rawVideoUrl) && !rawVideoUrl.toLowerCase().includes('.webm') && !rawVideoUrl.toLowerCase().includes('.mov'))
           );
           if (verifiedType === 'video/webm' || verifiedType === 'video/quicktime' || verifiedType.includes('webm') || verifiedType.includes('quicktime') || !isAcceptableMp4Mime) {
-            console.warn('[Image Saver] Отклонен неподходящий Content-Type для X MP4:', verifiedType);
+            console.warn('[MediaLatch] Отклонен неподходящий Content-Type для X MP4:', verifiedType);
             await fbFail(op, { stage: 'verify', code: 'INVALID_MEDIA' });
             await flashBadge('ERR', '#ef4444');
             return;
@@ -11404,7 +11404,7 @@ async function onContextMenuClicked(info, tab) {
           // Bounded MP4 container byte verification
           const containerCheck = await verifyMp4ContainerBytes(rawVideoUrl);
           if (!containerCheck.ok) {
-            console.warn('[Image Saver] Отклонен невалидный MP4 контейнер для видео с X:', containerCheck.error, containerCheck.sniffedMime || '');
+            console.warn('[MediaLatch] Отклонен невалидный MP4 контейнер для видео с X:', containerCheck.error, containerCheck.sniffedMime || '');
             await fbFail(op, { stage: 'verify', code: 'INVALID_CONTAINER' });
             await flashBadge('ERR', '#ef4444');
             return;
@@ -11429,7 +11429,7 @@ async function onContextMenuClicked(info, tab) {
             feedbackOp: op
           });
         } catch (err) {
-          console.error('[Image Saver] Ошибка скачивания видео с X:', err);
+          console.error('[MediaLatch] Ошибка скачивания видео с X:', err);
           await flashBadge('ERR', '#ef4444');
         } finally {
           activeResolvingCount--;
@@ -11442,7 +11442,7 @@ async function onContextMenuClicked(info, tab) {
         const rawImageUrl = mediaResult.url;
         const dedupeKey = rawImageUrl;
         if (inFlightRequests.has(dedupeKey)) {
-          console.warn('[Image Saver] Загрузка этого изображения уже выполняется:', sanitizeUrlForLog(dedupeKey));
+          console.warn('[MediaLatch] Загрузка этого изображения уже выполняется:', sanitizeUrlForLog(dedupeKey));
           await fbDiscard(op);
           return;
         }
@@ -11459,7 +11459,7 @@ async function onContextMenuClicked(info, tab) {
           const targetImageUrl = mediaPlan?.primaryUrl;
 
           if (!targetImageUrl && !mediaPlan) {
-            console.warn('[Image Saver] Не удалось определить изображение для сохранения с X:', sanitizeUrlForLog(rawImageUrl));
+            console.warn('[MediaLatch] Не удалось определить изображение для сохранения с X:', sanitizeUrlForLog(rawImageUrl));
             await flashBadge('ERR', '#ef4444');
             return;
           }
@@ -11473,7 +11473,7 @@ async function onContextMenuClicked(info, tab) {
             feedbackOp: op
           });
         } catch (err) {
-          console.error('[Image Saver] Ошибка скачивания изображения с X:', err);
+          console.error('[MediaLatch] Ошибка скачивания изображения с X:', err);
           await flashBadge('ERR', '#ef4444');
         } finally {
           activeResolvingCount--;
@@ -11483,12 +11483,12 @@ async function onContextMenuClicked(info, tab) {
           }
         }
       } else {
-        console.warn('[Image Saver] Неподдерживаемый тип медиа с X:', mediaResult.type);
+        console.warn('[MediaLatch] Неподдерживаемый тип медиа с X:', mediaResult.type);
         await fbFail(op, { stage: 'resolve', code: 'UNSUPPORTED_MEDIA' });
         await flashBadge('ERR', '#ef4444');
       }
     } catch (outerErr) {
-      console.error('[Image Saver] Общая ошибка при обработке X media:', outerErr);
+      console.error('[MediaLatch] Общая ошибка при обработке X media:', outerErr);
       await flashBadge('ERR', '#ef4444');
     }
   }
@@ -11583,7 +11583,7 @@ async function handleXInlineSave(message, sender) {
   const answer = await xInlineAsk(sender.tab, sender, { action: 'X_INLINE_OWNER', token: message.token });
   const media = answer && answer.ok === true ? sanitizeXInlineMedia(answer.media) : null;
   if (!media) {
-    console.warn('[Image Saver] Inline X Save refused: the owner was not proven again');
+    console.warn('[MediaLatch] Inline X Save refused: the owner was not proven again');
     await xInlineRefuse(sender);
     return;
   }
@@ -11600,7 +11600,7 @@ async function handleXInlineSaveAll(message, sender) {
   const open = await xInlineAsk(tab, sender, { action: 'X_INLINE_BATCH', token: message.token });
   const count = open && open.ok === true && Number.isInteger(open.count) ? open.count : 0;
   if (count < 2 || count > X_INLINE_BATCH_MAX) {
-    console.warn('[Image Saver] Inline X Save all refused: the list of media was not proven');
+    console.warn('[MediaLatch] Inline X Save all refused: the list of media was not proven');
     await xInlineRefuse(sender);
     return;
   }
@@ -11635,7 +11635,7 @@ async function handleXInlineSaveAll(message, sender) {
       tally.refused++;
       await xInlineRefuse(sender);
     }
-    console.info('[Image Saver] Inline X Save all:', { items: count, ...tally });
+    console.info('[MediaLatch] Inline X Save all:', { items: count, ...tally });
   } finally {
     xInlineBusy.delete(batchKey);
   }
@@ -11645,9 +11645,9 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender) => {
     if (!message) return;
     if (message.action === 'X_INLINE_SAVE') {
-      handleXInlineSave(message, sender).catch((e) => console.warn('[Image Saver] Inline X Save failed:', e?.message || e));
+      handleXInlineSave(message, sender).catch((e) => console.warn('[MediaLatch] Inline X Save failed:', e?.message || e));
     } else if (message.action === 'X_INLINE_SAVE_ALL') {
-      handleXInlineSaveAll(message, sender).catch((e) => console.warn('[Image Saver] Inline X Save all failed:', e?.message || e));
+      handleXInlineSaveAll(message, sender).catch((e) => console.warn('[MediaLatch] Inline X Save all failed:', e?.message || e));
     }
   });
 }
@@ -11810,7 +11810,7 @@ async function redditInlineRun(tab, sender, media) {
       // RD-10: the click runs in the frame of the proven clip, pinned to the document found now, through the same resolver as the context menu
       const frame = await redditInlineFindRedGifsFrame(tab.id, sender, embed);
       if (!frame) {
-        console.warn('[Image Saver] Inline Reddit Save refused: no single frame shows the embedded RedGIFs clip');
+        console.warn('[MediaLatch] Inline Reddit Save refused: no single frame shows the embedded RedGIFs clip');
         await redditInlineRefuse(sender, 'UNRESOLVED_BLOB_MEDIA');
         return false;
       }
@@ -11830,7 +11830,7 @@ async function handleRedditInlineSave(message, sender) {
   const answer = await xInlineAsk(sender.tab, sender, { action: 'REDDIT_INLINE_OWNER', token: message.token });
   const media = answer && answer.ok === true ? sanitizeRedditInlineMedia(answer.media, null) : null;
   if (!media) {
-    console.warn('[Image Saver] Inline Reddit Save refused:', redditInlineWhy(answer));
+    console.warn('[MediaLatch] Inline Reddit Save refused:', redditInlineWhy(answer));
     await redditInlineRefuse(sender, redditInlineRefusalCode(answer));
     return;
   }
@@ -11849,7 +11849,7 @@ async function handleRedditInlineSaveAll(message, sender) {
   const ownerId = open && typeof open.ownerId === 'string' && REDDIT_INLINE_OWNER_ID.test(open.ownerId) ? open.ownerId : '';
   const sig = open && typeof open.sig === 'string' && /^[a-f0-9]{8}$/.test(open.sig) ? open.sig : '';
   if (count < REDDIT_INLINE_BATCH_MIN || count > REDDIT_INLINE_BATCH_MAX || !ownerId || !sig) {
-    console.warn('[Image Saver] Inline Reddit Save all refused:', redditInlineWhy(open));
+    console.warn('[MediaLatch] Inline Reddit Save all refused:', redditInlineWhy(open));
     await redditInlineRefuse(sender);
     return;
   }
@@ -11872,7 +11872,7 @@ async function handleRedditInlineSaveAll(message, sender) {
         // (or an answer that does not match the batch) ends the batch
         const itemLevel = answer && answer.ok === false && (answer.reason === 'STALE_ITEM' || answer.reason === 'UNRESOLVED_BLOB' || answer.reason === 'UNSUPPORTED_STREAM');
         if (!itemLevel) lost = true;
-        console.warn('[Image Saver] Inline Reddit Save all item refused:', index, redditInlineWhy(answer));
+        console.warn('[MediaLatch] Inline Reddit Save all item refused:', index, redditInlineWhy(answer));
         await redditInlineRefuse(sender, redditInlineRefusalCode(answer));
         continue;
       }
@@ -11888,7 +11888,7 @@ async function handleRedditInlineSaveAll(message, sender) {
       tally.refused++;
       await redditInlineRefuse(sender);
     }
-    console.info('[Image Saver] Inline Reddit Save all:', { items: count, ...tally });
+    console.info('[MediaLatch] Inline Reddit Save all:', { items: count, ...tally });
   } finally {
     redditInlineBusy.delete(batchKey);
   }
@@ -11942,11 +11942,11 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender) => {
     if (!message) return;
     if (message.action === 'REDGIFS_INLINE_SAVE') {
-      handleRedgifsInlineSave(message, sender).catch((e) => console.warn('[Image Saver] Inline RedGIFs Save failed:', e?.message || e));
+      handleRedgifsInlineSave(message, sender).catch((e) => console.warn('[MediaLatch] Inline RedGIFs Save failed:', e?.message || e));
     } else if (message.action === 'REDDIT_INLINE_SAVE') {
-      handleRedditInlineSave(message, sender).catch((e) => console.warn('[Image Saver] Inline Reddit Save failed:', e?.message || e));
+      handleRedditInlineSave(message, sender).catch((e) => console.warn('[MediaLatch] Inline Reddit Save failed:', e?.message || e));
     } else if (message.action === 'REDDIT_INLINE_SAVE_ALL') {
-      handleRedditInlineSaveAll(message, sender).catch((e) => console.warn('[Image Saver] Inline Reddit Save all failed:', e?.message || e));
+      handleRedditInlineSaveAll(message, sender).catch((e) => console.warn('[MediaLatch] Inline Reddit Save all failed:', e?.message || e));
     }
   });
 }

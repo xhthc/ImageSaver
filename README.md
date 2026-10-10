@@ -1,8 +1,8 @@
-<p align="center"><img src="docs/assets/banner.svg" alt="Image Saver — save available originals" width="880"></p>
+<p align="center"><img src="docs/assets/banner.svg" alt="MediaLatch — save available originals" width="880"></p>
 
-<p align="center"><a href="README.ru.md">Русский</a> · <a href="https://github.com/xhthc/ImageSaver/releases">Downloads</a> · <a href="docs/PRIVACY.md">Privacy</a> · <a href="LICENSE">GPL-3.0</a></p>
+<p align="center"><a href="README.ru.md">Русский</a> · <a href="https://github.com/xhthc/MediaLatch/releases">Downloads</a> · <a href="docs/PRIVACY.md">Privacy</a> · <a href="LICENSE">GPL-3.0</a></p>
 
-Image Saver is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Image Saver: Save media**. Source discovery runs after that click, so the menu title stays predictable.
+MediaLatch is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **MediaLatch: Save media**. Source discovery runs after that click, so the menu title stays predictable.
 
 **Early release:** tested primarily in Helium on Windows. Site layouts and access rules change; support is specific to the paths below. Firefox and Chrome Web Store distribution are planned.
 
@@ -32,23 +32,23 @@ Kemono, Sankaku and broader booru compatibility need further integration and liv
 
 ## Install
 
-1. Download the **ImageSaver-*.zip runtime asset** from [Releases](https://github.com/xhthc/ImageSaver/releases) and extract it. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **MediaLatch-*.zip runtime asset** (the first preview still uses `ImageSaver-*.zip`) from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
 Alternatively, clone and load the repository root:
 
 ```bash
-git clone https://github.com/xhthc/ImageSaver.git
+git clone https://github.com/xhthc/MediaLatch.git
 ```
 
 The committed `popup/` pages are ready to use. Node/npm are needed only for development. Unpacked installs update manually; store updates will be a separate distribution path.
 
 ## Use and settings
 
-Right-click an image, video or supported post preview and select **Image Saver: Save media**. On X, Shift + right-click can open the browser menu when the site handles right-click itself.
+Right-click an image, video or supported post preview and select **MediaLatch: Save media**. On X, Shift + right-click can open the browser menu when the site handles right-click itself.
 
-The toolbar popup shows recent results. Its full page contains history, saving preferences, notifications, link settings and release checks. The interface is available in English and Russian: choose **Language** at the top of the full page. The choice applies at once to the extension pages, notifications and inline buttons; without a saved choice a Russian browser shows Russian and any other browser English. The context-menu item stays **Image Saver: Save media** in both languages. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
+The toolbar popup shows recent results. Its full page contains history, saving preferences, notifications, link settings and release checks. The interface is available in English and Russian: choose **Language** at the top of the full page. The choice applies at once to the extension pages, notifications and inline buttons; without a saved choice a Russian browser shows Russian and any other browser English. The context-menu item stays **MediaLatch: Save media** in both languages. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
 
 Paths are relative to the browser's Downloads directory. Arbitrary drive paths and author folders are planned. The browser owns ordinary transfers; eligible `NETWORK_FAILED` downloads get one native resume attempt.
 

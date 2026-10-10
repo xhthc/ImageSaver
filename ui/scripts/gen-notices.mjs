@@ -47,7 +47,7 @@ const licenseFile = (dir) => {
   return names.map((f) => fs.readFileSync(path.join(dir, f), "utf8").replace(/\r\n/g, "\n").trim()).join("\n\n")
 }
 const out = []
-out.push("Image Saver extension pages (popup/): third-party notices")
+out.push("MediaLatch extension pages (popup/): third-party notices")
 out.push("=".repeat(58))
 out.push("")
 out.push("The compact popup and the full page are built (ui/, committed output in popup/) from React, shadcn/ui component")

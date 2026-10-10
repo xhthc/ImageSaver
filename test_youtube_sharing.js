@@ -220,7 +220,7 @@ class TestDomElement {
 }
 
 async function runYouTubeSharingTests() {
-  console.log('=== Image Saver: YouTube Shorts Sharing Regressions (SHARE-04) ===\n');
+  console.log('=== MediaLatch: YouTube Shorts Sharing Regressions (SHARE-04) ===\n');
 
   // Test 1: Manifest Registration
   console.log('--- Suite 1: Manifest.json Registration and Permissions ---');
@@ -1420,18 +1420,18 @@ async function runYouTubeSharingTests() {
 
     const en = await labelled({ uiLanguage: 'en-US' });
     let b = en.button();
-    assert(b.getAttribute('title') === 'Image Saver: Copy Short link' && b.getAttribute('aria-label') === 'Copy Short link', 'L1: an English browser with no saved choice gets English inline labels');
+    assert(b.getAttribute('title') === 'MediaLatch: Copy Short link' && b.getAttribute('aria-label') === 'Copy Short link', 'L1: an English browser with no saved choice gets English inline labels');
     await en.change('ru');
-    assert(b.getAttribute('title') === 'Image Saver: Скопировать ссылку на Short' && b.getAttribute('aria-label') === 'Скопировать ссылку на Short', 'L2: a language change updates the existing button without reinjection');
+    assert(b.getAttribute('title') === 'MediaLatch: Скопировать ссылку на Short' && b.getAttribute('aria-label') === 'Скопировать ссылку на Short', 'L2: a language change updates the existing button without reinjection');
     const delayed = await labelled({ uiLanguage: 'en', saved: 'ru', deferPreference: true });
     const early = delayed.button();
-    assert(early.getAttribute('title') === 'Image Saver: Copy Short link', 'L6: the browser language is used while the preference read is pending');
+    assert(early.getAttribute('title') === 'MediaLatch: Copy Short link', 'L6: the browser language is used while the preference read is pending');
     await delayed.releaseRead();
-    assert(early.getAttribute('title') === 'Image Saver: Скопировать ссылку на Short' && early.getAttribute('aria-label') === 'Скопировать ссылку на Short', 'L7: a delayed saved preference updates an already drawn button');
+    assert(early.getAttribute('title') === 'MediaLatch: Скопировать ссылку на Short' && early.getAttribute('aria-label') === 'Скопировать ссылку на Short', 'L7: a delayed saved preference updates an already drawn button');
     const saved = await labelled({ uiLanguage: 'ru-RU', saved: 'en' });
-    assert(saved.button().getAttribute('title') === 'Image Saver: Copy Short link', 'L3: a saved English choice wins over a Russian browser');
+    assert(saved.button().getAttribute('title') === 'MediaLatch: Copy Short link', 'L3: a saved English choice wins over a Russian browser');
     const invalid = await labelled({ uiLanguage: 'ru', saved: 'de' });
-    assert(invalid.button().getAttribute('title') === 'Image Saver: Скопировать ссылку на Short', 'L4: an invalid saved value falls back to the browser language');
+    assert(invalid.button().getAttribute('title') === 'MediaLatch: Скопировать ссылку на Short', 'L4: an invalid saved value falls back to the browser language');
     const other = await labelled({ uiLanguage: 'de-DE' });
     assert(other.button().getAttribute('aria-label') === 'Copy Short link', 'L5: a non-Russian browser gets English');
   }

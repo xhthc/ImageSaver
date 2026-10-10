@@ -185,7 +185,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const session = [...sessionRecords(7), unnamedFailure()];
     const state = { session, history: [], local: { historyEnabled: true } };
     const p = await page('quick', state);
-    assert(p.q('h1').textContent === 'Image Saver' && p.q('[data-popup="quick"]') && p.text().includes('Последние сохранения'), 'R1a: the popup has an Image Saver heading and the recent-results subtitle');
+    assert(p.q('h1').textContent === 'MediaLatch' && p.q('[data-popup="quick"]') && p.text().includes('Последние сохранения'), 'R1a: the popup has an MediaLatch heading and the recent-results subtitle');
     assert(p.rows().length === 5, 'R1b: exactly five recent results are rendered');
     const names = p.qa('[data-slot="name"]').map((n) => n.textContent);
     assert(names[0] === 'file-number-7.jpg' && names.length === 4, 'R1c: file names are the main row text (newest first); an unnamed failure keeps a summary row');
@@ -296,7 +296,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const report = p.q('[data-slot="report"]');
     assert(report && /одна попытка возобновить/.test(report.textContent) && /не отправляется автоматически/.test(report.textContent), 'R3f: a failed result shows the bounded native resume and the no-submission promise');
     const preview = p.q('textarea[aria-label="Предпросмотр отчёта"]');
-    assert(preview && preview.readOnly && preview.value.startsWith('Image Saver bug report') && /browser: Chromium 126/.test(preview.value), 'R3g: the report preview is read-only and carries the browser only when reliable');
+    assert(preview && preview.readOnly && preview.value.startsWith('MediaLatch bug report') && /browser: Chromium 126/.test(preview.value), 'R3g: the report preview is read-only and carries the browser only when reliable');
     await p.unmount();
   }
 
@@ -737,7 +737,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const state = { session: [rec({ filename: 'Фото.jpg' }), failRec], history: [rec({ filename: 'old-entry.jpg' })], local: { historyEnabled: true } };
 
     const full = await page('full', state, { hash: '#saving' });
-    assert(tabNames(full) === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления' && full.doc.documentElement.lang === 'ru' && full.doc.title === 'Image Saver: история и настройки', 'R13a: a Russian browser with no saved choice shows the Russian page (lang and title follow)');
+    assert(tabNames(full) === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления' && full.doc.documentElement.lang === 'ru' && full.doc.title === 'MediaLatch: история и настройки', 'R13a: a Russian browser with no saved choice shows the Russian page (lang and title follow)');
     const langBox = full.q('#languageSelect');
     assert(langBox && langBox.getAttribute('role') === 'combobox' && full.q('label[for="languageSelect"]').textContent === 'Язык' && /Русский/.test(langBox.textContent), 'R13b: the language choice is a labelled combobox showing the current language');
     const quick = await page('quick', state);
@@ -747,9 +747,9 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await full.type(full.q('#subfolderInput'), 'Unsaved/Edit');
     const setsBefore = full.calls.localSets.length;
     assert(await chooseLanguage(full, 'English'), 'R13d: setup - English is offered by its own name');
-    assert(tabNames(full) === 'Statistics and history|Saving|Notifications|Embed|Updates' && full.doc.documentElement.lang === 'en' && full.doc.title === 'Image Saver: history and settings', 'R13e: ru -> en switches the open page at once (tabs, lang, title)');
+    assert(tabNames(full) === 'Statistics and history|Saving|Notifications|Embed|Updates' && full.doc.documentElement.lang === 'en' && full.doc.title === 'MediaLatch: history and settings', 'R13e: ru -> en switches the open page at once (tabs, lang, title)');
     assert(full.q('#subfolderInput').value === 'Unsaved/Edit' && full.q('#folderPreviewPath').textContent === 'Downloads/Unsaved/Edit/photo.jpg' && JSON.stringify(full.calls.localSets.slice(setsBefore)) === JSON.stringify([{ uiLanguage: 'en' }]), 'R13f: the unsaved folder edit is kept and only uiLanguage is written');
-    assert(/Save settings/.test(full.q('#saveButton').textContent) && /“Image Saver: Save media”/.test(full.text()) && full.q('label[for="languageSelect"]').textContent === 'Language', 'R13g: buttons, labels and the fixed menu title follow');
+    assert(/Save settings/.test(full.q('#saveButton').textContent) && /“MediaLatch: Save media”/.test(full.text()) && full.q('label[for="languageSelect"]').textContent === 'Language', 'R13g: buttons, labels and the fixed menu title follow');
     await quick.settle(6);
     assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && quick.doc.documentElement.lang === 'en' && /Saved/.test(quick.rows()[1].textContent) && /new/.test(quick.rows()[0].textContent), 'R13h: the open compact popup follows the change made on the full page (rows and accessible names)');
     assert(quick.q('[data-slot="name"]').textContent === 'clip <img src=x onerror=1> & co.mp4' && quick.doc.querySelectorAll('img').length === 0, 'R13i: an original file name is shown as text in every language, never as markup');
@@ -759,7 +759,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(/Operations in history/.test(full.text()) && /Save history/.test(full.text()) && /Clear finished/.test(full.text()), 'R13l: statistics, history and results are English');
     const failRow = full.qa('[data-slot="results-section"] [data-slot="result-item"]').find((r) => r.getAttribute('data-state-kind') === 'failed');
     await full.click(failRow.querySelector('button'));
-    assert(/Download interrupted/.test(failRow.textContent) && /Chrome code: NETWORK_FAILED/.test(failRow.textContent) && /Copy report/.test(failRow.textContent) && /Image Saver bug report/.test(failRow.querySelector('textarea[readonly]').value), 'R13m: an older record is shown in English; diagnostic codes and the report format stay intact');
+    assert(/Download interrupted/.test(failRow.textContent) && /Chrome code: NETWORK_FAILED/.test(failRow.textContent) && /Copy report/.test(failRow.textContent) && /MediaLatch bug report/.test(failRow.querySelector('textarea[readonly]').value), 'R13m: an older record is shown in English; diagnostic codes and the report format stay intact');
 
     // close / reopen: the saved choice is read again
     await quick.unmount();

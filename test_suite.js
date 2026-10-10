@@ -1,4 +1,4 @@
-// test_suite.js - Полный проверочный тест Image Saver v2.0.0
+// test_suite.js - Полный проверочный тест MediaLatch v2.0.0
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -605,7 +605,7 @@ function assert(condition, testName) {
 
 async function runTests() {
   console.log('====================================================');
-  console.log('Проверка Image Saver v2.0.0: test_suite.js (466 проверок)');
+  console.log('Проверка MediaLatch v2.0.0: test_suite.js (466 проверок)');
   console.log('====================================================\n');
 
   // 1. universal fallback: Обычное изображение -> fallback на исходный srcUrl
@@ -17335,7 +17335,7 @@ async function runTests() {
         likeItem.children[0] === likeBtn &&
         commentItem.children[0] === commentBtn &&
         shareItem.children[0] === shareBtn,
-        '224.11: В вертикальном рельсе Reel кнопка Image Saver размещается непосредственно НАД действием Like с классом is-reel-rail и не затрагивает нативные элементы'
+        '224.11: В вертикальном рельсе Reel кнопка MediaLatch размещается непосредственно НАД действием Like с классом is-reel-rail и не затрагивает нативные элементы'
       );
 
       igClipboardText = '';
@@ -17386,7 +17386,7 @@ async function runTests() {
         !copyWrap.classList.contains('is-reel-rail') &&
         likeSpan.children[0] === likeBtn &&
         shareSpan.children[0] === shareBtn,
-        '224.12: В горизонтальной строке поста кнопка Image Saver размещается непосредственно ПЕРЕД действием Like с классом is-standard-row'
+        '224.12: В горизонтальной строке поста кнопка MediaLatch размещается непосредственно ПЕРЕД действием Like с классом is-standard-row'
       );
 
       igClipboardText = '';
@@ -17545,7 +17545,7 @@ async function runTests() {
         !copyWrap.classList.contains('is-standard-row') &&
         likeItem.children[0] === likeBtn &&
         shareItem.children[0] === shareBtn,
-        '224.15: На рилсе с русской локализацией ("Мне нравится") и StyleX-классами кнопка Image Saver размещается непосредственно НАД Like в вертикальном рельсе'
+        '224.15: На рилсе с русской локализацией ("Мне нравится") и StyleX-классами кнопка MediaLatch размещается непосредственно НАД Like в вертикальном рельсе'
       );
 
       igClipboardText = '';
@@ -17773,7 +17773,7 @@ async function runTests() {
         injected === true &&
         copyWrap.classList.contains('image-saver-ig-copy-wrap') &&
         rail.children[1] === likeItem,
-        '224.19c: Кнопка Image Saver внедрена непосредственно над Like в карточке с предшествующим аудио-линком'
+        '224.19c: Кнопка MediaLatch внедрена непосредственно над Like в карточке с предшествующим аудио-линком'
       );
 
       // Test with default instagram.com host
@@ -18021,7 +18021,7 @@ async function runTests() {
         injectedCount === 2 &&
         wrap1.classList.contains('image-saver-ig-copy-wrap') &&
         wrap2.classList.contains('image-saver-ig-copy-wrap'),
-        '224.21b: Кнопки Image Saver успешно внедрены над Like в оба article-free рилса'
+        '224.21b: Кнопки MediaLatch успешно внедрены над Like в оба article-free рилса'
       );
 
       // Set window location to Reel 1's URL (active single Reel URL in browser)
@@ -18242,7 +18242,7 @@ async function runTests() {
         rail.children.length === 2 &&
         wrap.classList.contains('image-saver-ig-copy-wrap') &&
         rail.children[1] === like,
-        '224.24b: Событие прокрутки внутреннего контейнера успешно внедряет кнопку Image Saver над Like'
+        '224.24b: Событие прокрутки внутреннего контейнера успешно внедряет кнопку MediaLatch над Like'
       );
     }
 
@@ -18297,7 +18297,7 @@ async function runTests() {
         rail.children.length === 3 &&
         rail.children[0].classList.contains('image-saver-ig-copy-wrap') &&
         rail.children[1] === outerLike,
-        '224.26b: Кнопка Image Saver успешно внедрена непосредственно над вложенной кнопкой Like'
+        '224.26b: Кнопка MediaLatch успешно внедрена непосредственно над вложенной кнопкой Like'
       );
 
       const copyWrap = rail.children[0];
@@ -18417,7 +18417,7 @@ async function runTests() {
 
       igSandbox.window.location.href = 'https://www.instagram.com/reel/REEL_STANDALONE_BUFFER/';
       const soloInjected = igSandbox.__injectCopyButtonToInstagramPost(soloCard);
-      assert(soloInjected === true, 'Кнопка Image Saver успешно внедрена в одиночный рилс');
+      assert(soloInjected === true, 'Кнопка MediaLatch успешно внедрена в одиночный рилс');
       const soloWrap = soloRail.children[0];
 
       igClipboardText = '';
@@ -18511,7 +18511,7 @@ async function runTests() {
         igClipboardText === '' &&
         wrap2.classList.contains('is-error') &&
         wrap2.getAttribute('data-diagnostic-fail-branch') === 'no_share_url' &&
-        devToolsWarnings.some(w => String(w[0]).includes('[Image Saver Instagram]') && String(w[0]).includes('multi_item_environment_unproven')),
+        devToolsWarnings.some(w => String(w[0]).includes('[MediaLatch Instagram]') && String(w[0]).includes('multi_item_environment_unproven')),
         '224.27d: Соседний неактивный рилс строго завершается ошибкой (fail-closed), логирует причину в DevTools и не крадет URL активного рилса'
       );
 
@@ -19510,7 +19510,7 @@ async function runTests() {
         copyWrapUncertain.classList.contains('image-saver-tt-copy-wrap') &&
         secUncertain.children[0] === copyWrapUncertain &&
         secUncertain.children[1] === avatarContainerUncertain,
-        '225.12: Кнопка Image Saver видна даже если URL видео еще не доказан (внедрена перед аватаром)'
+        '225.12: Кнопка MediaLatch видна даже если URL видео еще не доказан (внедрена перед аватаром)'
       );
 
       ttClipboardText = 'PREVIOUS_CLIPBOARD';
@@ -19706,13 +19706,13 @@ async function runTests() {
 
       assert(
         enterSuccess && spaceSuccess,
-        '225.18: Нажатия клавиш Enter и Space на кнопке Image Saver вызывают копирование URL в буфер обмена'
+        '225.18: Нажатия клавиш Enter и Space на кнопке MediaLatch вызывают копирование URL в буфер обмена'
       );
     }
 
     // 225.19 Distinct Visual Feedback: Unavailable URL vs Clipboard Error vs Success
     {
-      // 1. Unavailable URL: should show is-unavailable, title 'Image Saver: Ссылка на видео недоступна', NOT is-success
+      // 1. Unavailable URL: should show is-unavailable, title 'MediaLatch: Ссылка на видео недоступна', NOT is-success
       const unavailCard = new TestDomElement('article', { 'data-e2e': 'feed-item' });
       ttSandbox.__injectCopyButtonToTikTokVideo(unavailCard);
       const unavailWrap = unavailCard.children[unavailCard.children.length - 1];
@@ -19724,12 +19724,12 @@ async function runTests() {
       assert(
         ttClipboardText === '' &&
         unavailWrap.classList.contains('is-unavailable') &&
-        unavailWrap.title === 'Image Saver: Ссылка на видео недоступна' &&
+        unavailWrap.title === 'MediaLatch: Ссылка на видео недоступна' &&
         !unavailWrap.classList.contains('is-success'),
         '225.19a: При недоступности URL видео отображается состояние is-unavailable с соответствующей подсказкой'
       );
 
-      // 2. Clipboard Write Error: should show is-clipboard-error, title 'Image Saver: Не удалось скопировать в буфер обмена', NOT is-success
+      // 2. Clipboard Write Error: should show is-clipboard-error, title 'MediaLatch: Не удалось скопировать в буфер обмена', NOT is-success
       const clipFailCard = new TestDomElement('article', { 'data-e2e': 'feed-item' });
       clipFailCard.appendChild(new TestDomElement('a', { href: '/@clip_err/video/7777888999000111222' }));
       ttSandbox.__injectCopyButtonToTikTokVideo(clipFailCard);
@@ -19750,7 +19750,7 @@ async function runTests() {
 
       assert(
         clipFailWrap.classList.contains('is-clipboard-error') &&
-        clipFailWrap.title === 'Image Saver: Не удалось скопировать в буфер обмена' &&
+        clipFailWrap.title === 'MediaLatch: Не удалось скопировать в буфер обмена' &&
         !clipFailWrap.classList.contains('is-success'),
         '225.19b: При ошибке записи в буфер отображается состояние is-clipboard-error с соответствующей подсказкой'
       );
@@ -20731,13 +20731,13 @@ async function runTests() {
         '228.1: content_reddit.js и content_redgifs.js успешно загружены вместе и зарегистрировали свои mousedown/contextmenu слушатели'
       );
 
-      // 228.2: Right click on Reddit GIF card: RedGIFs ignores, Reddit classifies reddit_gif, title becomes "Image Saver: Save GIF animation"
+      // 228.2: Right click on Reddit GIF card: RedGIFs ignores, Reddit classifies reddit_gif, title becomes "MediaLatch: Save GIF animation"
       dispatchRightClick(card1Video);
       const redGifsSentOnGif = capturedMessages.some(m => m.action === 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED');
       const redditSentOnGif = capturedMessages.some(m => m.action === 'REDDIT_MEDIA_CONTEXTMENU_DETECTED' && m.media?.sourceType === 'reddit_gif');
       assert(
         !redGifsSentOnGif && redditSentOnGif && sandbox.lastDetectedRedditMediaByTab.get(501)?.media?.sourceType === 'reddit_gif',
-        '228.2: Клик по Reddit GIF: content_redgifs.js не шлет ложный видео-анонс, content_reddit.js определяет reddit_gif, меню обновляется на "Image Saver: Save GIF animation"'
+        '228.2: Клик по Reddit GIF: content_redgifs.js не шлет ложный видео-анонс, content_reddit.js определяет reddit_gif, меню обновляется на "MediaLatch: Save GIF animation"'
       );
 
       // 228.3: Transition from GIF to Reddit static image
@@ -20746,7 +20746,7 @@ async function runTests() {
       const redditSentOnImg = capturedMessages.some(m => m.action === 'REDDIT_MEDIA_CONTEXTMENU_DETECTED' && m.media?.sourceType === 'image');
       assert(
         !redGifsSentOnImg && redditSentOnImg && sandbox.lastDetectedRedditMediaByTab.get(501)?.media?.sourceType === 'image',
-        '228.3: Переход на статическое изображение Reddit: заголовок меню переключается на "Image Saver: Save image"'
+        '228.3: Переход на статическое изображение Reddit: заголовок меню переключается на "MediaLatch: Save image"'
       );
 
       // 228.4: Transition from image to ordinary Reddit video
@@ -20755,14 +20755,14 @@ async function runTests() {
       const redditSentOnVid = capturedMessages.some(m => m.action === 'REDDIT_MEDIA_CONTEXTMENU_DETECTED' && m.media?.sourceType === 'video');
       assert(
         !redGifsSentOnVid && redditSentOnVid && sandbox.lastDetectedRedditMediaByTab.get(501)?.media?.sourceType === 'video',
-        '228.4: Переход на обычное видео Reddit (v.redd.it): RedGIFs не перехватывает чужое видео, меню переключается на "Image Saver: Save video"'
+        '228.4: Переход на обычное видео Reddit (v.redd.it): RedGIFs не перехватывает чужое видео, меню переключается на "MediaLatch: Save video"'
       );
 
       // 228.5: Transition back from video to Reddit GIF
       dispatchRightClick(card1Video);
       assert(
         sandbox.lastDetectedRedditMediaByTab.get(501)?.media?.sourceType === 'reddit_gif',
-        '228.5: Обратный переход с видео на Reddit GIF: меню безошибочно возвращается в "Image Saver: Save GIF animation"'
+        '228.5: Обратный переход с видео на Reddit GIF: меню безошибочно возвращается в "MediaLatch: Save GIF animation"'
       );
 
       // 228.6: Right click on unrelated container / text resets to default image title
@@ -20771,7 +20771,7 @@ async function runTests() {
       const redditSentOnUnrelated = capturedMessages.some(m => m.action === 'REDDIT_MEDIA_CONTEXTMENU_DETECTED' && m.media === null);
       assert(
         !redGifsSentOnUnrelated && redditSentOnUnrelated && sandbox.lastDetectedRedditMediaByTab.get(501)?.media === null,
-        '228.6: Клик по произвольному тексту/контейнеру: ложные видео-анонсы отсутствуют, меню сбрасывается на "Image Saver: Save image"'
+        '228.6: Клик по произвольному тексту/контейнеру: ложные видео-анонсы отсутствуют, меню сбрасывается на "MediaLatch: Save image"'
       );
 
       // 228.7: Right click on positive RedGIFs media target
@@ -20779,7 +20779,7 @@ async function runTests() {
       const redGifsSentOnTarget = capturedMessages.some(m => m.action === 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED' && m.media?.sourceType === 'redgifs');
       assert(
         redGifsSentOnTarget,
-        '228.7: Клик по подтвержденному RedGIFs медиа: content_redgifs.js отправляет REDGIFS_MEDIA_CONTEXTMENU_DETECTED, меню становится "Image Saver: Save video", формат строго MP4'
+        '228.7: Клик по подтвержденному RedGIFs медиа: content_redgifs.js отправляет REDGIFS_MEDIA_CONTEXTMENU_DETECTED, меню становится "MediaLatch: Save video", формат строго MP4'
       );
 
       assert(
@@ -27525,7 +27525,7 @@ async function runTests() {
         const nodesBefore = w.root.querySelectorAll('*').length;
         const before = dlCount();
         w.move(300, 400);
-        assert(w.hosts().length === 1 && w.button() && w.button().getAttribute('aria-label') === 'Image Saver: Save this media' && w.button().getAttribute('title') === 'Image Saver: Save this media', '252.1: наведение на собственное фото поста создаёт одну кнопку с доступным названием');
+        assert(w.hosts().length === 1 && w.button() && w.button().getAttribute('aria-label') === 'MediaLatch: Save this media' && w.button().getAttribute('title') === 'MediaLatch: Save this media', '252.1: наведение на собственное фото поста создаёт одну кнопку с доступным названием');
         w.move(310, 410); w.move(320, 420);
         assert(w.hosts().length === 1 && fetched.length === 0 && dlCount() === before && w.sent.length === 0, '252.1b: повторное наведение не создаёт вторую кнопку; ни запросов, ни сообщений, ни загрузок при наведении');
         assert(w.root.querySelectorAll('*').length === nodesBefore + 1 && w.host().parentElement === box && p.art.contains(w.host()), '252.1c: в дерево добавлен ровно один узел — локальный потомок позиционированного тайла этого медиа (не body и не соседний контейнер)');
@@ -27980,7 +27980,7 @@ async function runTests() {
             installNet(); attach(w);
             const before = dlCount();
             hoverTile(w, g, 1);
-            assert(w.labelOf(w.button()) === 'Save this' && w.labelOf(w.buttonAll()) === 'Save all (3)' && w.button().getAttribute('aria-label') === 'Image Saver: Save this media' && w.buttonAll().getAttribute('aria-label') === 'Image Saver: Save all 3 media in this post', '252.B2: у поста с тремя медиа два явных действия: «Save this» и «Save all (3)» с доступными названиями');
+            assert(w.labelOf(w.button()) === 'Save this' && w.labelOf(w.buttonAll()) === 'Save all (3)' && w.button().getAttribute('aria-label') === 'MediaLatch: Save this media' && w.buttonAll().getAttribute('aria-label') === 'MediaLatch: Save all 3 media in this post', '252.B2: у поста с тремя медиа два явных действия: «Save this» и «Save all (3)» с доступными названиями');
             assert(w.host().parentElement === g.tiles[1].tile && w.buttonAll().getAttribute('hidden') === null, '252.B2a: управление прикреплено к тайлу именно наведённого медиа');
             hoverTile(w, g, 1); w.advance(500);
             assert(fetched.length === 0 && w.sent.length === 0 && dlCount() === before && !(w.asks || []).length, '252.B2b: «Save all» не запускается наведением: ни запросов, ни сообщений, ни загрузок');
@@ -28439,7 +28439,7 @@ async function runTests() {
             const extra = el(w, 'div', g.art, { rect: R(20, 540, 320, 120), cs: { position: 'relative', overflow: 'hidden' } });
             photo(w, extra, 'LIVE_D', R(20, 540, 320, 120));
             w.live()[0].cb([{ target: g.art }]); w.advance(150);
-            assert(w.labelOf(w.buttonAll()) === 'Save all (4)' && w.buttonAll().getAttribute('aria-label') === 'Image Saver: Save all 4 media in this post', '252.B22: появилось четвёртое медиа: подпись обновилась до «Save all (4)»');
+            assert(w.labelOf(w.buttonAll()) === 'Save all (4)' && w.buttonAll().getAttribute('aria-label') === 'MediaLatch: Save all 4 media in this post', '252.B22: появилось четвёртое медиа: подпись обновилась до «Save all (4)»');
             extra.remove(); g.tiles[2].tile.remove();
             w.live()[0].cb([{ target: g.art }]); w.advance(150);
             assert(w.labelOf(w.buttonAll()) === 'Save all (2)', '252.B22b: два медиа убрано: подпись «Save all (2)»');
@@ -28605,7 +28605,7 @@ async function runTests() {
             const h = w.host();
             const r = h.getBoundingClientRect();
             assert(h.parentElement === b.wrap && w.buttonAll().getAttribute('hidden') === null && w.buttonAll().style._p.display === 'flex', '252.D2: на соседнем узком (100 px, полностью видимом) тайле оба действия остаются: «Save all» не исчез');
-            assert(labelAll(w) === '3' && w.labelOf(w.button()) === '' && w.button().getAttribute('aria-label') === 'Image Saver: Save this media' && w.buttonAll().getAttribute('aria-label') === 'Image Saver: Save all 3 media in this post' && w.buttonAll().getAttribute('title') === 'Image Saver: Save all 3 media in this post', '252.D2b: на узком тайле две кнопки-значка, на «Save all» число 3, доступные названия — полные слова');
+            assert(labelAll(w) === '3' && w.labelOf(w.button()) === '' && w.button().getAttribute('aria-label') === 'MediaLatch: Save this media' && w.buttonAll().getAttribute('aria-label') === 'MediaLatch: Save all 3 media in this post' && w.buttonAll().getAttribute('title') === 'MediaLatch: Save all 3 media in this post', '252.D2b: на узком тайле две кнопки-значка, на «Save all» число 3, доступные названия — полные слова');
             assert(r.left >= 400 && r.right <= 500 && r.top >= 300 && r.bottom <= 600 && r.right <= 700 && r.width === 80 && r.height === 32 && h.style._p['flex-direction'] === 'row', '252.D2c: пара значков целиком внутри узкого тайла (400–500), не выходит за рамку, пост и правую колонку');
             assert(w.sent.length === 0 && fetched.length === 0 && dlCount() === before && !(w.asks || []).length, '252.D2d: смена тайла и показ управления ничего не запускают (ни «Save all», ни запросов)');
             w.click(); await settleN(w, 120);
@@ -30007,7 +30007,7 @@ async function runTests() {
       {
         sandbox.setupContextMenus();
         const item = () => mockChrome.contextMenus._created.find((i) => i.id === 'save-image-item');
-        const STABLE = 'Image Saver: Save media';
+        const STABLE = 'MediaLatch: Save media';
         const tabX = { id: 7, url: 'https://x.com/home' };
         const detect = (media) => mockChrome.runtime._onMessageCb({ action: 'X_MEDIA_CONTEXTMENU_DETECTED', media }, { tab: tabX }, () => {});
         detect({ type: 'video', url: MP4 });
@@ -32198,11 +32198,11 @@ async function runTests() {
         }
       }
 
-      // 265.14 (stable title): the command is "Image Saver: Save media" at registration and on every path. Loading, complete, hover and gesture hints, provider
+      // 265.14 (stable title): the command is "MediaLatch: Save media" at registration and on every path. Loading, complete, hover and gesture hints, provider
       // messages, focus and tab events request NOTHING about the original (no post page, no creator list, no page read, no cursor query) and rename nothing; the
       // original is resolved and probed only when the command is chosen, and a post with several videos still saves every one of them.
       {
-        const STABLE = 'Image Saver: Save media';
+        const STABLE = 'MediaLatch: Save media';
         const prevId = mockChrome.runtime.id;
         const prevExec = mockChrome.scripting.executeScript;
         const prevUpdate = mockChrome.contextMenus.update;
@@ -32219,7 +32219,7 @@ async function runTests() {
           mockChrome.contextMenus._created = [];
           sandbox.setupContextMenus();
           const item = () => mockChrome.contextMenus._created.find((i) => i.id === 'save-image-item');
-          assert(item().title === STABLE && mockChrome.contextMenus._created.length === 1, '265.14a: пункт зарегистрирован с единственным названием «Image Saver: Save media»');
+          assert(item().title === STABLE && mockChrome.contextMenus._created.length === 1, '265.14a: пункт зарегистрирован с единственным названием «MediaLatch: Save media»');
           assert(mockChrome.contextMenus._onShownHandler === undefined, '265.14b: обработчика показа меню (onShown), называющего пункт, нет');
           reset({ [POST_URL]: html(postHtml()), [VIDEO]: media('video/mp4', 1000), [COVER]: media('image/jpeg'), [COVER_THUMB]: media('image/jpeg') });
           const T = 265140, WIN = 1;

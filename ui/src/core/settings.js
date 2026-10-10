@@ -89,7 +89,7 @@ export function createSettings(deps) {
         status: { message: '', type: '' },
       });
     } catch (error) {
-      console.error('[Image Saver Popup] Settings could not be loaded:', error);
+      console.error('[MediaLatch Popup] Settings could not be loaded:', error);
       store.setState({ status: { message: 'settings.error.load', type: 'error' } });
     }
     // The notification preference: unreadable storage keeps the documented default (on) and says so.
@@ -127,13 +127,13 @@ export function createSettings(deps) {
     store.setState({ ...values, saving: true }); // the fields show the sanitized values
     try {
       await chromeApi.storage.local.set(values);
-      console.log('[Image Saver Popup] Settings saved:', values);
+      console.log('[MediaLatch Popup] Settings saved:', values);
       showMessage(folderChanged
         ? (cleanFolder ? { key: 'settings.savedCorrected', vars: { folder: cleanFolder } } : 'settings.savedCorrectedRoot')
         : 'settings.saved', 'success');
       return true;
     } catch (saveError) {
-      console.error('[Image Saver Popup] Settings could not be saved:', saveError);
+      console.error('[MediaLatch Popup] Settings could not be saved:', saveError);
       showMessage('settings.saveFailed', 'error');
       return false;
     } finally {

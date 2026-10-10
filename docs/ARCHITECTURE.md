@@ -23,7 +23,7 @@ This document describes the shipped source, not a list of planned capabilities. 
 ## Save flow
 
 1. A gesture captures one media target and its frame/document/owner evidence.
-2. Choosing **Image Saver: Save media** revalidates that evidence. Removed, changed or ambiguous owners are refused; another post's media is never substituted.
+2. Choosing **MediaLatch: Save media** revalidates that evidence. Removed, changed or ambiguous owners are refused; another post's media is never substituted.
 3. Provider or generic discovery produces candidates. Preserve declared signed URLs exactly; diagnostic redaction changes only log copies.
 4. Probe candidates and choose an admitted plan. A confirmed original's failure is reported rather than silently becoming a preview.
 5. Save a direct URL, or acquire an owned offscreen task for buffered/converted/assembled output.
@@ -47,13 +47,15 @@ Eligible owned `NETWORK_FAILED` downloads can resume once through the browser's 
 
 ## Storage and UI
 
+The MediaLatch rename preserves existing internal message/DOM identifiers and storage keys, including the `SavedImages` default folder. No migration or reinstallation is needed. `SOURCE_BASELINE.json` retains the original import identity.
+
 Settings use `chrome.storage.local`. A failed settings read keeps the form disabled and prevents saving defaults over unread preferences. Relative paths are validated by the same folder helper in UI/runtime.
 
 Session feedback uses `chrome.storage.session`; history is opt-in local storage, with 50 finished records/seven days. See [Privacy](PRIVACY.md) for exact scope. Page controllers and runtime APIs remain separate from rendering.
 
 The UI build targets Chromium 120 and emits local scripts/styles with no remote runtime code. `npm run build --prefix ui` regenerates `popup/`; the parity check rebuilds into a temporary folder and compares bytes. Notices are generated separately after dependencies or their licences change.
 
-GitHub checks use the fixed `xhthc/ImageSaver` releases endpoint. The old repository cache is ignored. No release-supplied HTML or navigation URL is trusted, and no extension code is installed by this controller.
+GitHub checks use the fixed `xhthc/MediaLatch` releases endpoint. The old repository cache is ignored. No release-supplied HTML or navigation URL is trusted, and no extension code is installed by this controller.
 
 ## Release and validation
 
