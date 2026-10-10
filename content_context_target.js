@@ -291,21 +291,37 @@
   // Chrome has no event before the native menu opens, so the page tells background.js, ahead of time, whether the item
   // should be available at the pointer: (a) at every real gesture (right-press, contextmenu, the keyboard menu key),
   // always, and (b) while the pointer is merely resting somewhere, only after it stopped (IDLE_MS), at most once per
-  // MIN_GAP_MS, and only when the answer changed. Pointer motion itself costs O(1): it stores two numbers and re-arms
-  // one timer; no element is kept, nothing is observed, scanned or sent per pointer event. It is only a hint: the
+  // MIN_GAP_MS, and only when the answer changed (a pointer that keeps moving is checked every DWELL_MS, below). Pointer motion itself
+  // costs O(1): it stores two numbers and re-arms the idle timer (plus one dwell timer while it moves); no element is kept, nothing is observed, scanned or sent per pointer event. It is only a hint: the
   // gesture record above is what a Save click re-proves.
   const IDLE_MS = 120;
   const MIN_GAP_MS = 250;
+  // A pointer entering another image/video may be evaluated after a shorter gap than a resting one: the answer for the card it just reached is what the first
+  // right-click needs, and a sweep still costs at most one O(1) evaluation per ENTER_GAP_MS.
+  const ENTER_GAP_MS = 80;
+  // A pointer that keeps moving a little (sensor noise, a hand over the card) never goes idle, so the idle path alone would never prepare its target.
+  // While motion continues the selected target is therefore checked every DWELL_MS, and it is published when two consecutive checks name the SAME
+  // target: a card the pointer merely sweeps across is not published, one it stays on is. Nothing runs when the pointer is still or away.
+  const DWELL_MS = 300;
   let px = NaN;
   let py = NaN;
   let idleTimer = null;
   let lastEval = 0;
   let lastSent = null; // { selectable, linkHref, mediaKey } the background was last told by this document; null = unknown
+  let dwellTimer = null;
+  let enterTimer = null; // the pending evaluation of an entered image/video
+  let dwellKey = null; // the target named by the last check made while the pointer kept moving
   const mediaKeyOf = (media) => (media ? `${media.kind}|${media.url || ''}` : '');
   let torn = false;
   const listeners = [];
-  const cancel = () => {
+  const cancelIdle = () => {
     if (idleTimer !== null) { clearTimeout(idleTimer); idleTimer = null; }
+  };
+  const cancel = () => {
+    cancelIdle();
+    if (enterTimer !== null) { clearTimeout(enterTimer); enterTimer = null; }
+    if (dwellTimer !== null) { clearTimeout(dwellTimer); dwellTimer = null; }
+    dwellKey = null;
   };
   const teardown = () => {
     // Extension context gone (reloaded or updated): stop every timer and listener this document still has.
@@ -346,18 +362,14 @@
     }
     return el;
   };
-  const evaluate = () => {
-    idleTimer = null;
-    if (torn || !Number.isFinite(px) || !Number.isFinite(py) || document.hidden) return;
-    const wait = lastEval + MIN_GAP_MS - Date.now();
-    if (wait > 0) { idleTimer = setTimeout(evaluate, wait); return; }
-    lastEval = Date.now();
+  // The hint for what is under the remembered pointer point; null = another frame's script answers.
+  const probe = () => {
     let selectable = false;
     let linkHref = null;
     let media = null;
     try {
       const el = deepElementAt(px, py);
-      if (el && (el.tagName === 'IFRAME' || el.tagName === 'FRAME')) { lastSent = null; return; } // the frame's own script answers
+      if (el && (el.tagName === 'IFRAME' || el.tagName === 'FRAME')) { lastSent = null; return null; }
       if (el && el !== document.documentElement && el !== document.body) {
         const hint = hintFor(el, px, py);
         selectable = hint.selectable;
@@ -365,20 +377,72 @@
         media = hint.media;
       }
     } catch (e) {
-      return;
+      return null;
     }
-    if (lastSent && lastSent.selectable === selectable && lastSent.linkHref === linkHref && lastSent.mediaKey === mediaKeyOf(media)) return;
-    send(selectable, linkHref, 'pointer', 'rest', media);
+    return { selectable, linkHref, media };
+  };
+  const publish = (h) => {
+    if (lastSent && lastSent.selectable === h.selectable && lastSent.linkHref === h.linkHref && lastSent.mediaKey === mediaKeyOf(h.media)) return;
+    send(h.selectable, h.linkHref, 'pointer', 'rest', h.media);
+  };
+  const evalNow = () => {
+    lastEval = Date.now();
+    dwellKey = null;
+    const h = probe();
+    if (h) publish(h);
+  };
+  const evaluate = () => {
+    idleTimer = null;
+    if (torn || !Number.isFinite(px) || !Number.isFinite(py) || document.hidden) return;
+    const wait = lastEval + MIN_GAP_MS - Date.now();
+    if (wait > 0) { idleTimer = setTimeout(evaluate, wait); return; }
+    evalNow();
+  };
+  // The entry evaluation has a timer of its own: the idle timer is re-armed by every pointer move, so a hand-held pointer that never rests would cancel it forever.
+  const evaluateEntry = () => {
+    enterTimer = null;
+    if (torn || !Number.isFinite(px) || !Number.isFinite(py) || document.hidden) return;
+    const wait = lastEval + ENTER_GAP_MS - Date.now();
+    if (wait > 0) { enterTimer = setTimeout(evaluateEntry, wait); return; }
+    evalNow();
+  };
+  // The pointer is still moving (the idle timer is pending): publish the target that two consecutive checks agree on.
+  const dwell = () => {
+    dwellTimer = null;
+    if (torn || idleTimer === null || !Number.isFinite(px) || !Number.isFinite(py) || document.hidden) { dwellKey = null; return; }
+    lastEval = Date.now();
+    const h = probe();
+    if (h) {
+      const key = `${h.selectable}|${h.linkHref}|${mediaKeyOf(h.media)}`;
+      if (key === dwellKey) publish(h);
+      dwellKey = key;
+    } else {
+      dwellKey = null;
+    }
+    if (!torn) dwellTimer = setTimeout(dwell, DWELL_MS); // publishing may have torn this document down (invalidated extension)
   };
   const schedule = () => {
-    cancel();
+    cancelIdle();
     idleTimer = setTimeout(evaluate, IDLE_MS);
+  };
+  // A pointer that ENTERS another image or video is evaluated at once (still no more than one evaluation per MIN_GAP_MS, only a changed answer is
+  // sent): waiting for the pointer to rest (IDLE_MS) or for two agreeing checks (DWELL_MS) delayed the label of every card a hand-held pointer
+  // reaches, so a quick right-click found it unprepared. Costs one tag test per event; the evaluation itself runs from a timer, not in the handler.
+  let enteredRef = null;
+  const enters = (e) => {
+    const t = e.target;
+    if (!t || (t.tagName !== 'IMG' && t.tagName !== 'VIDEO')) return false;
+    if (enteredRef && enteredRef.deref() === t) return false;
+    enteredRef = new WeakRef(t);
+    return true;
   };
   const onMove = (e) => {
     if (!e || !e.isTrusted || (e.pointerType && e.pointerType !== 'mouse')) return;
     px = e.clientX;
     py = e.clientY;
+    if (enters(e) && enterTimer === null) enterTimer = setTimeout(evaluateEntry, 0);
     schedule();
+    if (dwellTimer === null) dwellTimer = setTimeout(dwell, DWELL_MS);
   };
   // Scrolling, wheel and resizing move content under a still pointer: evaluate once the content settles.
   const onSettle = () => { if (Number.isFinite(px)) schedule(); };
@@ -389,6 +453,7 @@
     px = NaN;
     py = NaN;
     lastSent = null;
+    enteredRef = null;
   };
   const onHide = () => {
     if (document.hidden) { cancel(); lastSent = null; }
@@ -400,12 +465,16 @@
     px = NaN;
     py = NaN;
     lastSent = null;
+    enteredRef = null;
   };
   // The background resets the shared menu state when window focus moves (windows.onFocusChanged), also while this page stays
   // visible. Forget what was sent, so the next rest repeats the answer even when it did not change. Sends nothing by itself.
-  const onFocusEdge = () => { lastSent = null; };
+  // Only the window's own focus and blur count: both events also reach this capture listener from every element inside the document (a link
+  // losing focus after a click), which says nothing about the window or the pointer and must not drop the pending preparation.
+  const ofWindow = (e) => !e || !e.target || e.target === window || e.target === document;
+  const onFocusEdge = (e) => { if (ofWindow(e)) lastSent = null; };
   // Leaving the window: a rest evaluation still pending would speak for a window that no longer owns the menu.
-  const onBlur = () => { cancel(); lastSent = null; };
+  const onBlur = (e) => { if (ofWindow(e)) { cancel(); lastSent = null; } };
   // The reset can come after this page already answered (focus, rest, then the background's reset). The background says so:
   // forget the answer and, if the pointer is known, answer once for it.
   const onReset = (m, sender) => {

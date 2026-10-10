@@ -47,9 +47,6 @@ globalThis.nativeResumeDecisions = nativeResumeDecisions;
 globalThis.probeCandidate = probeCandidate;
 globalThis.setupContextMenus = setupContextMenus;
 globalThis.executeMediaDownload = executeMediaDownload;
-globalThis.detectMediaFormat = detectMediaFormat;
-globalThis.getMediaMenuTitle = getMediaMenuTitle;
-globalThis.updateContextMenuTitles = updateContextMenuTitles;
 globalThis.lastDetectedXMediaByTab = lastDetectedXMediaByTab;
 globalThis.extractGiphyId = extractGiphyId;
 globalThis.resolveGiphyUrl = resolveGiphyUrl;
@@ -290,6 +287,9 @@ const mockChrome = {
     },
     onUpdated: {
       addListener: (cb) => { mockChrome.tabs._onUpdatedCb = cb; }
+    },
+    onRemoved: {
+      addListener: (cb) => { mockChrome.tabs._onRemovedCb = cb; }
     },
     sendMessage: async (tabId, msg, options, cb) => {
       const callback = typeof options === 'function' ? options : (typeof cb === 'function' ? cb : null);
@@ -2840,176 +2840,6 @@ async function runTests() {
     assert(
       winner === 'https://media.tenor.com/FovpoPA3CEEAAAAC/happy-guy-dancing.gif',
       'Tenor view page с og:image разрешается в подтверждённый оригинальный GIF AAAAC'
-    );
-  }
-
-  // 116. Меню: Tenor GIF -> Image Saver: Save image
-  {
-    mockChrome.contextMenus._created = [
-      { id: 'save-image-item', title: 'Image Saver: Save image' }
-    ];
-    await sandbox.updateContextMenuTitles({
-      srcUrl: 'https://media.tenor.com/aGj-frNYMFEAAAAM/cat-cat-dance.gif',
-      mediaType: 'image',
-      menuIds: ['save-image-item']
-    });
-    const item = mockChrome.contextMenus._created.find(i => i.id === 'save-image-item');
-    assert(
-      item.title === 'Image Saver: Save GIF',
-      'меню: Tenor GIF динамически обновляет пункт в "Image Saver: Save GIF" (формат GIF известен по адресу)'
-    );
-  }
-
-  // 117. Меню: X GIF -> Image Saver: Save GIF animation
-  {
-    mockChrome.contextMenus._created = [
-      { id: 'save-image-item', title: 'Image Saver: Save media under cursor' }
-    ];
-    mockChrome.tabs._msgHandler = async (tabId, msg) => {
-      if (msg.action === 'GET_X_MEDIA_AT_CURSOR') {
-        return {
-          type: 'x_tweet_video',
-          url: 'https://video.twimg.com/tweet_video/GdE123.mp4'
-        };
-      }
-      return null;
-    };
-    await sandbox.updateContextMenuTitles({
-      pageUrl: 'https://x.com/user/status/123456789',
-      menuIds: ['save-image-item']
-    }, { id: 42 });
-    mockChrome.tabs._msgHandler = null;
-
-    const item = mockChrome.contextMenus._created.find(i => i.id === 'save-image-item');
-    const mp4ItemExists = mockChrome.contextMenus._created.some(i => i.id === 'save-x-mp4-item');
-    assert(
-      item.title === 'Image Saver: Save GIF animation' && !mp4ItemExists,
-      'меню: X GIF динамически обновляет пункт в "Image Saver: Save GIF animation" без пункта MP4'
-    );
-  }
-
-  // 118. Меню: X JPG -> Image Saver: Save image
-  {
-    mockChrome.contextMenus._created = [
-      { id: 'save-image-item', title: 'Image Saver: Save media under cursor' }
-    ];
-    mockChrome.tabs._msgHandler = async (tabId, msg) => {
-      if (msg.action === 'GET_X_MEDIA_AT_CURSOR') {
-        return {
-          type: 'image',
-          url: 'https://pbs.twimg.com/media/GdB123?format=jpg&name=orig'
-        };
-      }
-      return null;
-    };
-    await sandbox.updateContextMenuTitles({
-      pageUrl: 'https://x.com/user/status/123456789',
-      menuIds: ['save-image-item']
-    }, { id: 42 });
-    mockChrome.tabs._msgHandler = null;
-
-    const item = mockChrome.contextMenus._created.find(i => i.id === 'save-image-item');
-    assert(
-      item.title === 'Image Saver: Save image',
-      'меню: X JPG динамически обновляет пункт в "Image Saver: Save image"'
-    );
-  }
-
-  // 119. Меню: PNG -> Image Saver: Save image
-  {
-    mockChrome.contextMenus._created = [
-      { id: 'save-image-item', title: 'Image Saver: Save image' }
-    ];
-    await sandbox.updateContextMenuTitles({
-      srcUrl: 'https://example.com/artwork/character.png',
-      mediaType: 'image',
-      menuIds: ['save-image-item']
-    });
-    const item = mockChrome.contextMenus._created.find(i => i.id === 'save-image-item');
-    assert(
-      item.title === 'Image Saver: Save image',
-      'меню: PNG изображение динамически обновляет пункт в "Image Saver: Save image"'
-    );
-  }
-
-  // 120. Меню: WEBP -> Image Saver: Save image
-  {
-    mockChrome.contextMenus._created = [
-      { id: 'save-image-item', title: 'Image Saver: Save image' }
-    ];
-    await sandbox.updateContextMenuTitles({
-      srcUrl: 'https://example.com/gallery/photo.webp',
-      mediaType: 'image',
-      menuIds: ['save-image-item']
-    });
-    const item = mockChrome.contextMenus._created.find(i => i.id === 'save-image-item');
-    assert(
-      item.title === 'Image Saver: Save image',
-      'меню: WEBP изображение динамически обновляет пункт в "Image Saver: Save image"'
-    );
-  }
-
-  // 121. Меню: video (MP4 / HTML5 video) -> Image Saver: Save video
-  {
-    mockChrome.contextMenus._created = [
-      { id: 'save-image-item', title: 'Image Saver: Save image' }
-    ];
-    // Generic HTML5 video
-    await sandbox.updateContextMenuTitles({
-      srcUrl: 'https://example.com/videos/clip.mp4',
-      mediaType: 'video',
-      menuIds: ['save-image-item']
-    });
-    const itemImage = mockChrome.contextMenus._created.find(i => i.id === 'save-image-item');
-
-    // X regular video
-    mockChrome.tabs._msgHandler = async (tabId, msg) => {
-      if (msg.action === 'GET_X_MEDIA_AT_CURSOR') {
-        return {
-          type: 'video',
-          url: 'https://video.twimg.com/ext_tw_video/98765/pu/vid/720x1280/abc.mp4'
-        };
-      }
-      return null;
-    };
-    await sandbox.updateContextMenuTitles({
-      pageUrl: 'https://x.com/user/status/98765',
-      menuIds: ['save-image-item']
-    }, { id: 42 });
-    mockChrome.tabs._msgHandler = null;
-    const itemX = mockChrome.contextMenus._created.find(i => i.id === 'save-image-item');
-
-    assert(
-      itemImage.title === 'Image Saver: Save video' && itemX.title === 'Image Saver: Save video',
-      'меню: видео (MP4 / HTML5 video) динамически обновляет пункт в "Image Saver: Save video"'
-    );
-  }
-
-  // 122. Меню: неизвестный тип -> generic label
-  {
-    mockChrome.contextMenus._created = [
-      { id: 'save-image-item', title: 'Image Saver: Save image' }
-    ];
-    // Generic page / no media on X
-    mockChrome.tabs._msgHandler = async () => null;
-    await sandbox.updateContextMenuTitles({
-      pageUrl: 'https://x.com/home',
-      menuIds: ['save-image-item']
-    }, { id: 42 });
-    mockChrome.tabs._msgHandler = null;
-    const neutralTitle = mockChrome.contextMenus._created.find(i => i.id === 'save-image-item').title;
-
-    // Generic unknown image without extension
-    await sandbox.updateContextMenuTitles({
-      srcUrl: 'https://example.com/api/get-random-content',
-      mediaType: 'image',
-      menuIds: ['save-image-item']
-    });
-    const itemImage = mockChrome.contextMenus._created.find(i => i.id === 'save-image-item');
-
-    assert(
-      neutralTitle === 'Image Saver: Save media under cursor' && itemImage.title === 'Image Saver: Save image',
-      'меню: неизвестный тип корректно возвращает generic label (Save media under cursor / Save image)'
     );
   }
 
@@ -9239,8 +9069,6 @@ async function runTests() {
       const lookalikeTweet = sandbox.toTweetVideoUrl ? sandbox.toTweetVideoUrl(lookalike) : null;
       const genuineTweet = sandbox.toTweetVideoUrl ? sandbox.toTweetVideoUrl(genuine) : null;
 
-      const lookalikeFormat = sandbox.detectMediaFormat({ url: lookalike });
-      const genuineFormat = sandbox.detectMediaFormat({ url: genuine });
 
       mockChrome.tabs._msgHandler = async () => ({
         type: 'x_tweet_video',
@@ -9255,8 +9083,6 @@ async function runTests() {
       assert(
         lookalikeTweet === null &&
         genuineTweet === genuine &&
-        lookalikeFormat !== 'gif' &&
-        genuineFormat === 'gif' &&
         mockChrome._lastBadgeText === 'ERR',
         'Тест 200.10: Strict video.twimg.com validation strictly rejects attacker lookalike domains'
       );
@@ -10481,14 +10307,6 @@ async function runTests() {
         '205.2f: не-твиттер видео без потока по-прежнему откатывается к постеру как image'
       );
 
-      // E. detectMediaFormat sets 'gif' format for tweet_video_thumb
-      const formatThumb = sandbox.detectMediaFormat({
-        url: 'https://pbs.twimg.com/tweet_video_thumb/GZabc123.jpg'
-      });
-      assert(
-        formatThumb === 'gif',
-        '205.2g: detectMediaFormat определяет tweet_video_thumb как gif для контекстного меню'
-      );
     }
 
     // Восстанавливаем окружение
@@ -10675,26 +10493,6 @@ async function runTests() {
         resBlobTarget.classification?.animated === true &&
         !resBlobTarget.error,
         '206.4d: resolveMediaTarget с blob URL успешно восстанавливает MP4 из постера без ошибки UNRESOLVED_BLOB_MEDIA'
-      );
-    }
-
-    // 206.5: context menu titles for X GIF animation
-    {
-      const titleGifX = sandbox.getMediaMenuTitle('gif', 'x');
-      const titleTweetVid = sandbox.getMediaMenuTitle('x_tweet_video', 'default');
-      const titleObjX = sandbox.getMediaMenuTitle({ type: 'gif' }, 'x');
-      const titleGenericGif = sandbox.getMediaMenuTitle('gif', 'default');
-      const titleVideoX = sandbox.getMediaMenuTitle('video', 'x');
-      const titleImageX = sandbox.getMediaMenuTitle('image', 'x');
-
-      assert(
-        titleGifX === 'Image Saver: Save GIF animation' &&
-        titleTweetVid === 'Image Saver: Save GIF animation' &&
-        titleObjX === 'Image Saver: Save GIF animation' &&
-        titleGenericGif === 'Image Saver: Save GIF' &&
-        titleVideoX === 'Image Saver: Save video' &&
-        titleImageX === 'Image Saver: Save image',
-        '206.5: getMediaMenuTitle формирует "Image Saver: Save GIF animation" для X GIF, "Image Saver: Save GIF" для GIF-файла без подтверждённой анимации, "Image Saver: Save video" для обычного видео и "Image Saver: Save image" для фото'
       );
     }
 
@@ -10905,51 +10703,6 @@ async function runTests() {
     // ТЕСТ 208: Reddit Phase 1.5 Media Conversion UX Improvements
     // =========================================================================
     console.log('\n--- Тест 208: Reddit Phase 1.5 Media Conversion UX Improvements ---');
-
-    // 208.1: Reddit GIF MP4 label detection
-    {
-      const redditGifUrl = 'https://preview.redd.it/sample_anim.gif?format=mp4&s=abcdef12345';
-      const detectedFormat = sandbox.detectMediaFormat({ url: redditGifUrl });
-      const menuTitle = sandbox.getMediaMenuTitle(detectedFormat, 'reddit_gif');
-      const menuTitleDirect = sandbox.getMediaMenuTitle('reddit_gif');
-
-      assert(
-        detectedFormat === 'reddit_gif' &&
-        menuTitle === 'Image Saver: Save GIF animation' &&
-        menuTitleDirect === 'Image Saver: Save GIF animation',
-        '208.1: preview.redd.it/*.gif?format=mp4 определяется как Reddit GIF animation для контекстного меню'
-      );
-    }
-
-    // 208.2: Reddit packaged-media video label detection
-    {
-      const pkgUrl = 'https://packaged-media.redd.it/xyz123/res.mp4?m=DASH&s=abcd&e=99999';
-      const detectedFormat = sandbox.detectMediaFormat({ url: pkgUrl });
-      const menuTitle = sandbox.getMediaMenuTitle(detectedFormat);
-      const menuTitleDirect = sandbox.getMediaMenuTitle('packaged_media');
-
-      assert(
-        detectedFormat === 'packaged_media' &&
-        menuTitle === 'Image Saver: Save video' &&
-        menuTitleDirect === 'Image Saver: Save video',
-        '208.2: packaged-media.redd.it определяется как "Image Saver: Save video"'
-      );
-    }
-
-    // 208.3: Normal MP4 label remains unchanged
-    {
-      const normalVideoUrl = 'https://example.com/stream.mp4';
-      const detectedFormat = sandbox.detectMediaFormat({ url: normalVideoUrl });
-      const menuTitle = sandbox.getMediaMenuTitle(detectedFormat);
-      const menuTitleString = sandbox.getMediaMenuTitle('video');
-
-      assert(
-        detectedFormat === 'video' &&
-        menuTitle === 'Image Saver: Save video' &&
-        menuTitleString === 'Image Saver: Save video',
-        '208.3: Обычное MP4 видео по-прежнему сохраняет метку "Image Saver: Save video"'
-      );
-    }
 
     // Восстанавливаем окружение
     sandbox.fetch = origSandboxFetch;
@@ -16443,30 +16196,6 @@ async function runTests() {
         allMenus[0].contexts.includes('video') && !allMenus[0].parentId,
         '222.5a: один прямой пункт для нативных источников и X page/overlay');
 
-      // 2. Tweet video animation -> title "Image Saver: Save GIF animation" and downloads .gif
-      const tweetVidTitle = sandbox.getMediaMenuTitle('x_tweet_video', 'x');
-      const tweetVidObjTitle = sandbox.getMediaMenuTitle({ type: 'x_tweet_video' }, 'x');
-      assert(
-        tweetVidTitle === 'Image Saver: Save GIF animation' &&
-        tweetVidObjTitle === 'Image Saver: Save GIF animation',
-        '222.5b: Для tweet_video контекстное меню строго отображает "Image Saver: Save GIF animation"'
-      );
-
-      // 3. Ordinary video (ext_tw_video / amplify_video) -> title "Image Saver: Save video" and downloads .mp4
-      const amplifyClass = sandbox.classifyMediaTarget('https://video.twimg.com/amplify_video/123/vid/avc1/720x1280/clip.mp4');
-      const normalVideoTitle = sandbox.getMediaMenuTitle('video', 'x');
-      assert(
-        amplifyClass.type === 'video' &&
-        normalVideoTitle === 'Image Saver: Save video',
-        '222.5c: Для обычного X видео контекстное меню строго отображает "Image Saver: Save video"'
-      );
-
-      // 4. Normal photo -> title "Image Saver: Save image"
-      const photoTitle = sandbox.getMediaMenuTitle('image', 'x');
-      assert(
-        photoTitle === 'Image Saver: Save image',
-        '222.5d: Для фото на X контекстное меню строго отображает "Image Saver: Save image"'
-      );
     }
 
     // 222.6: Fail-closed policy on conversion failure (no poster, no OpenGraph fallback, ERR badge)
@@ -16723,17 +16452,6 @@ async function runTests() {
       resWatch?.type === 'video' && resWatch?.sourceType === 'redgifs' && resWatch?.mime === 'video/mp4' && resWatch?.animated === false &&
       resIfr?.type === 'video' && resIfr?.sourceType === 'redgifs' && resIfr?.mime === 'video/mp4' && resIfr?.animated === false,
       '223.4: classifyMediaTarget классифицирует маршруты RedGIFs (watch/ifr) как redgifs video'
-    );
-  }
-
-  // 223.5: detectMediaFormat identifies v.redd.it and RedGIFs routes as video
-  {
-    const fmtReddit = sandbox.detectMediaFormat({ url: 'https://v.redd.it/3k7vqw23xyz' });
-    const fmtRedGifs = sandbox.detectMediaFormat({ url: 'https://www.redgifs.com/watch/clevergreenfrog' });
-    const fmtRedditGif = sandbox.detectMediaFormat({ url: 'https://preview.redd.it/anim.gif?format=mp4&s=123' });
-    assert(
-      fmtReddit === 'video' && fmtRedGifs === 'video' && fmtRedditGif === 'reddit_gif',
-      '223.5: detectMediaFormat определяет v.redd.it и RedGIFs watch как video, а Reddit MP4 GIF как reddit_gif'
     );
   }
 
@@ -20537,31 +20255,6 @@ async function runTests() {
       );
     }
 
-    // 227.2: detectMediaFormat priority: animation semantics win over generic HTML video element hints
-    {
-      const dmf = sandbox.detectMediaFormat;
-      const animUrl = 'https://preview.redd.it/srg8rprakdrh1.gif?width=400&format=mp4&s=abcdef123456';
-      const packagedUrl = 'https://packaged-media.redd.it/fzhfbc30nhsh1/pb/m2-res_1080p.mp4?sig=123';
-      const ordinaryRedditVideo = 'https://v.redd.it/normalvideo123/DASH_720.mp4';
-      const nativeGifUrl = 'https://i.redd.it/crwwt1rrfqfa1.gif';
-      const staticJpegUrl = 'https://i.redd.it/z8ktl6u3pgsh1.jpeg';
-
-      assert(
-        dmf({ url: animUrl, domType: 'video' }) === 'reddit_gif' &&
-        dmf({ url: animUrl, domType: 'reddit_gif' }) === 'reddit_gif' &&
-        dmf({ url: animUrl }) === 'reddit_gif',
-        '227.2a: detectMediaFormat: подтверждённая Reddit анимация имеет приоритет над DOM хинтом domType === "video"'
-      );
-
-      assert(
-        dmf({ url: packagedUrl, domType: 'video' }) === 'packaged_media' &&
-        dmf({ url: ordinaryRedditVideo, domType: 'video' }) === 'video' &&
-        dmf({ url: nativeGifUrl, domType: 'image' }) === 'gif' &&
-        dmf({ url: staticJpegUrl, domType: 'image' }) === 'jpg',
-        '227.2b: detectMediaFormat четко разделяет packaged_media, обычное video, нативный gif и статическое изображение'
-      );
-    }
-
     // 227.3: DOM inspection in content_reddit.js: scoped to owning post without selecting adjacent media
     {
       const redditPath = path.resolve(__dirname, 'content_reddit.js');
@@ -20623,67 +20316,38 @@ async function runTests() {
       );
     }
 
-    // 227.4: Proactive context-menu messaging & Chrome compatibility (absent onShown/refresh)
+    // 227.4: provider messages fill the descriptor cache of their tab and never rename the command (no title update at all)
     {
-      const updatedTitles = [];
+      const updates = [];
       const origUpdate = mockChrome.contextMenus.update;
       mockChrome.contextMenus.update = (id, props, cb) => {
-        updatedTitles.push({ id, title: props.title });
+        updates.push({ id, props });
         if (cb) cb();
       };
-
-      // Ensure mock onShown is NOT relied upon
-      const hadOnShown = Boolean(mockChrome.contextMenus.onShown);
-      delete mockChrome.contextMenus.onShown;
-
-      // Simulate REDDIT_MEDIA_CONTEXTMENU_DETECTED message arriving from content script
       const animUrl = 'https://preview.redd.it/srg8rprakdrh1.gif?width=400&format=mp4&s=abcdef123456';
       mockChrome.runtime._onMessageCb({
         action: 'REDDIT_MEDIA_CONTEXTMENU_DETECTED',
-        media: {
-          type: 'reddit_gif',
-          sourceType: 'reddit_gif',
-          url: animUrl
-        },
+        media: { type: 'reddit_gif', sourceType: 'reddit_gif', url: animUrl },
         timestamp: 1000
       }, { tab: { id: 777 } });
-
-      const lastTitleAfterAnim = updatedTitles[updatedTitles.length - 1];
-
-      // Simulate REDGIFS_MEDIA_CONTEXTMENU_DETECTED message arriving
+      const afterAnim = sandbox.lastDetectedRedditMediaByTab.get(777);
       mockChrome.runtime._onMessageCb({
         action: 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED',
         media: { type: 'video', sourceType: 'redgifs' },
         timestamp: 1010
       }, { tab: { id: 777 } });
-
-      const lastTitleAfterRedGifs = updatedTitles[updatedTitles.length - 1];
-
-      // Simulate packaged Reddit video detected
+      const afterRedGifs = sandbox.lastDetectedRedditMediaByTab.get(777);
       mockChrome.runtime._onMessageCb({
         action: 'REDDIT_MEDIA_CONTEXTMENU_DETECTED',
-        media: {
-          type: 'video',
-          sourceType: 'packaged_media',
-          url: 'https://packaged-media.redd.it/video123.mp4'
-        },
+        media: { type: 'video', sourceType: 'packaged_media', url: 'https://packaged-media.redd.it/video123.mp4' },
         timestamp: 1020
       }, { tab: { id: 777 } });
-
-      const lastTitleAfterPackaged = updatedTitles[updatedTitles.length - 1];
-
-      // Restore mock onShown if it existed
-      if (hadOnShown) mockChrome.contextMenus.onShown = {};
+      const afterPackaged = sandbox.lastDetectedRedditMediaByTab.get(777);
       mockChrome.contextMenus.update = origUpdate;
-
       assert(
-        lastTitleAfterAnim?.id === 'save-image-item' &&
-        lastTitleAfterAnim?.title === 'Image Saver: Save GIF animation' &&
-        lastTitleAfterRedGifs?.id === 'save-image-item' &&
-        lastTitleAfterRedGifs?.title === 'Image Saver: Save video' &&
-        lastTitleAfterPackaged?.id === 'save-image-item' &&
-        lastTitleAfterPackaged?.title === 'Image Saver: Save video',
-        '227.4: Проактивные сообщения обновляют заголовок save-image-item без reliance на отсутствующий chrome.contextMenus.onShown'
+        afterAnim?.media?.sourceType === 'reddit_gif' && afterRedGifs?.media?.sourceType === 'redgifs' && afterPackaged?.media?.sourceType === 'packaged_media' &&
+        updates.every((u) => !('title' in (u.props || {}))),
+        '227.4: сообщения провайдеров обновляют кэш дескриптора вкладки и не переименовывают пункт (ни одного обновления заголовка)'
       );
     }
 
@@ -20718,19 +20382,9 @@ async function runTests() {
         '227.5a: Устаревшее out-of-order сообщение с меньшим timestamp игнорируется и не перезаписывает более свежие медиа'
       );
 
-      // Tab activation resets menu title to default
-      if (mockChrome.tabs?._onActivatedCb) {
-        mockChrome.tabs._onActivatedCb({ tabId: 888 });
-      } else {
-        mockChrome.contextMenus.update('save-image-item', { title: 'Image Saver: Save image' });
-      }
-      const lastResetTitle = titleUpdates.slice().reverse().find(t => t.id === 'save-image-item');
-
-      assert(
-        lastResetTitle?.id === 'save-image-item' &&
-        lastResetTitle?.title === 'Image Saver: Save media under cursor',
-        '227.5b: Переключение вкладки сбрасывает заголовок save-image-item на нейтральный "Image Saver: Save media under cursor"'
-      );
+      // Tab activation touches the visibility of the command only
+      if (mockChrome.tabs?._onActivatedCb) mockChrome.tabs._onActivatedCb({ tabId: 888 });
+      assert(titleUpdates.every((t) => !t.title), '227.5b: переключение вкладки не меняет заголовок пункта');
 
       mockChrome.contextMenus.update = origUpdate;
     }
@@ -21069,11 +20723,6 @@ async function runTests() {
         }
       }
 
-      function getSaveImageItemTitle() {
-        const item = mockChrome.contextMenus._created.find(i => i.id === 'save-image-item');
-        return item ? item.title : null;
-      }
-
       // 228.1: Both scripts registered their listeners
       assert(
         windowListeners.mousedown.length >= 2 &&
@@ -21086,7 +20735,7 @@ async function runTests() {
       const redGifsSentOnGif = capturedMessages.some(m => m.action === 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED');
       const redditSentOnGif = capturedMessages.some(m => m.action === 'REDDIT_MEDIA_CONTEXTMENU_DETECTED' && m.media?.sourceType === 'reddit_gif');
       assert(
-        !redGifsSentOnGif && redditSentOnGif && getSaveImageItemTitle() === 'Image Saver: Save GIF animation',
+        !redGifsSentOnGif && redditSentOnGif && sandbox.lastDetectedRedditMediaByTab.get(501)?.media?.sourceType === 'reddit_gif',
         '228.2: Клик по Reddit GIF: content_redgifs.js не шлет ложный видео-анонс, content_reddit.js определяет reddit_gif, меню обновляется на "Image Saver: Save GIF animation"'
       );
 
@@ -21095,7 +20744,7 @@ async function runTests() {
       const redGifsSentOnImg = capturedMessages.some(m => m.action === 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED');
       const redditSentOnImg = capturedMessages.some(m => m.action === 'REDDIT_MEDIA_CONTEXTMENU_DETECTED' && m.media?.sourceType === 'image');
       assert(
-        !redGifsSentOnImg && redditSentOnImg && getSaveImageItemTitle() === 'Image Saver: Save image',
+        !redGifsSentOnImg && redditSentOnImg && sandbox.lastDetectedRedditMediaByTab.get(501)?.media?.sourceType === 'image',
         '228.3: Переход на статическое изображение Reddit: заголовок меню переключается на "Image Saver: Save image"'
       );
 
@@ -21104,14 +20753,14 @@ async function runTests() {
       const redGifsSentOnVid = capturedMessages.some(m => m.action === 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED');
       const redditSentOnVid = capturedMessages.some(m => m.action === 'REDDIT_MEDIA_CONTEXTMENU_DETECTED' && m.media?.sourceType === 'video');
       assert(
-        !redGifsSentOnVid && redditSentOnVid && getSaveImageItemTitle() === 'Image Saver: Save video',
+        !redGifsSentOnVid && redditSentOnVid && sandbox.lastDetectedRedditMediaByTab.get(501)?.media?.sourceType === 'video',
         '228.4: Переход на обычное видео Reddit (v.redd.it): RedGIFs не перехватывает чужое видео, меню переключается на "Image Saver: Save video"'
       );
 
       // 228.5: Transition back from video to Reddit GIF
       dispatchRightClick(card1Video);
       assert(
-        getSaveImageItemTitle() === 'Image Saver: Save GIF animation',
+        sandbox.lastDetectedRedditMediaByTab.get(501)?.media?.sourceType === 'reddit_gif',
         '228.5: Обратный переход с видео на Reddit GIF: меню безошибочно возвращается в "Image Saver: Save GIF animation"'
       );
 
@@ -21120,16 +20769,15 @@ async function runTests() {
       const redGifsSentOnUnrelated = capturedMessages.some(m => m.action === 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED');
       const redditSentOnUnrelated = capturedMessages.some(m => m.action === 'REDDIT_MEDIA_CONTEXTMENU_DETECTED' && m.media === null);
       assert(
-        !redGifsSentOnUnrelated && redditSentOnUnrelated && getSaveImageItemTitle() === 'Image Saver: Save image',
+        !redGifsSentOnUnrelated && redditSentOnUnrelated && sandbox.lastDetectedRedditMediaByTab.get(501)?.media === null,
         '228.6: Клик по произвольному тексту/контейнеру: ложные видео-анонсы отсутствуют, меню сбрасывается на "Image Saver: Save image"'
       );
 
       // 228.7: Right click on positive RedGIFs media target
       dispatchRightClick(card4Iframe);
       const redGifsSentOnTarget = capturedMessages.some(m => m.action === 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED' && m.media?.sourceType === 'redgifs');
-      const redGifsFormat = sandbox.detectMediaFormat({ url: 'https://www.redgifs.com/watch/wildcheetah' });
       assert(
-        redGifsSentOnTarget && getSaveImageItemTitle() === 'Image Saver: Save video' && redGifsFormat === 'video',
+        redGifsSentOnTarget,
         '228.7: Клик по подтвержденному RedGIFs медиа: content_redgifs.js отправляет REDGIFS_MEDIA_CONTEXTMENU_DETECTED, меню становится "Image Saver: Save video", формат строго MP4'
       );
 
@@ -21143,14 +20791,13 @@ async function runTests() {
       // 228.8: Reversed / delayed notification with older timestamp is dropped
       const activeEntry = sandbox.lastDetectedRedditMediaByTab.get(501);
       const activeTimestamp = activeEntry?.timestamp || Date.now();
-      const titleBeforeDelayed = getSaveImageItemTitle();
       mockChrome.runtime._onMessageCb({
         action: 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED',
         media: { type: 'video', sourceType: 'redgifs' },
         timestamp: activeTimestamp - 100000
       }, { tab: { id: 501 }, frameId: 0 });
       assert(
-        getSaveImageItemTitle() === titleBeforeDelayed,
+        sandbox.lastDetectedRedditMediaByTab.get(501) === activeEntry,
         '228.8: Устаревшее задержанное сообщение с меньшим timestamp отклоняется и не перезаписывает активное меню'
       );
 
@@ -21185,8 +20832,8 @@ async function runTests() {
       if (mockChrome.tabs._onUpdatedCb) {
         mockChrome.tabs._onUpdatedCb(501, { status: 'loading' });
         assert(
-          !sandbox.lastDetectedRedditMediaByTab.has(501) && getSaveImageItemTitle() === 'Image Saver: Save media under cursor',
-          '228.10: Навигация/перезагрузка вкладки: onUpdated инвалидирует кеш медиа вкладки и сбрасывает меню'
+          !sandbox.lastDetectedRedditMediaByTab.has(501),
+          '228.10: Навигация/перезагрузка вкладки: onUpdated инвалидирует кеш медиа вкладки'
         );
       }
 
@@ -21265,30 +20912,6 @@ async function runTests() {
     // --- Тест 229: Reddit Native GIF Menu, Carousel Selected Item & Shreddit Blob Recovery ---
     console.log('\n--- Тест 229: Reddit Native GIF Menu, Carousel Selected Item & Shreddit Blob Recovery ---');
     const redditScriptSource = fs.readFileSync(path.join(__dirname, 'content_reddit.js'), 'utf8');
-
-    // 229.1: getMediaMenuTitle maps native_gif to "Image Saver: Save GIF animation" and blob_video to "Image Saver: Save video"
-    {
-      const titleNativeGifDirect = sandbox.getMediaMenuTitle('native_gif', 'native_gif');
-      const titleNativeGifObj = sandbox.getMediaMenuTitle({ type: 'gif', sourceType: 'native_gif' }, 'native_gif');
-      const titleBlobVideoObj = sandbox.getMediaMenuTitle({ type: 'video', sourceType: 'blob_video' }, 'default');
-      const titleGenericGif = sandbox.getMediaMenuTitle('gif', 'default');
-      const titleRedditGif = sandbox.getMediaMenuTitle('reddit_gif');
-      const titlePackaged = sandbox.getMediaMenuTitle('packaged_media');
-      const titleVideo = sandbox.getMediaMenuTitle('video');
-      const titleImage = sandbox.getMediaMenuTitle('image');
-
-      assert(
-        titleNativeGifDirect === 'Image Saver: Save GIF animation' &&
-        titleNativeGifObj === 'Image Saver: Save GIF animation' &&
-        titleBlobVideoObj === 'Image Saver: Save video' &&
-        titleGenericGif === 'Image Saver: Save GIF' &&
-        titleRedditGif === 'Image Saver: Save GIF animation' &&
-        titlePackaged === 'Image Saver: Save video' &&
-        titleVideo === 'Image Saver: Save video' &&
-        titleImage === 'Image Saver: Save image',
-        '229.1: getMediaMenuTitle корректно классифицирует native_gif ("Save GIF animation") и blob_video ("Save video"); generic gif — "Save GIF" (формат GIF, анимация не подтверждена), не "Save image"'
-      );
-    }
 
     // 229.2: resolveRedditMediaDescriptor preserves DOM video semantics for blob sources
     {
@@ -21577,15 +21200,13 @@ async function runTests() {
 
     // 229.8: Non-regression check: X tweet_video GIF conversion, Instagram sharing, TikTok sharing intact
     {
-      const xTitle = sandbox.getMediaMenuTitle('x_tweet_video', 'default');
       const isXPoster = sandbox.isXVideoPosterUrl('https://pbs.twimg.com/amplify_video_thumb/123/img/photo.jpg');
       const ttValidId = sandbox.validateTikTokVideoId ? sandbox.validateTikTokVideoId('7123456789012345678') : true;
 
       assert(
-        xTitle === 'Image Saver: Save GIF animation' &&
         isXPoster &&
         ttValidId,
-        '229.8: X GIF menutitle, X poster detection и TikTok video ID валидация остаются неизменными'
+        '229.8: X poster detection и TikTok video ID валидация остаются неизменными'
       );
     }
 
@@ -26651,14 +26272,65 @@ async function runTests() {
           return [hoverImg, cg, bodyEl];
         };
 
-        // measured first: while the pointer moves nothing is evaluated, sent or looked up
+        // measured first: the work per event is O(1); while the pointer keeps moving the target is checked only every DWELL_MS (a handful of point
+        // lookups in 2 s, never a hit stack or a DOM query), and the one stable target is published once
         let w = mkWorld(at);
         for (let i = 0; i < 1000; i++) { w.move(20 + (i % 150), 30 + (i % 90)); w.advance(2); }
-        assert(w.msgs.length === 0 && w.calls.efp === 0 && w.calls.efpt === 0 && w.calls.qsa === 0, '243.1: 1000 событий движения за 2 с: ни одного сообщения и ни одного hit-теста/запроса к DOM (работа на событие — O(1))');
-        assert(w.timers.length === 1, '243.2: во время движения ждёт ровно один таймер (перезаводится, не накапливается)');
+        assert(w.msgs.length <= 1 && w.calls.efp === 0 && w.calls.efpt >= 1 && w.calls.efpt <= 7 && w.calls.qsa === 0, `243.1: 1000 событий движения за 2 с: работа на событие — O(1) (проверок точки ${w.calls.efpt} ≤ 7, hit-стеков и запросов к DOM нет), цель публикуется не более одного раза`);
+        assert(w.timers.length === 2, '243.2: во время движения ждут ровно два таймера: покой и проверка цели (перезаводятся, не накапливаются)');
+        {
+          // F9 (first click): a pointer that ENTERS another image/video is evaluated at once (not after IDLE_MS / two DWELL_MS checks); staying on it costs nothing more
+          const e1 = mkWorld(at);
+          e1.move(20, 30, { target: hoverImg });
+          e1.advance(1);
+          assert(e1.pointerMsgs().length === 1 && e1.pointerMsgs()[0].media && e1.pointerMsgs()[0].media.url === HOVER_A,
+            '243.2c: указатель вошёл в изображение — подсказка отправлена сразу (до IDLE_MS и до проверок DWELL_MS): ' + JSON.stringify(e1.pointerMsgs().map((m) => m.at)));
+          const efpt1 = e1.calls.efpt;
+          for (let i = 0; i < 200; i++) { e1.move(20 + (i % 50), 30 + (i % 40), { target: hoverImg }); e1.advance(1); }
+          assert(e1.pointerMsgs().length === 1 && e1.calls.efpt - efpt1 <= 4 && e1.calls.efp === 0 && e1.calls.qsa === 0,
+            '243.2d: движение внутри того же изображения не создаёт новых проверок и сообщений: ' + JSON.stringify({ msgs: e1.pointerMsgs().length, efpt: e1.calls.efpt - efpt1 }));
+          // a sweep across many elements is still bounded by the minimum gap of one evaluation per MIN_GAP_MS
+          const e2 = mkWorld(at);
+          for (let i = 0; i < 40; i++) { e2.move(20 + i, 30, { target: i % 2 ? hoverImg : hoverCard }); e2.move(240 + i, 30, { target: hoverCard }); e2.advance(10); }
+          assert(e2.calls.efpt <= 1 + Math.ceil(400 / 80) + 1, '243.2e: перебор элементов за 0,4 с — не больше одной проверки на ENTER_GAP_MS (80 мс): ' + e2.calls.efpt);
+          // right after another evaluation (the pointer rested elsewhere a moment ago) the entry is still evaluated within ENTER_GAP_MS, not MIN_GAP_MS
+          const e4 = mkWorld(at);
+          e4.move(300, 400, { target: hoverBlank }); e4.advance(130);
+          const n4 = e4.pointerMsgs().length;
+          e4.move(20, 30, { target: hoverImg }); e4.advance(81);
+          assert(e4.pointerMsgs().length === n4 + 1 && e4.pointerMsgs()[n4].media && e4.pointerMsgs()[n4].media.url === HOVER_A, '243.2g: вход в изображение вскоре после покоя в другом месте оценивается в пределах ENTER_GAP_MS (80 мс), а не MIN_GAP_MS: ' + JSON.stringify(e4.pointerMsgs().map((m) => m.at)));
+          // a hand-held pointer keeps moving (the idle timer is re-armed by every move and never fires): the entry evaluation has its own timer and still runs
+          const e5 = mkWorld(at);
+          const t5 = e5.now;
+          for (let i = 0; i < 11; i++) { e5.move(20 + (i % 5), 30 + (i % 4), { target: hoverImg }); e5.advance(10); }
+          assert(e5.pointerMsgs().length === 1 && e5.pointerMsgs()[0].at - t5 <= 20 && e5.now - t5 < 120,
+            '243.2h: указатель с дрожанием руки (таймер покоя перезаводится каждым движением) всё равно получает ответ при входе, раньше IDLE_MS: ' + JSON.stringify(e5.pointerMsgs().map((m) => m.at - t5)));
+          // disposal: leaving the page (pagehide) or the document being torn down leaves no entry timer behind
+          const e6 = mkWorld(at);
+          e6.move(20, 30, { target: hoverImg });
+          assert(e6.timers.length >= 1, '243.2i0: вход ставит собственный таймер оценки');
+          e6.fire('pagehide'); e6.advance(1000);
+          assert(e6.pointerMsgs().length === 0 && e6.timers.length === 0, '243.2i: уход со страницы снимает таймер входа, подсказка не отправляется: ' + e6.pointerMsgs().length + '/' + e6.timers.length);
+          // leaving the document forgets the entered element: coming back to the same image is an entry again
+          const e3 = mkWorld(at);
+          e3.move(20, 30, { target: hoverImg }); e3.advance(300);
+          const n3 = e3.pointerMsgs().length;
+          e3.fire('mouseout', { relatedTarget: null }); e3.advance(10);
+          e3.move(21, 31, { target: hoverImg }); e3.advance(100);
+          assert(n3 === 1 && e3.pointerMsgs().length === 2, '243.2f: после ухода из документа возврат на то же изображение снова вход: ' + n3 + '/' + e3.pointerMsgs().length);
+        }
+        {
+          // F8: the capture is injected into open tabs on install/update; where the manifest script already ran, a second load changes nothing
+          const handlerCount = () => Object.values(w.handlers).reduce((n, list) => n + list.length, 0);
+          const before = { handlers: handlerCount(), runtime: w.rt.length, timers: w.timers.length, rec: vm.runInContext('globalThis.__imageSaverContextTarget', w.ctx) };
+          vm.runInContext(scriptCode, w.ctx);
+          vm.runInContext(scriptCode, w.ctx);
+          assert(handlerCount() === before.handlers && w.rt.length === before.runtime && w.timers.length === before.timers && vm.runInContext('globalThis.__imageSaverContextTarget', w.ctx) === before.rec,
+            '243.2b: повторная загрузка capture в тот же мир (внедрение в уже подготовленную вкладку) не добавляет слушателей, таймеров и не стирает запись');
+        }
         w.advance(130);
         const rest1 = w.pointerMsgs();
-        assert(rest1.length === 1 && rest1[0].selectable === true && rest1[0].source === 'pointer' && w.calls.efpt === 1, '243.3: курсор остановился на изображении: одна оценка и одно сообщение «цель есть» (source pointer)');
+        assert(rest1.length === 1 && rest1[0].selectable === true && rest1[0].source === 'pointer' && w.calls.efpt <= 8, '243.3: курсор остановился на изображении: одно сообщение «цель есть» (source pointer), повтор не шлётся');
         // the same state is not repeated; scrolling over the same media does not message
         w.fire('scroll');
         w.advance(400);
@@ -26761,7 +26433,7 @@ async function runTests() {
         // Codex finding 3: pagehide ends pointer work unconditionally, independently of visibilitychange / document.hidden
         w = mkWorld(at);
         w.move(50, 50);
-        assert(w.timers.length === 1 && w.doc.hidden !== true, '243.40: перед pagehide ожидает таймер, документ не скрыт');
+        assert(w.timers.length === 2 && w.doc.hidden !== true, '243.40: перед pagehide ожидает таймер, документ не скрыт');
         w.fire('pagehide');
         assert(w.timers.length === 0, '243.41: pagehide при document.hidden === false снимает отложенную оценку');
         w.advance(400);
@@ -26895,7 +26567,7 @@ async function runTests() {
                 await switchTo(A, Bw);
                 const a0 = A.w.msgs.length;
                 A.w.move(10, 350);
-                assert(A.w.timers.length === 1, '246.8: в окне A ожидает оценка пустого места');
+                assert(A.w.timers.length === 2, '246.8: в окне A ожидает оценка пустого места');
                 await switchTo(Bw, A);
                 await rest(Bw, 50, 50);
                 assert(enabled === true, '246.9: в окне B (в фокусе) выбранное изображение: доступно');
@@ -27033,12 +26705,12 @@ async function runTests() {
                 assert(enabled === false, '247.9: пустое место в B: серый');
                 log.length = 0; rb = resets.length;
                 mockChrome.tabs._onActivatedCb({ tabId: 12, windowId: 2 }); await flush();
-                assert(enabled === true && resets.length === rb + 1 && resets[resets.length - 1][0] === 12 && titles() >= 1, '247.10: активация вкладки окна в фокусе возвращает «доступно», уведомляет эту вкладку и сбрасывает заголовок');
+                assert(enabled === true && resets.length === rb + 1 && resets[resets.length - 1][0] === 12, '247.10: активация вкладки окна в фокусе возвращает «доступно» и уведомляет эту вкладку');
                 Bw.w.advance(600); await pump(Bw);
                 assert(enabled === false, '247.11: вкладка ответила заново: пустое место снова скрыто');
                 log.length = 0;
                 mockChrome.tabs._onUpdatedCb(12, { status: 'loading' }, { id: 12, active: true, windowId: 2 }); await flush();
-                assert(enabled === true && titles() >= 1, '247.12: навигация активной вкладки окна в фокусе обновляет меню и заголовок');
+                assert(enabled === true, '247.12: навигация активной вкладки окна в фокусе возвращает «доступно»');
                 Bw.w.advance(600); await pump(Bw);
 
                 // 247.13-247.14: no focused window
@@ -27144,14 +26816,9 @@ async function runTests() {
                 // 248 (GEN-01-MENU-STATE, BR-05): the entry is absent outside selected media, shadow hosts are not media, and the label
                 // follows the selected target of the current click only
                 {
-                  const NEUTRAL = 'Image Saver: Save media under cursor';
-                  const T_IMAGE = 'Image Saver: Save image';
-                  const T_GIF = 'Image Saver: Save GIF';
-                  const T_ANIM = 'Image Saver: Save GIF animation';
-                  const T_VIDEO = 'Image Saver: Save video';
                   const props = [];
                   mockChrome.contextMenus.update = (id, p, cb) => { props.push(p); if (p && 'visible' in p) enabled = p.visible; if (typeof cb === 'function') cb(); };
-                  const titleNow = () => { const t = props.filter((p) => p && 'title' in p); return t.length ? t[t.length - 1].title : null; };
+                  const titlesSent = () => props.filter((p) => p && 'title' in p).length;
                   const senderF = (e, frameId = 0, documentId = undefined, active = true) => ({ id: 'mock-id', tab: { id: e.tab, active, windowId: e.win }, frameId, documentId, url: 'https://shop.example.test/gallery' });
                   const send248 = async (e, m, frameId = 0, documentId = undefined) => { mockChrome.runtime._onMessageCb(m, senderF(e, frameId, documentId), () => {}); await flush(); };
                   let lastGesture = null;
@@ -27175,99 +26842,24 @@ async function runTests() {
                   assert(props.every((p) => !('enabled' in p) || p.enabled === true), '248.3: ни одно обновление не отключает пункт (enabled не бывает false, прежнее отключённое состояние снимается)');
                   assert(mockChrome.contextMenus._created.filter((i) => i.id === 'save-image-item').length === 1 && JSON.stringify(mockChrome.contextMenus._created.find((i) => i.id === 'save-image-item').contexts) === JSON.stringify(['image', 'link', 'video', 'page']), '248.4: остаётся одна прямая запись для image/link/video/page, без подменю и без второй записи');
 
-                  // 248.5-248.12: the label follows the selected target; an earlier click's label does not survive
-                  const flow = async (steps) => { for (const s of steps) await s(); };
-                  await send248(A, hint2({ media: img('https://cdn.example.test/anim/loop.gif') }));
-                  assert(titleNow() === T_GIF, '248.5: GIF-файл по своему адресу: «Save GIF» (раньше «Save image»)');
-                  await send248(A, hint2({ media: img('https://cdn.example.test/p/photo.jpg') }));
-                  assert(titleNow() === T_IMAGE, '248.6: следующий клик по JPG сразу возвращает «Save image»: заголовок GIF не переживает');
-                  await send248(A, hint2({ media: { kind: 'video', url: 'https://cdn.example.test/v/clip.mp4' } }));
-                  assert(titleNow() === T_VIDEO, '248.7: нативное видео: «Save video»');
-                  await send248(A, hint2({ selectable: false, phase: 'down' }));
-                  assert(titleNow() === NEUTRAL && enabled === false, '248.8: клик по пустому месту после видео: пункт скрыт и заголовок нейтральный, а не «Save video»');
-                  await send248(A, hint2({ media: { kind: 'player', url: null } }));
-                  assert(titleNow() === T_VIDEO, '248.9: проигрыватель без готового адреса (blob/MSE) — всё равно <video>: «Save video»');
-                  await send248(A, hint2({ media: { kind: 'css', url: 'https://cdn.example.test/css/card.jpg' } }));
-                  assert(titleNow() === NEUTRAL, '248.10: CSS-фон или слой: тип ресурса не известен — нейтральный заголовок');
-                  await send248(A, hint2({ selectable: true, media: null, linkHref: 'https://cdn.example.test/files/anim.gif' }));
-                  assert(titleNow() === T_GIF, '248.11: ссылка прямо на GIF-файл — по её адресу');
-                  await send248(A, hint2({ selectable: true, media: null, linkHref: 'https://cdn.example.test/files/clip.webm' }));
-                  assert(titleNow() === T_VIDEO, '248.12: ссылка на видеофайл — «Save video»');
-
-                  // 248.13-248.20: a provider label belongs to the frame of the current click
-                  const REDDIT_GIF = { type: 'native_gif', sourceType: 'native_gif', url: 'https://preview.redd.it/loop.gif' };
-                  await send248(A, hint2({ media: { kind: 'video', url: 'https://v.redd.it/abc/DASH_720.mp4' }, phase: 'down' }), 0, 'doc-1');
-                  await provider(A, 'REDDIT_MEDIA_CONTEXTMENU_DETECTED', REDDIT_GIF, 0, 'doc-1');
-                  assert(titleNow() === T_ANIM, '248.13: ответ провайдера того же клика (тот же кадр и документ) задаёт заголовок «GIF animation»');
-                  await send248(A, hint2({ media: { kind: 'video', url: 'https://v.redd.it/abc/DASH_720.mp4' }, phase: 'menu' }), 0, 'doc-1');
-                  assert(titleNow() === T_ANIM, '248.14: событие contextmenu того же клика не затирает заголовок провайдера');
-                  await send248(A, hint2({ media: img('https://cdn.example.test/p/photo.jpg'), phase: 'down' }), 0, 'doc-1');
-                  assert(titleNow() === T_IMAGE, '248.15: новый клик по JPG в том же кадре сбрасывает заголовок провайдера прошлого клика');
-                  await provider(A, 'REDDIT_MEDIA_CONTEXTMENU_DETECTED', REDDIT_GIF, 5, 'doc-5');
-                  assert(titleNow() === T_IMAGE, '248.16: запоздавший ответ провайдера чужого кадра отклонён');
-                  await provider(A, 'REDDIT_MEDIA_CONTEXTMENU_DETECTED', REDDIT_GIF, 0, 'doc-OLD');
-                  assert(titleNow() === T_IMAGE, '248.17: запоздавший ответ провайдера другого документа того же кадра отклонён');
-                  await provider(Bw, 'REDDIT_MEDIA_CONTEXTMENU_DETECTED', REDDIT_GIF, 0, 'doc-1');
-                  assert(titleNow() === T_IMAGE, '248.18: ответ провайдера чужой вкладки отклонён');
-                  mockChrome.runtime._onMessageCb({ action: 'REDDIT_MEDIA_CONTEXTMENU_DETECTED', media: REDDIT_GIF, timestamp: Date.now(), gestureAt: lastGesture }, senderF(A, 0, 'doc-1', false), () => {});
-                  await flush();
-                  assert(titleNow() === T_IMAGE, '248.19: ответ провайдера фоновой вкладки отклонён (прежнее правило)');
-                  await send248(A, hint2({ media: { kind: 'video', url: 'https://v.redd.it/abc/DASH_720.mp4' }, phase: 'down' }), 0, 'doc-1');
-                  await provider(A, 'REDDIT_MEDIA_CONTEXTMENU_DETECTED', REDDIT_GIF, 0, 'doc-1');
-                  await send248(A, hint2({ media: img('https://cdn.example.test/p/photo.jpg'), source: 'pointer', phase: 'rest' }), 0, 'doc-1');
-                  assert(titleNow() === T_IMAGE, '248.20: курсор остановился над JPG после GIF-клика: заголовок готовится по тому, что под курсором');
-                  await provider(A, 'REDDIT_MEDIA_CONTEXTMENU_DETECTED', REDDIT_GIF, 0, 'doc-1');
-                  assert(titleNow() === T_IMAGE, '248.20b: после остановки курсора запоздавший ответ провайдера прошлого клика отклонён (клик закончен)');
-                  await send248(A, hint2({ media: { kind: 'video', url: 'https://video.twimg.com/tweet_video/abc.mp4' }, phase: 'down' }), 0, 'doc-1');
-                  await provider(A, 'X_MEDIA_CONTEXTMENU_DETECTED', { type: 'video', url: 'https://video.twimg.com/tweet_video/abc.mp4' }, 0, 'doc-1');
-                  assert(titleNow() === T_ANIM, '248.21: новый клик: провайдер X того же кадра уточняет заголовок (поведение провайдеров сохранено)');
-
-                  // 248.22-248.30: Danbooru and Gelbooru previews
-                  const MD5 = 'a'.repeat(32);
-                  const MD5_OTHER = 'b'.repeat(32);
-                  const dPrev = `https://cdn.donmai.us/180x180/aa/aa/${MD5}.jpg`;
-                  await send248(A, hint2({ media: img(dPrev), phase: 'down' }), 0, 'doc-2');
-                  assert(titleNow() === NEUTRAL, '248.22: превью Danbooru без метаданных: оригинал неизвестен — нейтральный заголовок, а не «Save image»');
-                  await provider(A, 'BOORU_MEDIA_CONTEXTMENU_DETECTED', undefined, 0, 'doc-2', { fileExt: 'gif', targetUrl: dPrev, media: undefined });
-                  assert(titleNow() === T_GIF, '248.23: метаданные выбранной записи Danbooru (gif) задают «Save GIF», хотя превью — JPG');
-                  await send248(A, hint2({ media: img(dPrev), phase: 'down' }), 0, 'doc-2');
-                  await provider(A, 'BOORU_MEDIA_CONTEXTMENU_DETECTED', undefined, 0, 'doc-2', { fileExt: 'mp4', targetUrl: dPrev });
-                  assert(titleNow() === T_VIDEO, '248.24: метаданные mp4 — «Save video»');
-                  await send248(A, hint2({ media: img(dPrev), phase: 'down' }), 0, 'doc-2');
-                  await provider(A, 'BOORU_MEDIA_CONTEXTMENU_DETECTED', undefined, 0, 'doc-2', { fileExt: 'jpg', targetUrl: dPrev });
-                  assert(titleNow() === T_IMAGE, '248.25: метаданные jpg — «Save image»');
-                  await send248(A, hint2({ media: img(dPrev), phase: 'down' }), 0, 'doc-2');
-                  await provider(A, 'BOORU_MEDIA_CONTEXTMENU_DETECTED', undefined, 0, 'doc-2', { fileExt: 'gif', targetUrl: `https://cdn.donmai.us/180x180/bb/bb/${MD5_OTHER}.jpg` });
-                  assert(titleNow() === NEUTRAL, '248.26: метаданные соседней записи (другой md5) отклонены: заголовок остаётся нейтральным');
-                  await provider(A, 'BOORU_MEDIA_CONTEXTMENU_DETECTED', undefined, 3, 'doc-2', { fileExt: 'gif', targetUrl: dPrev });
-                  await provider(A, 'BOORU_MEDIA_CONTEXTMENU_DETECTED', undefined, 0, 'doc-2', { fileExt: 'exe', targetUrl: dPrev });
-                  await provider(A, 'BOORU_MEDIA_CONTEXTMENU_DETECTED', undefined, 0, 'doc-2', { fileExt: 'gif', targetUrl: '' });
-                  assert(titleNow() === NEUTRAL, '248.27: чужой кадр, недопустимое расширение и пустой адрес — отклонены');
-                  await send248(A, hint2({ media: img(`https://cdn.donmai.us/original/aa/aa/${MD5}.jpg`), phase: 'down' }), 0, 'doc-2');
-                  assert(titleNow() === T_IMAGE, '248.28: оригинал Danbooru (путь /original/) — известный тип, «Save image»');
-                  await send248(A, hint2({ media: img(`https://img3.gelbooru.com/thumbnails/aa/aa/thumbnail_${MD5}.jpg`), phase: 'down' }), 0, 'doc-2');
-                  assert(titleNow() === NEUTRAL, '248.29: превью Gelbooru (thumbnails): оригинал неизвестен — нейтральный заголовок');
-                  await send248(A, hint2({ media: img(`https://img3.gelbooru.com/samples/aa/aa/sample_${MD5}.jpg`), phase: 'down' }), 0, 'doc-2');
-                  assert(titleNow() === NEUTRAL, '248.30: sample Gelbooru: оригинал неизвестен — нейтральный заголовок');
-                  await send248(A, hint2({ media: img(`https://img3.gelbooru.com/images/aa/aa/${MD5}.gif`), phase: 'down' }), 0, 'doc-2');
-                  assert(titleNow() === T_GIF, '248.31: оригинальный GIF Gelbooru (images/) — «Save GIF»');
-                  await send248(A, hint2({ media: img('https://example.test/thumbnails/aa/aa/photo.jpg'), phase: 'down' }), 0, 'doc-2');
-                  assert(titleNow() === T_IMAGE, '248.32: путь thumbnails на чужом сайте не считается превью booru: обычное «Save image»');
-
-                  // 248.33-248.36: resets and validation
-                  await send248(A, hint2({ media: img('https://cdn.example.test/anim/loop.gif'), phase: 'down' }), 0, 'doc-2');
+                  // 248.33-248.36: resets and validation (visibility; no update ever carries a title)
+                  await send248(A, hint2({ media: null, selectable: false, phase: 'down' }), 0, 'doc-2');
+                  assert(enabled === false, '248.33a: контроль: пустое место скрывает пункт');
                   mockChrome.tabs._onActivatedCb({ tabId: 11, windowId: 1 }); await flush();
-                  assert(titleNow() === NEUTRAL && enabled === true, '248.33: смена вкладки: заголовок нейтральный, пункт снова виден (нет сведений о цели)');
-                  await send248(A, hint2({ media: img('https://cdn.example.test/anim/loop.gif'), phase: 'down' }), 0, 'doc-2');
+                  assert(enabled === true, '248.33: смена вкладки: пункт снова виден (нет сведений о цели)');
+                  await send248(A, hint2({ media: null, selectable: false, phase: 'down' }), 0, 'doc-2');
                   mockChrome.windows._onFocusChangedCb(1); await flush();
-                  assert(titleNow() === NEUTRAL, '248.34: смена фокуса окна сбрасывает и заголовок');
-                  const before248 = props.length;
-                  await send248(A, hint2({ media: { kind: 'bogus', url: 'javascript:alert(1)' }, phase: 'down' }));
-                  await send248(A, hint2({ media: { kind: 'img', url: 'x'.repeat(3000) }, phase: 'down' }));
-                  await send248(A, hint2({ phase: 'weird' }));
-                  assert(titleNow() === NEUTRAL, '248.35: чужие значения вида, адреса и фазы не дают заголовка (адрес не http(s) или длиннее 2048 отброшен, неизвестная фаза — сообщение отклонено)');
+                  assert(enabled === true, '248.34: смена фокуса окна возвращает «доступно»');
+                  await send248(A, hint2({ media: null, selectable: false, phase: 'down' }), 0, 'doc-2');
+                  assert(enabled === false, '248.35a: контроль: скрыт перед проверкой чужих значений');
+                  await send248(A, hint2({ selectable: true, phase: 'weird' }));
+                  assert(enabled === false, '248.35: чужая фаза сообщения отклонена: пункт не меняется');
+                  await send248(A, hint2({ media: { kind: 'bogus', url: 'javascript:alert(1)' }, selectable: true, phase: 'key' }));
+                  assert(enabled === true, '248.35b: клавиатурный жест с чужим видом свидетельства: сведения о медиа отброшены, цель по-прежнему допустима');
+                  await send248(A, hint2({ media: null, selectable: false, phase: 'down' }));
                   await send248(A, hint2({ media: img('https://cdn.example.test/anim/loop.gif'), phase: 'key' }));
-                  assert(titleNow() === T_GIF, '248.36: клавиатурное меню начинает новый клик и называет выбранный элемент');
+                  assert(enabled === true, '248.36: клавиатурное меню начинает новый клик: цель выбрана, пункт виден');
+                  assert(titlesSent() === 0, '248.36b: ни одно из этих сообщений не дало обновления заголовка');
 
                   // 248.37-248.50: the real content script: evidence, phases, shadow hosts
                   const cgW = node('div', { rect: { left: 0, top: 0, width: 800, height: 700 } });
@@ -27337,139 +26929,24 @@ async function runTests() {
                   cw2.fire('keydown', { key: 'ContextMenu' });
                   assert(cw2.msgs.length === 1 && cw2.msgs[0].phase === 'key' && cw2.msgs[0].media && cw2.msgs[0].media.kind === 'img', '248.49: клавиатурное меню сообщает фазу key и выбранный элемент');
 
-                  // the chain: the real content script messages into the background, label and visibility
+                  // the chain: the real content script messages into the background (visibility)
                   cw2 = mkWorld(at248);
                   mockChrome.tabs._onActivatedCb({ tabId: 11, windowId: 1 }); await flush();
                   const fed = [];
                   const feed = async (world) => { for (const x of world.msgs.splice(0)) { fed.push(x); await send248(A, { action: x.action, selectable: x.selectable, linkHref: x.linkHref, source: x.source, phase: x.phase, media: x.media, gestureAt: x.gestureAt }); } };
                   press(cw2, gifImg, 50, 50); await feed(cw2);
-                  assert(enabled === true && titleNow() === T_GIF, '248.50: цепочка: настоящий скрипт и фон — клик по GIF: пункт виден, «Save GIF»');
-                  press(cw2, jpgImg, 300, 50); await feed(cw2);
-                  assert(enabled === true && titleNow() === T_IMAGE, '248.51: сразу клик по JPG без перезагрузки: «Save image»');
-                  press(cw2, vidEl, 500, 50); await feed(cw2);
-                  assert(titleNow() === T_VIDEO, '248.52: затем по видео: «Save video»');
+                  assert(enabled === true, '248.50: цепочка: настоящий скрипт и фон — клик по GIF: пункт виден');
                   press(cw2, blankW, 50, 250); await feed(cw2);
-                  assert(enabled === false && titleNow() === NEUTRAL, '248.53: затем по пустому месту: пункт скрыт, заголовок нейтральный');
+                  assert(enabled === false, '248.53: затем по пустому месту: пункт скрыт');
                   press(cw2, shBlank, 50, 350); await feed(cw2);
                   assert(enabled === false, '248.54: пустой shadow-контейнер: пункт скрыт');
                   press(cw2, jpgImg, 300, 50); await feed(cw2);
-                  assert(enabled === true && titleNow() === T_IMAGE, '248.55: и снова JPG: пункт виден, «Save image» (GIF → JPG → видео → пусто → JPG без перезагрузки)');
+                  assert(enabled === true, '248.55: и снова JPG: пункт виден (GIF → пусто → пусто → JPG без перезагрузки)');
+                  press(cw2, vidEl, 500, 50); await feed(cw2);
+                  assert(enabled === true, '248.52: затем по видео: пункт виден');
 
-                  // 248.56-248.75 (review correction): a provider descriptor belongs to the current gesture, not only to the current document
+                  // the stamps of the real scripts: the generic script's stamp orders the gestures of one document
                   {
-                    mockChrome.tabs._onActivatedCb({ tabId: 11, windowId: 1 }); await flush(); // a fresh menu state: no click is known yet
-                    const D = 'doc-gesture';
-                    const R_GIF = { type: 'native_gif', sourceType: 'native_gif', url: 'https://i.redd.it/loop.gif' };
-                    const R_VIDEO = { type: 'video', sourceType: 'video', url: 'https://v.redd.it/zzz/DASH_720.mp4' };
-                    const RG = { type: 'video', sourceType: 'redgifs', url: 'https://www.redgifs.com/watch/wildcheetah' };
-                    const X_ANIM = { type: 'video', url: 'https://video.twimg.com/tweet_video/abc.mp4' };
-                    const JPG = img('https://cdn.example.test/p/photo.jpg');
-                    const GIFF = img('https://cdn.example.test/anim/loop.gif');
-                    const click = (at, media, phase = 'down', over = {}) => send248(A, hint2({ media, phase, gestureAt: at, ...over }), 0, D);
-                    const prov = (action, media, at, extra = {}) => provider(A, action, media, 0, D, { gestureAt: at, ...extra });
-                    const REDDIT = 'REDDIT_MEDIA_CONTEXTMENU_DETECTED';
-                    const REDGIFS = 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED';
-                    const XX = 'X_MEDIA_CONTEXTMENU_DETECTED';
-
-                    // click A on a GIF, click B on a JPG in the same frame and document, then A's delayed descriptors
-                    await click(100, GIFF); await click(110, GIFF, 'menu');
-                    await click(200, JPG);
-                    assert(titleNow() === T_IMAGE && enabled === true, '248.56: контроль: клик B по JPG — «Save image», пункт виден');
-                    await prov(REDDIT, R_GIF, 100);
-                    assert(titleNow() === T_IMAGE, '248.57: запоздавший GIF-дескриптор клика A (Reddit, событие нажатия) не меняет подпись нового JPG');
-                    await prov(REDDIT, R_GIF, 110);
-                    assert(titleNow() === T_IMAGE, '248.58: то же для дескриптора события contextmenu клика A');
-                    await prov(REDDIT, R_VIDEO, 105);
-                    assert(titleNow() === T_IMAGE, '248.59: запоздавший видео-дескриптор клика A (Reddit) отклонён: нет «Save video» на JPG');
-                    await prov(REDGIFS, RG, 100);
-                    assert(titleNow() === T_IMAGE, '248.60: запоздавший видео-дескриптор RedGIFs клика A отклонён');
-                    await prov(XX, X_ANIM, 100);
-                    assert(titleNow() === T_IMAGE, '248.61: запоздавший дескриптор X клика A отклонён');
-                    await prov(XX, null, 110);
-                    assert(titleNow() === T_IMAGE, '248.62: запоздавший пустой дескриптор X клика A тоже не трогает подпись');
-                    assert(enabled === true, '248.63: отклонённые дескрипторы не меняют видимость пункта');
-
-                    // the current gesture's own descriptors are accepted, for both press and contextmenu events
-                    await prov(REDDIT, R_GIF, 200);
-                    assert(titleNow() === T_ANIM, '248.64: дескриптор самого клика B (то же событие нажатия) принят: «Save GIF animation»');
-                    await click(210, JPG, 'menu');
-                    assert(titleNow() === T_ANIM, '248.65: contextmenu клика B не затирает подпись провайдера');
-                    await prov(REDDIT, R_VIDEO, 210);
-                    assert(titleNow() === T_VIDEO, '248.66: дескриптор события contextmenu клика B принят и уточняет подпись');
-                    await click(300, JPG);
-                    await prov(REDGIFS, RG, 300);
-                    assert(titleNow() === T_VIDEO, '248.67: подтверждённый RedGIFs того же клика принят: «Save video»');
-                    await click(310, JPG);
-                    await prov(XX, X_ANIM, 310);
-                    assert(titleNow() === T_ANIM, '248.68: дескриптор X текущего клика принят (поведение провайдеров сохранено)');
-
-                    // a descriptor that does not prove its gesture is refused while the click has one
-                    await click(400, JPG);
-                    for (const bad of [undefined, null, NaN, Infinity, -1, '410', {}]) await prov(REDDIT, R_GIF, bad);
-                    assert(titleNow() === T_IMAGE, '248.69: дескриптор без метки жеста или с недопустимой меткой (нет, null, NaN, Infinity, отрицательная, строка, объект) отклонён');
-                    await prov(REDDIT, R_GIF, 400);
-                    assert(titleNow() === T_ANIM, '248.70: тот же дескриптор с меткой текущего жеста принят');
-
-                    // valid associations are not blocked: the proof is the gesture, not the address
-                    await click(500, img('https://preview.redd.it/thumb.jpg?width=640'));
-                    await prov(REDDIT, { type: 'native_gif', sourceType: 'native_gif', url: 'https://i.redd.it/original-other-name.gif' }, 500);
-                    assert(titleNow() === T_ANIM, '248.71: превью → оригинал: дескриптор с другим адресом, чем у превью, принят для своего клика');
-                    await click(510, { kind: 'css', url: null });
-                    await prov(XX, X_ANIM, 510);
-                    assert(titleNow() === T_ANIM, '248.72: слой или фон под нажатием: дескриптор плеера X того же клика принят');
-                    await click(520, { kind: 'player', url: null });
-                    await prov(REDDIT, R_VIDEO, 520);
-                    assert(titleNow() === T_VIDEO, '248.73: плеер без адреса (blob/MSE): дескриптор того же клика принят');
-                    const bPrev = `https://cdn.donmai.us/180x180/aa/aa/${MD5}.jpg`;
-                    const bSample = `https://cdn.donmai.us/sample/aa/aa/sample-${MD5}.jpg`;
-                    await click(600, img(bPrev));
-                    await prov('BOORU_MEDIA_CONTEXTMENU_DETECTED', undefined, 590, { fileExt: 'gif', targetUrl: bPrev });
-                    assert(titleNow() === NEUTRAL, '248.74: Booru: метаданные записи более раннего клика (метка старше) отклонены, превью остаётся нейтральным');
-                    await prov('BOORU_MEDIA_CONTEXTMENU_DETECTED', undefined, 600, { fileExt: 'gif', targetUrl: bSample });
-                    assert(titleNow() === T_GIF, '248.75: Booru: метаданные текущего клика принимаются для другого пути того же md5 (превью → sample → оригинал)');
-
-                    // foreign owners keep being refused even with a fresh stamp
-                    await click(700, JPG);
-                    await provider(A, REDDIT, R_GIF, 5, 'doc-5', { gestureAt: 705 });
-                    await provider(A, REDDIT, R_GIF, 0, 'doc-OLD', { gestureAt: 705 });
-                    await provider(Bw, REDDIT, R_GIF, 0, D, { gestureAt: 705 });
-                    assert(titleNow() === T_IMAGE, '248.76: чужой кадр, другой документ и чужая вкладка отклоняются и со свежей меткой жеста');
-
-                    // delayed answers of the generic script: an earlier gesture neither relabels nor shows the entry
-                    await click(800, { kind: 'img', url: null }, 'down', { selectable: false, media: null });
-                    assert(enabled === false, '248.77: контроль: клик A по пустому месту — пункт скрыт');
-                    await click(900, JPG);
-                    assert(enabled === true && titleNow() === T_IMAGE, '248.78: клик B по JPG — пункт виден');
-                    await click(810, null, 'menu', { selectable: false });
-                    assert(enabled === true && titleNow() === T_IMAGE, '248.79: запоздавшее contextmenu клика A (по пустому месту) не скрывает пункт и не меняет подпись клика B');
-                    await click(850, GIFF);
-                    assert(enabled === true && titleNow() === T_IMAGE, '248.80: запоздавшее нажатие клика A по GIF не начинает «новый клик» и не даёт «Save GIF»');
-                    await click(910, JPG, 'menu');
-                    assert(enabled === true && titleNow() === T_IMAGE, '248.81: contextmenu клика B принимается как продолжение клика B');
-
-                    // the key press: the keyboard gesture starts its own click and its descriptors are the newer ones
-                    await click(1000, GIFF, 'key');
-                    assert(titleNow() === T_GIF, '248.82: клавиатурный жест — новый клик');
-                    await prov(REDDIT, R_VIDEO, 990);
-                    assert(titleNow() === T_GIF, '248.83: дескриптор, созданный до клавиатурного жеста, отклонён');
-                    await prov(REDDIT, R_VIDEO, 1005);
-                    assert(titleNow() === T_VIDEO, '248.84: дескриптор contextmenu после клавиатурного жеста принят');
-
-                    // a resting pointer ends the click but keeps its start: an earlier gesture's message stays foreign afterwards
-                    await click(1100, JPG);
-                    await send248(A, hint2({ media: JPG, source: 'pointer', phase: 'rest' }), 0, D);
-                    await click(1050, GIFF, 'menu');
-                    assert(enabled === true && titleNow() === T_IMAGE, '248.85: после остановки курсора запоздавшее contextmenu более раннего жеста не даёт «Save GIF»');
-
-                    // another document of the frame has its own clock: a small stamp there is not an older gesture
-                    await click(5000, GIFF);
-                    assert(titleNow() === T_GIF, '248.85b: контроль: клик по GIF в документе D');
-                    await send248(A, hint2({ media: JPG, phase: 'down', gestureAt: 12 }), 0, 'doc-next');
-                    assert(titleNow() === T_IMAGE, '248.85c: новый документ того же кадра с малой меткой (свои часы) — это новый клик, а не запоздавший ответ');
-                    await provider(A, REDDIT, R_GIF, 0, 'doc-next', { gestureAt: 12 });
-                    assert(titleNow() === T_ANIM, '248.85d: дескриптор нового документа с его меткой принят');
-
-                    // the real scripts' own stamps: the stamp the generic script sends is the stamp the provider would send for the same event
                     mockChrome.tabs._onActivatedCb({ tabId: 11, windowId: 1 }); await flush();
                     cw2 = mkWorld(at248);
                     fed.length = 0;
@@ -27479,37 +26956,29 @@ async function runTests() {
                     const stampB = fed[fed.length - 1].gestureAt;
                     press(cw2, jpgImg, 300, 50, 'contextmenu'); await feed(cw2);
                     const stampB2 = fed[fed.length - 1].gestureAt;
-                    assert(Number.isFinite(stampA) && stampB > stampA && stampB2 > stampB && fed[fed.length - 1].phase === 'menu', '248.86: настоящий скрипт отправляет метку события; метки последовательных жестов возрастают');
-                    await prov(REDDIT, R_GIF, stampA);
-                    assert(enabled === true && titleNow() === T_IMAGE, '248.87: цепочка: запоздавший дескриптор клика A с настоящей меткой A отклонён после клика B по JPG');
-                    await prov(REDDIT, R_GIF, stampB);
-                    assert(titleNow() === T_ANIM, '248.88: цепочка: дескриптор клика B с настоящей меткой B принят');
+                    assert(Number.isFinite(stampA) && stampB > stampA && stampB2 > stampB && fed[fed.length - 1].phase === 'menu', '248.86: настоящий скрипт отправляет метку события нажатия и contextmenu; метки растут от клика к клику');
                     cw2.doc.activeElement = gifImg;
                     cw2.fire('keydown', { key: 'ContextMenu', timeStamp: 9999 });
                     await feed(cw2);
                     assert(fed[fed.length - 1].phase === 'key' && fed[fed.length - 1].gestureAt === 9999, '248.89: клавиатурный жест передаёт метку события keydown');
                   }
 
-                  // 248.90-248.112 (CORE-02 stage 1): a generic gesture message without a valid stamp cannot bypass the freshness rules
+                  // 248.90-248.112 (CORE-02 stage 1): a generic gesture message without a valid stamp cannot bypass the freshness rules (visibility and the click it starts)
                   {
                     mockChrome.tabs._onActivatedCb({ tabId: 11, windowId: 1 }); await flush();
                     const D = 'doc-strict';
                     const JPG = img('https://cdn.example.test/p/photo.jpg');
                     const GIFF = img('https://cdn.example.test/anim/loop.gif');
-                    const R_GIF = { type: 'native_gif', sourceType: 'native_gif', url: 'https://i.redd.it/loop.gif' };
-                    const R_VIDEO = { type: 'video', sourceType: 'video', url: 'https://v.redd.it/zzz/DASH_720.mp4' };
                     const click = (at, media, phase = 'down', over = {}) => send248(A, hint2({ media, phase, gestureAt: at, ...over }), 0, D);
-                    const prov = (action, media, at) => provider(A, action, media, 0, D, { gestureAt: at });
-                    const clickState = () => vm.runInContext('menuClick && { ended: Boolean(menuClick.ended), startAt: menuClick.startAt, titleBy: menuClick.titleBy }', sandbox);
-                    const REDDIT = 'REDDIT_MEDIA_CONTEXTMENU_DETECTED';
+                    const clickState = () => vm.runInContext('menuClick && { ended: Boolean(menuClick.ended), startAt: menuClick.startAt }', sandbox);
                     const noStamp = (over) => { const m = hint2({ ...over }); delete m.gestureAt; return m; };
                     const BAD = [undefined, null, NaN, Infinity, -Infinity, -1, '2000', {}, [], true];
 
-                    // click A (blank) then click B (JPG, with a provider label of its own)
+                    // click A (blank) then click B (JPG)
                     await click(1900, null, 'down', { selectable: false });
+                    assert(enabled === false && clickState().startAt === 1900, '248.90a: контроль: клик A по пустому месту скрыл пункт, начало клика 1900');
                     await click(2000, JPG);
-                    await prov(REDDIT, R_GIF, 2000);
-                    assert(enabled === true && titleNow() === T_ANIM && clickState().startAt === 2000, '248.90: контроль: клик B по JPG с дескриптором провайдера: пункт виден, подпись «GIF animation», начало клика 2000');
+                    assert(enabled === true && clickState().startAt === 2000, '248.90: контроль: клик B по JPG показывает пункт, начало клика 2000');
                     // missing or invalid stamps on every gesture phase
                     for (const phase of ['down', 'menu', 'key']) {
                       for (const bad of BAD) {
@@ -27518,18 +26987,16 @@ async function runTests() {
                       }
                       await send248(A, noStamp({ media: null, phase, selectable: false }), 0, D);
                     }
-                    assert(enabled === true && titleNow() === T_ANIM, '248.91: сообщения жеста без метки или с недопустимой меткой (все фазы down/menu/key; нет, null, NaN, ±Infinity, отрицательная, строка, объект, массив, boolean) не скрывают пункт и не меняют подпись клика B');
+                    assert(enabled === true, '248.91: сообщения жеста без метки или с недопустимой меткой (все фазы down/menu/key; нет, null, NaN, ±Infinity, отрицательная, строка, объект, массив, булево) не скрывают пункт');
                     const st = clickState();
-                    assert(st && st.startAt === 2000 && st.ended === false && st.titleBy === 'provider', '248.92: такие сообщения не сбрасывают текущий клик: его начало 2000 и подпись провайдера на месте');
-                    // the older provider descriptor stays refused, the current one stays accepted
-                    await prov(REDDIT, R_VIDEO, 1900);
-                    assert(titleNow() === T_ANIM, '248.93: после таких сообщений дескриптор более раннего жеста (1900) по-прежнему отклонён');
-                    await prov(REDDIT, R_VIDEO, 2000);
-                    assert(titleNow() === T_VIDEO, '248.94: дескриптор самого клика B (2000) по-прежнему принят');
-                    // a message without a stamp does not turn the click into one that accepts anything
+                    assert(st && st.startAt === 2000 && st.ended === false, '248.92: такие сообщения не сбрасывают текущий клик: его начало и состояние прежние');
+                    // an older stamped gesture is still foreign, the current one still continues
+                    await click(1900, null, 'menu', { selectable: false });
+                    assert(enabled === true && clickState().startAt === 2000, '248.93: запоздавшее contextmenu более раннего жеста (1900) не скрывает пункт и не меняет клик');
+                    await click(2000, JPG, 'menu');
+                    assert(enabled === true && clickState().startAt === 2000 && clickState().ended === false, '248.94: contextmenu того же жеста (2000) продолжает клик');
                     await send248(A, noStamp({ media: JPG, phase: 'down' }), 0, D);
-                    await prov(REDDIT, R_GIF, 1950);
-                    assert(titleNow() === T_VIDEO && clickState().startAt === 2000, '248.95: после сообщения жеста без метки старый дескриптор (1950) не проходит: клик не стал «без метки»');
+                    assert(enabled === true && clickState().startAt === 2000, '248.95: сообщение жеста без метки не превращает клик в принимающий что угодно');
 
                     // no click known: an unstamped gesture does not start one nor change the entry
                     mockChrome.tabs._onActivatedCb({ tabId: 11, windowId: 1 }); await flush();
@@ -27537,53 +27004,38 @@ async function runTests() {
                     await send248(A, noStamp({ media: null, phase: 'down', selectable: false }), 0, D);
                     assert(enabled === beforeReset && clickState() === null, '248.96: пока клика нет, жест без метки его не начинает и пункт не скрывает');
                     for (const bad of BAD) await send248(A, hint2({ media: GIFF, phase: 'down', gestureAt: bad }), 0, D);
-                    assert(enabled === beforeReset && clickState() === null, '248.96b: недопустимые метки (в том числе отрицательная) без известного клика его тоже не начинают');
-                    await prov(REDDIT, R_GIF, 5);
-                    assert(titleNow() === T_ANIM, '248.97: контроль: пока клик неизвестен, действует прежнее правило (провайдер собственным таймингом); это не открывается меткой');
+                    assert(enabled === beforeReset && clickState() === null, '248.96b: недопустимые метки (в том числе отрицательная) без известного клика ничего не начинают');
 
                     // zero is a valid stamp
                     mockChrome.tabs._onActivatedCb({ tabId: 11, windowId: 1 }); await flush();
                     await click(0, GIFF);
-                    assert(enabled === true && titleNow() === T_GIF && clickState().startAt === 0, '248.98: метка 0 допустима: клик начат, начало 0, «Save GIF»');
-                    await prov(REDDIT, R_VIDEO, undefined);
-                    assert(titleNow() === T_GIF, '248.98b: клик с началом 0: дескриптор без метки отклонён (0 — настоящее начало клика, а не «нет метки»)');
-                    await prov(REDDIT, R_VIDEO, 0);
-                    assert(titleNow() === T_VIDEO, '248.99: дескриптор с меткой 0 принят для клика с началом 0');
+                    assert(enabled === true && clickState().startAt === 0, '248.98: метка 0 допустима: клик начат, начало 0');
                     await click(0, JPG, 'menu');
-                    assert(enabled === true, '248.100: contextmenu с меткой 0 того же клика принимается как продолжение');
+                    assert(enabled === true && clickState().startAt === 0 && clickState().ended === false, '248.100: contextmenu с меткой 0 того же клика принимается как продолжение');
                     await click(7, JPG);
-                    assert(titleNow() === T_IMAGE && clickState().startAt === 7, '248.101: следующий жест с меткой 7 — новый клик');
-                    await prov(REDDIT, R_GIF, 0);
-                    assert(titleNow() === T_IMAGE, '248.102: дескриптор с меткой 0 теперь старее начала клика и отклонён (0 не принимается как «нет метки»)');
-                    await click(0, GIFF, 'menu');
-                    assert(titleNow() === T_IMAGE && enabled === true, '248.103: запоздавшее contextmenu с меткой 0 после клика 7 отклонено как более раннее');
+                    assert(clickState().startAt === 7, '248.101: следующий жест с меткой 7 — новый клик');
+                    await click(0, null, 'menu', { selectable: false });
+                    assert(enabled === true && clickState().startAt === 7, '248.103: запоздавшее contextmenu с меткой 0 после клика 7 отклонено как более раннее');
 
                     // legitimate resting-pointer messages carry no stamp and still apply; they end the click
                     await click(3000, GIFF);
                     await send248(A, hint2({ media: null, source: 'pointer', phase: 'rest', selectable: false }), 0, D);
-                    assert(enabled === false && titleNow() === NEUTRAL, '248.104: остановка курсора над пустым местом без метки применяется: пункт скрыт, подпись нейтральная');
+                    assert(enabled === false && clickState().ended === true, '248.104: остановка курсора над пустым местом без метки применяется: пункт скрыт, клик закончен');
                     await send248(A, hint2({ media: JPG, source: 'pointer', phase: 'rest' }), 0, D);
-                    assert(enabled === true && titleNow() === T_IMAGE, '248.105: остановка над JPG без метки применяется: пункт виден, «Save image»');
-                    await prov(REDDIT, R_GIF, 3000);
-                    assert(titleNow() === T_IMAGE, '248.106: после остановки курсора дескриптор прошлого жеста отклонён (клик закончен)');
+                    assert(enabled === true, '248.105: остановка над JPG без метки применяется: пункт виден');
+                    await click(2999, null, 'menu', { selectable: false });
+                    assert(enabled === true, '248.106: после остановки курсора запоздавшее contextmenu прошлого жеста отклонено (клик закончен, его начало сохранено)');
                     await click(3100, GIFF, 'key');
-                    assert(enabled === true && titleNow() === T_GIF, '248.107: клавиатурное меню с меткой начинает новый клик');
+                    assert(enabled === true && clickState().startAt === 3100, '248.107: клавиатурное меню с меткой начинает новый клик');
                     await send248(A, noStamp({ media: null, phase: 'key', selectable: false }), 0, D);
-                    assert(enabled === true && titleNow() === T_GIF, '248.108: клавиатурное меню без метки отклонено: пункт и подпись остаются');
+                    assert(enabled === true && clickState().startAt === 3100, '248.108: клавиатурное меню без метки отклонено: пункт и клик остаются');
 
                     // document-local clocks: another document of the frame with a small valid stamp starts its own click
                     await send248(A, hint2({ media: JPG, phase: 'down', gestureAt: 1 }), 0, 'doc-other');
-                    assert(titleNow() === T_IMAGE && clickState().startAt === 1, '248.109: другой документ кадра с малой допустимой меткой начинает свой клик (метки сравниваются только внутри документа)');
+                    assert(clickState().startAt === 1, '248.109: другой документ кадра с малой допустимой меткой начинает свой клик');
                     await send248(A, noStamp({ media: GIFF, phase: 'down' }), 0, 'doc-other');
-                    assert(titleNow() === T_IMAGE, '248.110: в другом документе жест без метки так же отклонён');
-
-                    // a selected overlay/preview keeps its association with the stamped gesture
-                    await click(4000, img('https://preview.redd.it/thumb.jpg?width=640'));
-                    await prov(REDDIT, { type: 'native_gif', sourceType: 'native_gif', url: 'https://i.redd.it/other-original.gif' }, 4000);
-                    assert(titleNow() === T_ANIM, '248.111: превью → оригинал под тем же жестом принят');
-                    await click(4010, { kind: 'css', url: null });
-                    await prov('X_MEDIA_CONTEXTMENU_DETECTED', { type: 'video', url: 'https://video.twimg.com/tweet_video/abc.mp4' }, 4010);
-                    assert(titleNow() === T_ANIM, '248.112: слой под нажатием и плеер X того же жеста: принят');
+                    assert(clickState().startAt === 1, '248.110: в другом документе жест без метки так же отклонён');
+                    assert(titlesSent() === 0, '248.112: ни одно сообщение жеста не вызвало обновления заголовка пункта');
                   }
 
                   props.length = 0;
@@ -30550,41 +30002,26 @@ async function runTests() {
         assert(w3.ask() === null, '241.45: жест был без медиа, плеер появился позже: GET не выбирает его');
       }
 
-      // D. background: neutral title and no cached neighbour
+      // D. background: the command keeps its one title; a click with no owned target neither probes nor downloads, whatever an earlier click cached
       {
         sandbox.setupContextMenus();
         const item = () => mockChrome.contextMenus._created.find((i) => i.id === 'save-image-item');
-        const NEUTRAL = 'Image Saver: Save media under cursor';
+        const STABLE = 'Image Saver: Save media';
         const tabX = { id: 7, url: 'https://x.com/home' };
         const detect = (media) => mockChrome.runtime._onMessageCb({ action: 'X_MEDIA_CONTEXTMENU_DETECTED', media }, { tab: tabX }, () => {});
-        const shown = () => mockChrome.contextMenus._onShownHandler({ pageUrl: tabX.url, menuIds: ['save-image-item'] }, tabX);
         detect({ type: 'video', url: MP4 });
-        assert(item().title === 'Image Saver: Save video', '240.20: контроль: найденное видео даёт подпись Save video');
+        assert(sandbox.lastDetectedXMediaByTab.get(7)?.media?.url === MP4 && item().title === STABLE, '240.20: контроль: найденное видео попадает в кэш дескриптора, пункт называется «Save media»');
         detect(null);
-        assert(item().title === NEUTRAL, '240.21: клик без принадлежащей цели: подпись X нейтральная, а не Save image');
+        assert(sandbox.lastDetectedXMediaByTab.get(7)?.media === null && item().title === STABLE, '240.21: клик без принадлежащей цели: кэш дескриптора пуст, подпись прежняя');
+        assert(mockChrome.contextMenus._onShownHandler === undefined, '240.22: обработчик onShown, спрашивающий страницу X ради подписи, больше не регистрируется');
         detect({ type: 'video', url: MP4 });
-        mockChrome.tabs.sendMessage = async () => null;
-        await shown();
-        assert(item().title === NEUTRAL, '240.22: onShown: кэш предыдущего видео не используется, когда текущий клик пустой');
-        mockChrome.tabs.sendMessage = async () => ({ type: 'video', url: MP4 });
-        await shown();
-        assert(item().title === 'Image Saver: Save video', '240.23: onShown: принадлежащее текущему клику видео даёт Save video');
-        mockChrome.tabs.sendMessage = async () => ({ type: 'x_tweet_video', url: GIFV });
-        await shown();
-        assert(item().title === 'Image Saver: Save GIF animation', '240.24: onShown: подтверждённый tweet_video даёт Save GIF animation');
-        mockChrome.tabs.sendMessage = async () => ({ type: 'image', url: PIC });
-        await shown();
-        assert(item().title === 'Image Saver: Save image', '240.25: onShown: изображение даёт Save image');
         // click with no owned target: nothing is probed or downloaded
         let fetches = 0;
         sandbox.fetch = async () => { fetches++; throw new Error('no network expected'); };
         const dlBefore = downloadedCalls.length;
         mockChrome.tabs.sendMessage = async () => null;
         await mockChrome.contextMenus._handler({ menuItemId: 'save-image-item', pageUrl: tabX.url }, tabX);
-        assert(fetches === 0 && downloadedCalls.length === dlBefore, '240.26: клик по пункту X без принадлежащей цели: ни запроса, ни загрузки');
-        mockChrome.tabs.sendMessage = async () => ({ type: 'video', url: '' });
-        await shown();
-        assert(item().title === 'Image Saver: Save video', '240.27: владелец-видео без прямого URL (blob/HLS) всё равно подписан Save video, не нейтрально');
+        assert(fetches === 0 && downloadedCalls.length === dlBefore, '240.26: клик по пункту X без принадлежащей цели: ни запроса, ни загрузки (кэш прежнего клика не используется)');
         detect(null);
         sandbox.setupContextMenus();
       }
@@ -30620,34 +30057,29 @@ async function runTests() {
     assert(legacy && legacy.url === IMGU, '241.52: без координат (прямой вызов функции) прежнее поведение карточки сохраняется');
   }
 
-  // 242. The actual single menu must retain native routing and ignore inactive provider title hints.
+  // 242. The actual single menu keeps native routing; provider hints of an inactive tab fill no cache of the active tab; real navigation events do not fail.
   {
     mockChrome.contextMenus._created = [];
     sandbox.setupContextMenus();
     const item = () => mockChrome.contextMenus._created.find(i => i.id === 'save-image-item');
-    const savedSend = mockChrome.tabs.sendMessage;
-    let queries = 0;
-    mockChrome.tabs.sendMessage = async () => { queries++; return { type: 'video', url: 'https://video.twimg.com/ext_tw_video/other.mp4' }; };
-    try {
-      await sandbox.updateContextMenuTitles({ srcUrl: 'https://pbs.twimg.com/media/selected.jpg', mediaType: 'image', pageUrl: 'https://x.com/home', menuIds: ['save-image-item'] }, { id: 7 });
-      assert(queries === 0 && item().title === 'Image Saver: Save image', '242.1: фото X: общий пункт не спрашивает про соседнее видео');
-      await sandbox.updateContextMenuTitles({ srcUrl: 'https://video.twimg.com/ext_tw_video/selected.mp4', mediaType: 'video', pageUrl: 'https://x.com/home', menuIds: ['save-image-item'] }, { id: 7 });
-      assert(queries === 0 && item().title === 'Image Saver: Save video', '242.2: нативное видео X: общий пункт сохраняет подпись без соседнего дескриптора');
-      await sandbox.updateContextMenuTitles({ pageUrl: 'https://x.com/home', menuIds: ['save-image-item'] }, { id: 7 });
-      assert(queries === 1 && item().title === 'Image Saver: Save video', '242.3: X page/overlay: общая запись спрашивает выбранный плеер');
-      for (const action of ['X_MEDIA_CONTEXTMENU_DETECTED', 'REDDIT_MEDIA_CONTEXTMENU_DETECTED', 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED']) {
-        mockChrome.runtime._onMessageCb({ action, media: { type: 'image', sourceType: 'redgifs', url: 'https://example.test/other.jpg' } }, { tab: { id: 8, active: false } }, () => {});
-        assert(item().title === 'Image Saver: Save video', `242.4 ${action}: фоновая вкладка не переименовывает общий пункт`);
-      }
-      // Real navigation supplies both an active tab and a URL (the previous suite exercised status only).
-      for (const url of ['https://x.com/home', 'https://www.reddit.com/', 'https://example.test/gallery']) {
-        let error = null;
-        try { mockChrome.tabs._onUpdatedCb(7, { url, status: 'loading' }, { id: 7, active: true, url }); }
-        catch (e) { error = e; }
-        assert(error === null && mockChrome.contextMenus._created.length === 1 && item().title === 'Image Saver: Save media under cursor',
-          `242.5 ${url}: переход активной вкладки сбрасывает общий пункт без устаревшего контроллера видимости`);
-      }
-    } finally { mockChrome.tabs.sendMessage = savedSend; }
+    assert(mockChrome.contextMenus._created.length === 1 && item().contexts.includes('page') && item().contexts.includes('video') && item().contexts.includes('image') && item().contexts.includes('link') && !item().parentId,
+      '242.1: один прямой пункт для всех контекстов нативных источников и страницы');
+    for (const action of ['X_MEDIA_CONTEXTMENU_DETECTED', 'REDDIT_MEDIA_CONTEXTMENU_DETECTED', 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED']) {
+      mockChrome.runtime._onMessageCb({ action, media: { type: 'image', sourceType: 'redgifs', url: 'https://example.test/other.jpg' }, timestamp: 5 }, { tab: { id: 8, active: false } }, () => {});
+    }
+    assert(!sandbox.lastDetectedXMediaByTab.has(8) && !sandbox.lastDetectedRedditMediaByTab.has(8), '242.2: подсказки провайдеров фоновой вкладки не заполняют кэши дескрипторов');
+    mockChrome.runtime._onMessageCb({ action: 'X_MEDIA_CONTEXTMENU_DETECTED', media: { type: 'image', url: 'https://pbs.twimg.com/media/active.jpg' } }, { tab: { id: 9, active: true } }, () => {});
+    assert(sandbox.lastDetectedXMediaByTab.has(9), '242.3: подсказка активной вкладки сохраняется для сохранения (кэш дескриптора)');
+    sandbox.lastDetectedXMediaByTab.delete(9);
+    // Real navigation supplies both an active tab and a URL (the previous suite exercised status only).
+    for (const url of ['https://x.com/home', 'https://www.reddit.com/', 'https://example.test/gallery']) {
+      let error = null;
+      sandbox.lastDetectedXMediaByTab.set(7, { media: {}, timestamp: 1 });
+      try { mockChrome.tabs._onUpdatedCb(7, { url, status: 'loading' }, { id: 7, active: true, url }); }
+      catch (e) { error = e; }
+      assert(error === null && mockChrome.contextMenus._created.length === 1 && !sandbox.lastDetectedXMediaByTab.has(7),
+        `242.4 ${url}: переход активной вкладки сбрасывает кэш дескриптора этой вкладки без ошибок`);
+    }
   }
 
   // ── Тест 242 (GEN-01 AVIF, этап 1): настоящий AVIF не принимается за MP4 ──
@@ -31260,11 +30692,6 @@ async function runTests() {
       await mockChrome.contextMenus._handler({ menuItemId: 'save-image-item', srcUrl, mediaType: 'video' }, { id: 4258 });
       return { converted: messages258.some((m) => /^CONVERT_/.test(String(m))), downloads: downloadedCalls.slice(before) };
     };
-    const titleOf258 = async (srcUrl) => {
-      mockChrome.contextMenus._created = [{ id: 'save-image-item', title: 'Image Saver: Save media under cursor' }];
-      await sandbox.updateContextMenuTitles({ srcUrl, mediaType: 'video', menuIds: ['save-image-item'] });
-      return mockChrome.contextMenus._created.find((i) => i.id === 'save-image-item').title;
-    };
     try {
       const foreign = await click258('https://cdn.example.com/media/tweet_video/clip258.mp4');
       assert(!foreign.converted && foreign.downloads.length === 1 && foreign.downloads[0].filename === 'SavedImages/clip258.mp4' && foreign.downloads[0].url === 'https://cdn.example.com/media/tweet_video/clip258.mp4',
@@ -31272,11 +30699,6 @@ async function runTests() {
       const own = await click258('https://video.twimg.com/tweet_video/Real258.mp4');
       assert(own.converted && own.downloads.length === 1 && own.downloads[0].filename === 'SavedImages/Real258.gif',
         '258.2: a tweet_video of video.twimg.com is still converted to a looping GIF');
-      const foreignTitle = await titleOf258('https://cdn.example.com/media/tweet_video/clip258.mp4');
-      const foreignThumbTitle = await titleOf258('https://example.org/tweet_video_thumb/Thumb258.jpg');
-      const ownTitle = await titleOf258('https://video.twimg.com/tweet_video/Real258.mp4');
-      assert(foreignTitle === 'Image Saver: Save video' && foreignThumbTitle !== 'Image Saver: Save GIF animation' && ownTitle === 'Image Saver: Save GIF animation',
-        '258.3: the menu label says GIF animation only for X\'s own tweet_video');
     } finally {
       mockChrome.runtime.sendMessage = prevSend258;
       sandbox.console.warn = prevWarn258;
@@ -32420,7 +31842,6 @@ async function runTests() {
 
       // 265.7: refusals — nothing is downloaded, the thumbnail and the cover are never used as a fallback
       const refusals = [
-        ['две разные видеозаписи', { [POST_URL]: html(postHtml({ videos: [VIDEO, file(OTHER_HASH, 'mp4', 'b.mp4')], attachments: [] })) }, {}],
         ['видео объявлено с чужого хоста', { [POST_URL]: html(postHtml({ videos: ['https://file.evil.example/data/cd/b1/' + VIDEO_HASH + '.mp4?f=x'], attachments: [] })) }, {}],
         ['вложение-видео с относительным адресом', { [POST_URL]: html(postHtml({ videos: [], attachments: ['/data/cd/b1/' + VIDEO_HASH + '.mp4'] })) }, {}],
         ['пост другого id в метаданных', { [POST_URL]: html(postHtml({ id: '999' })) }, {}],
@@ -32473,6 +31894,176 @@ async function runTests() {
       reset({ 'https://example.com/photo.jpg': media('image/jpeg', 90000) });
       dl = await click({ srcUrl: 'https://example.com/photo.jpg', pageUrl: 'https://example.com/', linkUrl: null });
       assert(dl.length === 1 && dl[0].url === 'https://example.com/photo.jpg' && !calls.some((c) => /pawchive/.test(c.url)), '265.10: Обычное изображение сохраняется как раньше');
+
+      // 265.11 (F8): an explicit save of a feed preview of a post with several videos saves EVERY distinct declared video, each as its own item through the
+      // shared verify/download/feedback path; a direct original or a specific media inside the post stays one target.
+      {
+        const V2_HASH = OTHER_HASH;
+        const V3_HASH = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+        const VIDEO2 = file(V2_HASH, 'mp4', 'b.mp4');
+        const VIDEO3 = file(V3_HASH, 'webm', 'c.webm');
+        const prevPace = vm.runInContext('PAWCHIVE_POST_VIDEOS_PACE_MS', sandbox);
+        vm.runInContext('PAWCHIVE_POST_VIDEOS_PACE_MS = 0', sandbox);
+        const many = (videos, over = {}) => ({ [POST_URL]: html(postHtml({ videos, attachments: videos, ...over })), ...Object.fromEntries(videos.map((v) => [v, media(v.includes('.webm') ? 'video/webm' : 'video/mp4', 5000)])) });
+        try {
+          // two videos: both are saved, in declared order, with their exact URLs (query kept); the cover and the thumbnail are never fetched
+          reset(many([VIDEO, VIDEO2]));
+          dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+          assert(dl.length === 2 && dl[0].url === VIDEO && dl[1].url === VIDEO2 && dl.every((d) => /\.mp4$/.test(d.filename)), '265.11a: два видео поста — оба сохранены отдельными загрузками с точными адресами: ' + JSON.stringify(dl.map((d) => d.url)));
+          assert(calls.filter((c) => c.url === POST_URL).length === 1 && calls.filter((c) => c.method === 'HEAD').length === 2 && !calls.some((c) => c.url === COVER || c.url === COVER_THUMB), '265.11b: одна страница поста, по одной проверке на видео, без обложки и превью: ' + JSON.stringify(calls.map((c) => c.method + ' ' + c.url.slice(-30))));
+          // three videos, one repeated declaration (same hash) and a different extension
+          reset(many([VIDEO, VIDEO2, VIDEO, VIDEO3]));
+          dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+          assert(dl.length === 3 && dl.map((d) => d.url).join() === [VIDEO, VIDEO2, VIDEO3].join() && /\.webm$/.test(dl[2].filename), '265.11c: три разных видео, повтор объявления сведён к одному, расширение .webm сохранено: ' + JSON.stringify(dl.map((d) => d.url)));
+          // an explicit cover link and a direct original inside a multi-video post stay ONE target
+          reset({ ...many([VIDEO, VIDEO2]), [COVER]: media('image/jpeg', 149899) });
+          dl = await click({ srcUrl: COVER_THUMB, pageUrl: POST_URL, linkUrl: COVER });
+          assert(dl.length === 1 && dl[0].url === COVER, '265.11d: явная обложка в посте с несколькими видео — одна цель, видео не добавляются: ' + JSON.stringify(dl.map((d) => d.url)));
+          reset({ ...many([VIDEO, VIDEO2]), [COVER]: media('image/jpeg', 149899) });
+          dl = await click({ srcUrl: COVER_THUMB, pageUrl: POST_URL, linkUrl: null });
+          assert(dl.length === 1 && dl[0].url === COVER && !calls.some((c) => c.url === VIDEO || c.url === VIDEO2), '265.11e: превью внутри страницы поста — это изображение, а не видео поста: ' + JSON.stringify(dl.map((d) => d.url)));
+          reset(many([VIDEO, VIDEO2]));
+          dl = await click({ srcUrl: VIDEO2, pageUrl: POST_URL, linkUrl: null });
+          assert(dl.length === 1 && dl[0].url === VIDEO2 && !calls.some((c) => c.url === VIDEO), '265.11f: прямое видео в посте — только оно само: ' + JSON.stringify(dl.map((d) => d.url)));
+          // the resolver itself: a caller that cannot save several items still gets the refusal, never one arbitrary video
+          reset(many([VIDEO, VIDEO2]));
+          assert((await plan({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL })) === null, '265.11g: вызов без разрешения на несколько видео — отказ, а не одно из них');
+          reset(many([VIDEO, VIDEO2]));
+          const batchPlan = await plan({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL, allowPostVideos: true });
+          assert(batchPlan && !batchPlan.primaryUrl && JSON.stringify(batchPlan.pawchivePostVideos.videos) === JSON.stringify([VIDEO, VIDEO2]) && !fileCalls().length, '265.11h: с разрешением — список видео поста без единого запроса оригиналов');
+          // an item that fails does not touch the others
+          reset({ ...many([VIDEO, VIDEO2, VIDEO3]), [VIDEO2]: media('text/html', 10) });
+          dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+          assert(dl.length === 2 && dl[0].url === VIDEO && dl[1].url === VIDEO3, '265.11i: видео с неверным типом отклонено, остальные сохранены: ' + JSON.stringify(dl.map((d) => d.url)));
+          // HTTP 429 of an original stops every later request: nothing after it is probed or downloaded
+          reset({ ...many([VIDEO, VIDEO2, VIDEO3]), [VIDEO2]: mk(429, { 'content-type': 'video/mp4', 'retry-after': '120' }) });
+          dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+          assert(dl.length === 1 && dl[0].url === VIDEO && !calls.some((c) => c.url === VIDEO3), '265.11j: HTTP 429 второго видео — третье не запрашивалось и не скачано: ' + JSON.stringify({ dl: dl.map((d) => d.url), calls: calls.map((c) => c.method + ' ' + c.url.slice(-22)) }));
+          // the page of the post itself rate limited: no item is started at all
+          reset({ [POST_URL]: mk(429, { 'content-type': 'text/html', 'retry-after': '60' }, 'x') });
+          dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+          assert(dl.length === 0 && calls.length === 1, '265.11k: HTTP 429 страницы поста — ни одного элемента, ни одного запроса видео');
+          // the same click repeated while the batch runs is a duplicate of the running one
+          reset(many([VIDEO, VIDEO2]));
+          const both = await Promise.all([click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL }), click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL })]);
+          assert(calls.filter((c) => c.url === POST_URL).length === 1 && calls.filter((c) => c.method === 'HEAD').length === 2, '265.11l: повторный клик во время пакета — дубликат, без лишних запросов: ' + JSON.stringify(calls.map((c) => c.method + ' ' + c.url.slice(-22))));
+          // identity refusals stay refusals even with several videos
+          for (const [name, r, over] of [
+            ['чужое превью', many([VIDEO, VIDEO2]), { srcUrl: thumb(V3_HASH) }],
+            ['пост другого id', { [POST_URL]: html(postHtml({ id: '999', videos: [VIDEO, VIDEO2], attachments: [] })) }, {}],
+            ['одно из видео с чужого хоста', { [POST_URL]: html(postHtml({ videos: [VIDEO, 'https://file.evil.example/data/ab/cd/' + V3_HASH + '.mp4?f=x'], attachments: [] })) }, {}],
+            ['плеер без адреса видео', { [POST_URL]: html(postHtml({ videoHtml: '<li><video class="post__video"><source src="' + VIDEO + '" type="video/mp4"/></video></li><li><video class="post__video"></video></li>', attachments: [] })) }, {}]
+          ]) {
+            reset(r);
+            dl = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL, ...over });
+            assert(dl.length === 0 && !imgCalls().length, '265.11m: отказ — ' + name + ': ничего не скачано: ' + JSON.stringify(dl.map((d) => d.url)));
+          }
+        } finally {
+          vm.runInContext('PAWCHIVE_POST_VIDEOS_PACE_MS = ' + prevPace, sandbox);
+        }
+      }
+
+      // 265.12 (F8, before the first menu): the manifest's content script reaches only documents loaded after the extension. A tab that stays open across an
+      // install or an update has no capture, so it sends no hint and the menu stays "Unknown Format" until it is reloaded: the capture is injected once into
+      // the open http(s) tabs when the extension is installed or updated, and never otherwise.
+      {
+        const prevQuery = mockChrome.tabs.query;
+        const prevExec = mockChrome.scripting.executeScript;
+        const queries = [];
+        const execs = [];
+        const settle = async () => { for (let i = 0; i < 12; i++) await new Promise((r) => setTimeout(r, 0)); };
+        let tabList = [{ id: 11, url: 'https://pawchive.pw/fanbox/user/37736420' }, { id: 12, url: 'https://example.com/', discarded: true }, { id: 13, url: 'http://example.org/' }, { id: 'x', url: 'https://bad.example/' }, { url: 'https://noid.example/' }, null, { id: 14, url: 'https://example.net/' }];
+        mockChrome.tabs.query = async (q) => { queries.push(q); if (tabList instanceof Error) throw tabList; return tabList; };
+        mockChrome.scripting.executeScript = async (o) => { execs.push(o); if (o.target.tabId === 13) throw new Error('Cannot access contents of the page'); return [{ result: null }]; };
+        try {
+          await mockChrome.runtime._onInstalledCb({ reason: 'update' });
+          await settle();
+          assert(queries.length === 1 && JSON.stringify(queries[0]) === JSON.stringify({ url: ['http://*/*', 'https://*/*'] }), '265.12a: открытые вкладки запрашиваются только по http(s): ' + JSON.stringify(queries));
+          assert(JSON.stringify(execs.map((o) => o.target.tabId)) === JSON.stringify([11, 13, 14]) && execs.every((o) => o.target.allFrames === true && JSON.stringify(o.files) === JSON.stringify(['content_context_target.js']) && o.world === undefined && o.func === undefined),
+            '265.12b: capture внедряется в каждую открытую вкладку (все кадры, только файл capture); отброшенная и безадресная вкладки пропущены, отказ одной вкладки не останавливает остальные: ' + JSON.stringify(execs.map((o) => o.target)));
+          execs.length = 0; queries.length = 0;
+          await mockChrome.runtime._onInstalledCb({ reason: 'install' });
+          await settle();
+          assert(execs.length === 3, '265.12c: установка внедряет так же');
+          execs.length = 0; queries.length = 0;
+          for (const details of [{ reason: 'chrome_update' }, { reason: 'shared_module_update' }, {}, undefined]) {
+            await mockChrome.runtime._onInstalledCb(details);
+            await settle();
+          }
+          assert(queries.length === 0 && execs.length === 0, '265.12d: обновление браузера и вызов без причины ничего не внедряют');
+          tabList = new Error('tabs.query failed');
+          await mockChrome.runtime._onInstalledCb({ reason: 'update' });
+          await settle();
+          assert(execs.length === 0, '265.12e: сбой запроса вкладок не ломает установку и ничего не внедряет');
+        } finally {
+          mockChrome.tabs.query = prevQuery;
+          mockChrome.scripting.executeScript = prevExec;
+        }
+      }
+
+      // 265.14 (stable title): the command is "Image Saver: Save media" at registration and on every path. Loading, complete, hover and gesture hints, provider
+      // messages, focus and tab events request NOTHING about the original (no post page, no creator list, no page read, no cursor query) and rename nothing; the
+      // original is resolved and probed only when the command is chosen, and a post with several videos still saves every one of them.
+      {
+        const STABLE = 'Image Saver: Save media';
+        const prevId = mockChrome.runtime.id;
+        const prevExec = mockChrome.scripting.executeScript;
+        const prevUpdate = mockChrome.contextMenus.update;
+        const prevSend = mockChrome.tabs.sendMessage;
+        mockChrome.runtime.id = 'mock-id';
+        const updates = [];
+        const execs = [];
+        const sends = [];
+        mockChrome.contextMenus.update = (id, props, cb) => { updates.push({ id, props }); if (typeof cb === 'function') cb(); };
+        mockChrome.scripting.executeScript = async (o) => { execs.push(o); return [{ result: null }]; };
+        mockChrome.tabs.sendMessage = async (tabId, msg) => { sends.push(msg && msg.action); return null; };
+        const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+        try {
+          mockChrome.contextMenus._created = [];
+          sandbox.setupContextMenus();
+          const item = () => mockChrome.contextMenus._created.find((i) => i.id === 'save-image-item');
+          assert(item().title === STABLE && mockChrome.contextMenus._created.length === 1, '265.14a: пункт зарегистрирован с единственным названием «Image Saver: Save media»');
+          assert(mockChrome.contextMenus._onShownHandler === undefined, '265.14b: обработчика показа меню (onShown), называющего пункт, нет');
+          reset({ [POST_URL]: html(postHtml()), [VIDEO]: media('video/mp4', 1000), [COVER_THUMB]: media('image/jpeg') });
+          const T = 265140, WIN = 1;
+          const pawchiveHint = async (over) => {
+            const m = { action: 'CONTEXT_TARGET_STATE', selectable: true, linkHref: POST_URL, media: { kind: 'img', url: COVER_THUMB }, ...over };
+            mockChrome.runtime._onMessageCb(m, { id: 'mock-id', tab: { id: T, active: true, windowId: WIN }, frameId: 0, documentId: 'd14', url: CREATOR_URL }, () => {});
+            await settle();
+          };
+          vm.runInContext('focusedWindowId = ' + WIN, sandbox);
+          mockChrome.tabs._onUpdatedCb(T, { status: 'loading', url: CREATOR_URL }, { id: T, active: true, url: CREATOR_URL, windowId: WIN }); await settle();
+          mockChrome.tabs._onUpdatedCb(T, { status: 'complete' }, { id: T, active: true, url: CREATOR_URL, windowId: WIN }); await settle();
+          await pawchiveHint({ source: 'pointer', phase: 'rest' });
+          await pawchiveHint({ source: 'pointer', phase: 'rest', linkHref: 'https://pawchive.pw/fanbox/user/37736420/post/999' });
+          await pawchiveHint({ source: 'gesture', phase: 'down', gestureAt: 100 });
+          await pawchiveHint({ source: 'gesture', phase: 'menu', gestureAt: 101 });
+          await pawchiveHint({ source: 'gesture', phase: 'key', gestureAt: 102 });
+          await pawchiveHint({ source: 'gesture', phase: 'down', gestureAt: 103, selectable: false, media: null, linkHref: null });
+          const hiddenSeen = updates.some((u) => u.props && u.props.visible === false);
+          for (const action of ['REDDIT_MEDIA_CONTEXTMENU_DETECTED', 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED', 'X_MEDIA_CONTEXTMENU_DETECTED', 'BOORU_MEDIA_CONTEXTMENU_DETECTED']) {
+            mockChrome.runtime._onMessageCb({ action, media: { type: 'video', sourceType: 'redgifs', url: 'https://example.test/v.mp4' }, fileExt: 'gif', targetUrl: 'https://cdn.donmai.us/original/aa/aa/' + 'a'.repeat(32) + '.jpg', timestamp: 7, gestureAt: 101 }, { tab: { id: T, active: true }, frameId: 0 }, () => {});
+          }
+          mockChrome.windows._onFocusChangedCb(WIN); await settle();
+          mockChrome.tabs._onActivatedCb({ tabId: T, windowId: WIN }); await settle();
+          assert(updates.every((u) => !('title' in (u.props || {}))) && item().title === STABLE,
+            '265.14c: загрузка/complete, наведение, жесты, подсказки провайдеров, фокус и смена вкладки не переименовывают пункт: ни одного обновления заголовка: ' + JSON.stringify(updates.map((u) => Object.keys(u.props || {}))));
+          assert(hiddenSeen && updates.some((u) => u.props && u.props.visible === true), '265.14d: управление видимостью пункта сохранено: вне медиа он скрывается, при смене фокуса/вкладки снова виден');
+          assert(calls.length === 0 && execs.length === 0 && sends.every((a) => a === 'CONTEXT_HINT_RESET'),
+            '265.14e: до выбора команды нет ни одного запроса об оригинале (страница поста, список автора), ни чтения страницы, ни запроса к странице X за подписью: ' + JSON.stringify({ calls: calls.map((c) => c.url), execs: execs.length, sends }));
+          // choosing the command: the original is resolved and probed NOW
+          const dl14 = await click({ srcUrl: COVER_THUMB, pageUrl: CREATOR_URL, linkUrl: POST_URL });
+          assert(dl14.length === 1 && dl14[0].url === VIDEO && calls.some((c) => c.url === POST_URL) && calls.some((c) => c.url === VIDEO && c.method === 'HEAD'),
+            '265.14f: выбор команды запрашивает страницу поста, проверяет оригинал и сохраняет видео: ' + JSON.stringify(dl14.map((d) => d.url)));
+          assert(updates.every((u) => !('title' in (u.props || {}))), '265.14g: сохранение тоже не меняет заголовок пункта');
+        } finally {
+          mockChrome.runtime.id = prevId;
+          mockChrome.scripting.executeScript = prevExec;
+          mockChrome.contextMenus.update = prevUpdate;
+          mockChrome.tabs.sendMessage = prevSend;
+          sandbox.setupContextMenus();
+        }
+      }
 
       const routedFetch = sandbox.fetch;
       // ── F1 (a): the post-page transfer ends on every exit. A streamed body (getReader/cancel) and its request signal are observed; text()-only mocks cannot see this.

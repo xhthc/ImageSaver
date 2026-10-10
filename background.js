@@ -1100,6 +1100,8 @@ async function setupDeclarativeNetRequestRules() {
 setupDeclarativeNetRequestRules();
 
 const CSS_MEDIA_MENU_ID = 'save-css-media-item';
+// The one title of the command, at registration and always: the type of the original is decided by the save, after the click.
+const STABLE_MENU_TITLE = 'Image Saver: Save media';
 
 function setupContextMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -1107,12 +1109,11 @@ function setupContextMenus() {
     // provider routing remains internal and admission still proves the selected owner before saving.
     chrome.contextMenus.create({
       id: 'save-image-item',
-      title: 'Image Saver: Save media under cursor',
+      title: STABLE_MENU_TITLE,
       contexts: ['image', 'link', 'video', 'page'],
       documentUrlPatterns: ['http://*/*', 'https://*/*']
     });
     contextTargetVisible = true;
-    menuTitleNow = 'Image Saver: Save media under cursor';
     menuClick = null;
     console.log('[Image Saver] Пункты контекстного меню успешно зарегистрированы');
   });
@@ -1131,11 +1132,8 @@ const CONTEXT_STATE_ITEMS = ['save-image-item'];
 // null = unknown (the service worker has just started; an item hidden by an earlier worker is not known to be visible):
 // the first answer always updates the item.
 let contextTargetVisible = null;
-const NEUTRAL_MENU_TITLE = 'Image Saver: Save media under cursor';
-let menuTitleNow = null;
-// The click the label belongs to: { tabId, frameId, documentId, url, titleBy, startAt }. A right-press ('down') or the keyboard menu key
-// ('key') starts a new one; its contextmenu event ('menu') belongs to it. A provider (X, Reddit, RedGIFs, Danbooru) label is
-// applied only for the frame of the current click and stays until the next click, a resting pointer, or a tab/window change.
+// The latest gesture of a document: { tabId, frameId, documentId, startAt, ended }. A right-press ('down') or the keyboard menu key
+// ('key') starts a new one; its contextmenu event ('menu') belongs to it. It only orders delayed hints against each other.
 let menuClick = null;
 // Identity of one gesture inside a document: the timeStamp of the trusted DOM event that started it. Every content script of the
 // frame (the generic capture and the provider scripts) sees the same event, so they report the same value without sharing
@@ -1191,52 +1189,10 @@ function setContextTargetVisible(visible) {
   }
 }
 
-// The label of the shared entry. Unchanged labels are not sent again unless forced (a reset).
-function applyMenuTitle(title, force = false) {
-  if (!force && menuTitleNow === title) return;
-  menuTitleNow = title;
-  try {
-    chrome.contextMenus?.update?.('save-image-item', { title }, () => {
-      void chrome.runtime?.lastError;
-      chrome.contextMenus?.refresh?.();
-    });
-  } catch (_) {}
-}
-
-// Whatever a previous gesture said does not carry over to another tab, window or document: visible again, label neutral.
+// Whatever a previous gesture said does not carry over to another tab, window or document: visible again.
 function resetContextTargetHint() {
   setContextTargetVisible(true);
   menuClick = null;
-  applyMenuTitle(NEUTRAL_MENU_TITLE, true);
-}
-
-// A selected preview whose original may be of another type (a GIF or a video behind a JPG thumbnail) is labelled neutrally:
-// the same preview path patterns the Danbooru and Gelbooru resolvers use mark it as a preview of an unknown original.
-function isBooruPreviewOfUnknownOriginal(url) {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-    const path = u.pathname.toLowerCase();
-    if (isDanbooruDomain(host)) return /\/(sample|preview|\d+x\d+)\//.test(path) && !/\/original\//.test(path);
-    if (isGelbooruDomain(host)) return /\/+(samples?|thumbnails?)\/+/.test(path);
-  } catch (_) {}
-  return false;
-}
-
-// The label from what the selected element itself is (see evidenceOf in content_context_target.js). Unknown is neutral:
-// never a neighbour, a page-wide tag, looping or silence.
-function genericMenuTitle(evidence, linkHref) {
-  const fromUrl = (url, domType) => { const format = detectMediaFormat({ url, domType }); return format ? getMediaMenuTitle(format, 'default') : NEUTRAL_MENU_TITLE; };
-  if (evidence) {
-    if (evidence.kind === 'video' || evidence.kind === 'player') return evidence.url ? fromUrl(evidence.url, 'video') : getMediaMenuTitle('video');
-    if (evidence.kind === 'img') {
-      if (!evidence.url || isBooruPreviewOfUnknownOriginal(evidence.url)) return NEUTRAL_MENU_TITLE;
-      return fromUrl(evidence.url, 'image');
-    }
-    return NEUTRAL_MENU_TITLE; // a layer or a CSS background: the type of its asset is not known here
-  }
-  if (typeof linkHref === 'string' && linkHref && hasMediaAssociation('', linkHref)) return fromUrl(linkHref, null);
-  return NEUTRAL_MENU_TITLE;
 }
 
 function menuEvidence(raw) {
@@ -1270,30 +1226,6 @@ function isXAvatarPreviewHint(pageUrl, evidence, link) {
     const profile = new URL(link);
     return isXPageUrl(profile.href) && /^\/[a-z0-9_]+(?:\/photo)?\/?$/i.test(profile.pathname);
   } catch (_) { return false; }
-}
-
-// A provider's label belongs to the current click only: same tab, same frame (and document when both known) and the same
-// gesture. The provider reports the timeStamp of the event it answers; a descriptor of an earlier gesture of this document
-// (delayed delivery) is older than the current click's start and is foreign, while the current gesture's own descriptor, whatever
-// preview, overlay or player it resolved to, is not older. With no click known yet (a page whose generic script has not spoken)
-// the provider's own timing guards remain the only protection.
-function providerOwnsClick(sender, gestureAt) {
-  const c = menuClick;
-  if (!c) return true;
-  if (c.ended) return false; // the click is over (the pointer rests elsewhere): a late label of it is foreign
-  if (!clickIsIn(c, sender?.tab?.id, Number.isInteger(sender?.frameId) ? sender.frameId : 0, sender?.documentId)) return false;
-  if (c.startAt !== null && c.startAt !== undefined) {
-    const at = gestureStamp(gestureAt);
-    if (at === null || at < c.startAt) return false;
-  }
-  return true;
-}
-
-function applyProviderTitle(sender, title, gestureAt) {
-  if (!providerOwnsClick(sender, gestureAt)) return false;
-  if (menuClick) menuClick.titleBy = 'provider';
-  applyMenuTitle(title);
-  return true;
 }
 
 // The page remembers the last answer it sent (content_context_target.js) and sends only a change. After a reset it no longer
@@ -1342,21 +1274,16 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
         const frameId = Number.isInteger(sender.frameId) ? sender.frameId : 0;
         const cur = menuClick;
         // A gesture message older than the click already on the menu is a delayed answer of an earlier gesture of this
-        // document: it changes neither the visibility nor the label.
+        // document: it does not change the visibility.
         if (message.source === 'gesture' && cur && cur.startAt !== null && cur.startAt !== undefined && gestureAt !== null &&
           clickIsIn(cur, sender.tab.id, frameId, sender.documentId) && gestureAt < cur.startAt) return;
         setContextTargetVisible(selectable);
-        // The label follows the selected target of this message, never an earlier click's: a new click resets it, a provider
-        // label of the same click is kept, a resting pointer prepares the label of what is under it.
+        // A new click resets the gesture; a resting pointer ends the previous one.
         if (message.source === 'gesture') {
           const sameClick = message.phase === 'menu' && cur && !cur.ended && clickIsIn(cur, sender.tab.id, frameId, sender.documentId);
-          if (!sameClick) menuClick = { tabId: sender.tab.id, frameId, documentId: sender.documentId, url: evidence && evidence.url || '', titleBy: 'generic', startAt: gestureAt };
-          else if (!menuClick.url && evidence && evidence.url) menuClick.url = evidence.url;
-          if (menuClick.titleBy !== 'provider') applyMenuTitle(selectable ? genericMenuTitle(evidence, link) : NEUTRAL_MENU_TITLE);
+          if (!sameClick) menuClick = { tabId: sender.tab.id, frameId, documentId: sender.documentId, startAt: gestureAt };
         } else {
-          // A resting pointer prepares the label of what is under it and ends the previous click.
           menuClick = { ended: true, tabId: sender.tab.id, frameId, documentId: sender.documentId, startAt: menuClick && menuClick.startAt !== undefined && clickIsIn(menuClick, sender.tab.id, frameId, sender.documentId) ? menuClick.startAt : null };
-          applyMenuTitle(selectable ? genericMenuTitle(evidence, link) : NEUTRAL_MENU_TITLE);
         }
       });
     };
@@ -1425,128 +1352,6 @@ function sanitizeGroupIdForLog(id) {
   const tail = /^((?:x_)?video_)(.+)$/.exec(id);
   if (tail) return `${tail[1]}[REDACTED]`;
   return id;
-}
-
-/**
- * Detects specific media format or category from URL, mediaType, or DOM element type.
- * Deterministic and completely offline — performs zero network requests.
- *
- * Supported formats:
- * - 'gif': GIF animated images (including Tenor and X tweet_video)
- * - 'png': PNG images
- * - 'jpg': JPEG / JPG images
- * - 'webp': WebP images
- * - 'avif': AVIF images
- * - 'svg': SVG vector images
- * - 'video': MP4, WebM, and HTML5 video elements
- * - 'image': Generic image fallback
- * - null: Unknown or non-media
- */
-function detectMediaFormat({ url, mediaType, domType } = {}) {
-  const urlStr = typeof url === 'string' ? url.trim() : (url ? url.toString() : '');
-
-  // 1. Explicit domain/caller hint for animation
-  if (domType === 'reddit_gif' || mediaType === 'reddit_gif') {
-    return 'reddit_gif';
-  }
-  if (domType === 'x_tweet_video') {
-    return 'gif';
-  }
-
-  // 2. Strong validated URL animation evidence takes precedence over generic HTML video element hints
-  if (urlStr) {
-    try {
-      const parsed = new URL(urlStr, 'https://localhost/');
-      const pathname = parsed.pathname.toLowerCase();
-      const host = parsed.hostname.toLowerCase();
-
-      // Twitter / X tweet video is an animated GIF
-      if ((host === 'video.twimg.com' && pathname.includes('/tweet_video/')) ||
-          ((host === 'twimg.com' || host.endsWith('.twimg.com')) && pathname.includes('/tweet_video_thumb/'))) {
-        return 'gif';
-      }
-
-      // Reddit animated GIF served as MP4: preview.redd.it/...gif?format=mp4
-      if (typeof isRedditAnimationUrl === 'function' && isRedditAnimationUrl(urlStr)) {
-        return 'reddit_gif';
-      }
-      if (typeof isRedditDomain === 'function' && isRedditDomain(host) && pathname.includes('.gif') &&
-          (parsed.searchParams.get('format') === 'mp4' || parsed.searchParams.get('format') === 'video/mp4')) {
-        return 'reddit_gif';
-      }
-
-      // Twitter / X regular video
-      if (host === 'video.twimg.com' && (pathname.includes('/ext_tw_video/') || pathname.includes('/amplify_video/'))) {
-        return 'video';
-      }
-
-      // Packaged-media Reddit video (packaged-media.redd.it)
-      if (host === 'packaged-media.redd.it') {
-        if (!pathname.endsWith('.mpd') && !pathname.endsWith('.m3u8') && !pathname.endsWith('.html') && !pathname.includes('/comments/')) {
-          return 'packaged_media';
-        }
-      }
-
-      // Reddit v.redd.it video
-      if (host === 'v.redd.it') {
-        if (!pathname.endsWith('.mpd') && !pathname.endsWith('.m3u8') && !pathname.endsWith('.html') && !pathname.includes('/comments/')) {
-          return 'video';
-        }
-      }
-
-      // RedGIFs video routes
-      if (typeof isAllowedRedGifsHost === 'function' && isAllowedRedGifsHost(host)) {
-        if (/\/(?:watch|ifr|detail|gifs)\/([a-zA-Z0-9_-]+)/i.test(pathname)) {
-          return 'video';
-        }
-      }
-
-      // Tenor media domains and URLs
-      if (host === 'media.tenor.com' || host === 'c.tenor.com' || /^media\d*\.tenor\.com$/.test(host) || (host.includes('tenor.com') && pathname.includes('/view/'))) {
-        return 'gif';
-      }
-
-      // Check query parameter format/ext (common on Twitter/X, e.g. ?format=jpg, or CDNs ?ext=png)
-      const queryFormat = parsed.searchParams.get('format') || parsed.searchParams.get('ext') || parsed.searchParams.get('f') || parsed.searchParams.get('mime');
-      if (queryFormat) {
-        const qf = queryFormat.toLowerCase().trim();
-        if (qf === 'gif' || qf === 'image/gif') return 'gif';
-        if (qf === 'png' || qf === 'image/png') return 'png';
-        if (qf === 'jpg' || qf === 'jpeg' || qf === 'jfif' || qf === 'image/jpeg') return 'jpg';
-        if (qf === 'webp' || qf === 'image/webp') return 'webp';
-        if (qf === 'avif' || qf === 'image/avif') return 'avif';
-        if (qf === 'svg' || qf === 'svg+xml' || qf === 'image/svg+xml') return 'svg';
-        if (qf === 'mp4' || qf === 'video/mp4') return 'video';
-        if (qf === 'webm' || qf === 'video/webm') return 'video';
-      }
-
-      // Check extension in pathname
-      const extMatch = pathname.match(/\.([a-z0-9]+)$/i);
-      if (extMatch) {
-        const ext = extMatch[1].toLowerCase();
-        if (ext === 'gif') return 'gif';
-        if (ext === 'png') return 'png';
-        if (ext === 'jpg' || ext === 'jpeg' || ext === 'jpe' || ext === 'jfif') return 'jpg';
-        if (ext === 'webp') return 'webp';
-        if (ext === 'avif') return 'avif';
-        if (ext === 'svg') return 'svg';
-        if (ext === 'mp4' || ext === 'm4v' || ext === 'mov' || ext === 'webm' || ext === 'ogv') return 'video';
-      }
-    } catch (_) {}
-  }
-
-  // 3. Fall back to DOM / context mediaType
-  if (domType === 'video') {
-    return 'video';
-  }
-  if (domType === 'image' || mediaType === 'image') {
-    return 'image';
-  }
-  if (mediaType === 'video') {
-    return 'video';
-  }
-
-  return null;
 }
 
 /**
@@ -1788,156 +1593,19 @@ function classifyMediaTarget(target) {
   };
 }
 
-/**
- * Maps detected media format to human-readable menu title string.
- */
-function getMediaMenuTitle(format, context = 'default') {
-  let fmt = format;
-  let sourceType = null;
-  if (typeof format === 'object' && format !== null) {
-    fmt = format.type || format.format;
-    sourceType = format.sourceType;
-  }
-
-  // Reddit animated GIF delivered as MP4 (preview.redd.it/*.gif?format=mp4)
-  if (sourceType === 'reddit_gif' || fmt === 'reddit_gif' || context === 'reddit_gif') {
-    return 'Image Saver: Save GIF animation';
-  }
-
-  // Confirmed native GIF animation (explicit native_gif format, sourceType, or context)
-  if (sourceType === 'native_gif' || fmt === 'native_gif' || context === 'native_gif' || context === 'reddit_native_gif') {
-    return 'Image Saver: Save GIF animation';
-  }
-
-  // Packaged-media Reddit video (packaged-media.redd.it/*.mp4)
-  if (sourceType === 'packaged_media' || fmt === 'packaged_media' || fmt === 'packaged-media' || context === 'packaged_media' || context === 'packaged-media') {
-    return 'Image Saver: Save video';
-  }
-
-  // A GIF file selected by its own address (format known, animation not confirmed by a provider): labelled as the format.
-  if (fmt === 'gif' && context === 'default' && !sourceType) {
-    return 'Image Saver: Save GIF';
-  }
-
-  // Twitter / X tweet video animation
-  if (sourceType === 'x_tweet_video' || fmt === 'x_tweet_video' || (fmt === 'gif' && (context === 'x' || context === 'tweet_video'))) {
-    return 'Image Saver: Save GIF animation';
-  }
-  if (fmt === 'video' || fmt === 'mp4' || fmt === 'webm') {
-    return 'Image Saver: Save video';
-  }
-  if (fmt === 'image' || fmt === 'gif' || fmt === 'png' || fmt === 'jpg' || fmt === 'jpeg' || fmt === 'webp' || fmt === 'avif' || fmt === 'svg') {
-    return 'Image Saver: Save image';
-  }
-  if (context === 'x' || context === 'page') {
-    return 'Image Saver: Save media under cursor';
-  }
-  return 'Image Saver: Save image';
-}
-
 const lastDetectedXMediaByTab = new Map();
-const X_NEUTRAL_MENU_TITLE = 'Image Saver: Save media under cursor';
 
-// The X entry is labelled from the media that belongs to the current click only; no owned target keeps it neutral.
-function getXMediaMenuTitle(media, info = {}) {
-  if (!media) return X_NEUTRAL_MENU_TITLE;
-  const format = detectMediaFormat({
-    url: media.url || info.srcUrl,
-    mediaType: info.mediaType,
-    domType: media.type
-  });
-  return getMediaMenuTitle(format, 'x');
-}
 const lastDetectedRedditMediaByTab = new Map();
-
-/**
- * Dynamically updates context menu titles according to media under cursor.
- */
-async function updateContextMenuTitles(info, tab) {
-  if (!info) return;
-
-  const targetUrl = info.srcUrl || info.linkUrl || '';
-  // X's own hosts only: a path that merely contains /tweet_video/ on any other site is an ordinary video.
-  const isTweetVid = Boolean(resolveTweetVideoThumbUrl(targetUrl)) || Boolean(toTweetVideoUrl(targetUrl));
-
-  // 1. Update save-image-item if present in menuIds or on image/link/video context
-  const hasImageItem = !info.menuIds || info.menuIds.includes('save-image-item');
-  if (hasImageItem && (info.srcUrl || info.mediaType === 'image' || info.mediaType === 'video')) {
-    const isRedditGif = typeof isRedditAnimationUrl === 'function' ? isRedditAnimationUrl(targetUrl) : (
-      typeof isRedditDomain === 'function' &&
-      isRedditDomain((() => { try { return new URL(targetUrl).hostname; } catch(_) { return ''; } })()) &&
-      targetUrl.includes('.gif') && (targetUrl.includes('format=mp4') || targetUrl.includes('format=video/mp4'))
-    );
-    const isPackagedMedia = targetUrl.includes('packaged-media.redd.it');
-    const isRedditNativeGif = (
-      typeof isRedditDomain === 'function' &&
-      isRedditDomain((() => { try { return new URL(targetUrl).hostname; } catch(_) { return ''; } })()) &&
-      /\.gif(\?.*)?$/i.test(targetUrl) &&
-      !isRedditGif
-    );
-
-    let context = 'default';
-    if (isTweetVid) context = 'tweet_video';
-    else if (isRedditGif) context = 'reddit_gif';
-    else if (isRedditNativeGif) context = 'native_gif';
-    else if (isPackagedMedia) context = 'packaged_media';
-
-    const format = detectMediaFormat({
-      url: targetUrl,
-      mediaType: info.mediaType
-    });
-    const imageTitle = getMediaMenuTitle(isRedditNativeGif ? 'native_gif' : format, context);
-    try {
-      chrome.contextMenus?.update?.('save-image-item', { title: imageTitle }, () => {
-        chrome.contextMenus?.refresh?.();
-      });
-    } catch (_) {}
-  }
-
-  // 2. Label the shared entry from the current X page/overlay target.
-  const isXPage = (info.pageUrl && (info.pageUrl.includes('x.com') || info.pageUrl.includes('twitter.com'))) ||
-                  (!info.pageUrl && tab?.url && (tab.url.includes('x.com') || tab.url.includes('twitter.com')));
-  const hasXItem = !info.menuIds || info.menuIds.includes('save-image-item');
-
-  if (hasXItem && isXPage && !info.srcUrl && !info.linkUrl) {
-    // Ask the page for the current click's media. The per-tab cache of an earlier click is never used here:
-    // a blank click right after a video click would otherwise be labelled (and saved) as that video.
-    let media = null;
-    if (tab?.id) {
-      try {
-        media = await chrome.tabs.sendMessage(tab.id, { action: 'GET_X_MEDIA_AT_CURSOR' });
-      } catch (_) {}
-    }
-
-    const xTitle = getXMediaMenuTitle(media, info);
-    try {
-      chrome.contextMenus?.update?.('save-image-item', { title: xTitle }, () => {
-        chrome.contextMenus?.refresh?.();
-      });
-    } catch (_) {}
-  }
-}
-
-if (typeof chrome !== 'undefined' && chrome.contextMenus?.onShown?.addListener) {
-  chrome.contextMenus.onShown.addListener(async (info, tab) => {
-    try {
-      await updateContextMenuTitles(info, tab);
-    } catch (e) {
-      console.warn('[Image Saver] Ошибка при динамическом обновлении меню:', e);
-    }
-  });
-}
 
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender) => {
-    // Provider hints from a background tab must not relabel the shared action in the active tab.
+    // Provider hints from a background tab must not fill the caches of the active tab.
     if (sender?.tab?.active === false) return;
     if (message?.action === 'X_MEDIA_CONTEXTMENU_DETECTED' && sender?.tab?.id) {
       lastDetectedXMediaByTab.set(sender.tab.id, {
         media: message.media,
         timestamp: Date.now()
       });
-      applyProviderTitle(sender, getXMediaMenuTitle(message.media), message.gestureAt);
     } else if (message?.action === 'REDDIT_MEDIA_CONTEXTMENU_DETECTED' && sender?.tab?.id) {
       const tabId = sender.tab.id;
       const frameId = typeof sender.frameId === 'number' ? sender.frameId : 0;
@@ -1953,33 +1621,6 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
         frameId,
         documentUrl: sender.url || ''
       });
-
-      const media = message.media;
-      let format = 'image';
-      let context = 'default';
-      if (media?.sourceType === 'reddit_gif' || media?.type === 'reddit_gif' || (media?.url && isRedditAnimationUrl(media.url))) {
-        format = 'reddit_gif';
-        context = 'reddit_gif';
-      } else if (media?.sourceType === 'packaged_media') {
-        format = 'packaged_media';
-        context = 'packaged_media';
-      } else if (media?.sourceType === 'native_gif' || media?.type === 'native_gif') {
-        format = 'native_gif';
-        context = 'native_gif';
-      } else if (media?.type === 'video') {
-        format = 'video';
-        context = 'default';
-      } else if (media?.url) {
-        format = detectMediaFormat({ url: media.url, domType: media.type, mediaType: media.type });
-        if (format === 'reddit_gif') context = 'reddit_gif';
-        else if (format === 'packaged_media') context = 'packaged_media';
-        else if (format === 'gif' || media?.sourceType === 'native_gif' || (typeof isRedditDomain === 'function' && isRedditDomain((() => { try { return new URL(media.url).hostname; } catch(_) { return ''; } })()) && /\.gif(\?.*)?$/i.test(media.url))) {
-          format = 'native_gif';
-          context = 'native_gif';
-        }
-      }
-
-      applyProviderTitle(sender, getMediaMenuTitle(format, context), message.gestureAt);
     } else if (message?.action === 'REDGIFS_MEDIA_CONTEXTMENU_DETECTED' && sender?.tab?.id) {
       // Must be a positively identified RedGIFs media target
       if (message.media?.sourceType !== 'redgifs') {
@@ -1999,17 +1640,6 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
         frameId,
         documentUrl: sender.url || ''
       });
-      applyProviderTitle(sender, getMediaMenuTitle('video', 'default'), message.gestureAt);
-    } else if (message?.action === 'BOORU_MEDIA_CONTEXTMENU_DETECTED' && sender?.tab?.id) {
-      // The selected Danbooru item's own metadata (data-file-ext of its post container) says what its original is, whatever
-      // the preview looks like. It must belong to the asset of the current click: same frame, same md5 or address.
-      const ext = String(message.fileExt || '').toLowerCase();
-      if (!DANBOORU_DOM_ALLOWED_EXTS.has(ext) || !menuClick || !providerOwnsClick(sender, message.gestureAt) || !menuClick.url) return;
-      const md5Of = (u) => { const m = typeof u === 'string' ? u.match(/[a-f0-9]{32}/i) : null; return m ? m[0].toLowerCase() : null; };
-      const target = typeof message.targetUrl === 'string' ? message.targetUrl : '';
-      const sameAsset = target === menuClick.url || (md5Of(target) !== null && md5Of(target) === md5Of(menuClick.url));
-      if (!sameAsset) return;
-      applyProviderTitle(sender, ext === 'webm' || ext === 'mp4' ? getMediaMenuTitle('video') : getMediaMenuTitle(ext === 'gif' ? 'gif' : 'image'), message.gestureAt);
     }
   });
 }
@@ -2043,15 +1673,29 @@ if (typeof chrome !== 'undefined' && chrome.tabs?.onUpdated?.addListener) {
       lastDetectedRedditMediaByTab.delete(tabId);
       lastDetectedXMediaByTab.delete(tabId);
       // The shared menu is touched only by a tab of the focused window; its availability only by the shown tab.
-      const resetTitle = () => applyMenuTitle(NEUTRAL_MENU_TITLE, true);
-      onSharedMenuTabEvent(tab?.windowId, tab?.active ? resetContextTargetHint : resetTitle, Boolean(tab?.active));
+      if (tab?.active) onSharedMenuTabEvent(tab.windowId, resetContextTargetHint);
     }
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+// The manifest's content scripts reach only documents that load after the extension: a tab that stays open across an install, an update or a reload
+// has no capture, so no hint is ever sent for it (the menu stays "Unknown Format", no lookup starts) until it is reloaded. Put the capture script
+// into the open http(s) tabs once. It is idempotent in a document that already has it (`__imageSaverContextTarget` guard) and a tab that refuses
+// injection (a restricted page, a closed or discarded tab) is skipped. Other providers' scripts are not touched.
+async function injectContextTargetIntoOpenTabs() {
+  if (!chrome.tabs?.query || !chrome.scripting?.executeScript) return;
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] }); } catch (_) { return; }
+  for (const tab of Array.isArray(tabs) ? tabs : []) {
+    if (!tab || !Number.isInteger(tab.id) || tab.discarded) continue;
+    try { await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['content_context_target.js'] }); } catch (_) {}
+  }
+}
+
+chrome.runtime.onInstalled.addListener((details) => {
   setupDeclarativeNetRequestRules();
   setupContextMenus();
+  if (details?.reason === 'install' || details?.reason === 'update') injectContextTargetIntoOpenTabs().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -7628,8 +7272,8 @@ async function resolveMediaTarget(options = {}) {
 // ---- SITE-PAWCHIVE-01: originals from Pawchive previews ----------------------------------------------------------------------------------------------
 // A creator-feed card shows img.pawchive.pw/thumbnail/data/aa/bb/<sha256>.<ext>; the post page (https://pawchive.pw/<service>/user/<id>/post/<id>) declares
 // the originals on file.pawchive.pw/data/aa/bb/<sha256>.<ext>?f=<name>: a video in .post__videos and .post__attachments, the cover in a.fileThumb. The
-// video and its cover have different hashes, so no address can be derived from the thumbnail. Rules: a card's post link selects the post's single distinct
-// video (its cover only when the post has no video); a link to an original, or a thumbnail inside a post page, selects exactly that image; ambiguity,
+// video and its cover have different hashes, so no address can be derived from the thumbnail. Rules: a card's post link selects ALL the post's distinct videos
+// (by hash; each is its own item, see savePawchivePostVideos), its cover only when the post has no video; a link to an original, or a thumbnail inside a post page, selects exactly that image; ambiguity,
 // a mismatch, foreign metadata or an unusable original is a refusal, never the thumbnail, never a guessed path.
 const PAWCHIVE_HTML_MAX_BYTES = 1024 * 1024;
 const PAWCHIVE_HTML_TIMEOUT_MS = 8000;
@@ -7683,7 +7327,11 @@ async function fetchPawchivePostHtml(postUrl) {
   try {
     res = await fetch(postUrl, { method: 'GET', credentials: 'omit', redirect: 'manual', headers: { Accept: 'text/html' }, signal: controller.signal });
     if (!res || res.type === 'opaqueredirect' || res.redirected || (res.status >= 300 && res.status < 400)) return { refused: true };
-    if (!res.ok) return { status: res.status };
+    if (!res.ok) {
+      let retryAfter = null;
+      try { retryAfter = res.headers.get('retry-after'); } catch (_) {}
+      return { status: res.status, retryAfter };
+    }
     if (!/^(text\/html|application\/xhtml\+xml)\b/i.test(res.headers.get('content-type') || '')) return { refused: true };
     const declared = parseInt(res.headers.get('content-length') || '', 10);
     if (declared > PAWCHIVE_HTML_MAX_BYTES) return { refused: true };
@@ -7815,11 +7463,39 @@ async function probePawchiveOriginal(parsed, postUrl, srcUrl) {
 }
 
 /**
+ * Which declared original a selected thumbnail of a post stands for (used by the save resolver).
+ * -> { chosen: parsed original } or { why: refusal reason }
+ */
+function selectPawchivePostOriginal(clicked, post, isFeedCard, declared) {
+  // the selected preview must be one of this post's own images (its cover)
+  const mine = declared.images.filter((i) => i.hash === clicked.hash || i.thumbHash === clicked.hash);
+  if (mine.length === 0) return { why: 'preview is not of this post' };
+  let chosen = null;
+  if (isFeedCard) {
+    // a feed card: the post's declared videos (every distinct file, by hash); its cover only for a post without a video
+    const videos = [];
+    for (const raw of declared.videos) {
+      const v = parsePawchiveMediaUrl(raw, post.url);
+      if (!v) return { why: 'unusable video' };
+      if (!videos.some((x) => x.hash === v.hash)) videos.push(v);
+    }
+    // several videos: the resolver saves each one separately (resolvePawchiveOriginalPlan)
+    if (videos.length > 1) return { chosen: videos[0], videos };
+    if (videos.length === 1) chosen = videos[0];
+    else if (mine.length === 1) chosen = parsePawchiveMediaUrl(mine[0].url, post.url);
+  } else if (mine.length === 1) {
+    // a thumbnail inside the post page itself: that image
+    chosen = parsePawchiveMediaUrl(mine[0].url, post.url);
+  }
+  return chosen ? { chosen } : { why: 'ambiguous' };
+}
+
+/**
  * The Pawchive resolver of resolveOriginalMediaPlan. Handles exactly the selections whose clicked address is a Pawchive thumbnail or original:
  * returns undefined when the selection is not one (the generic pipeline continues), otherwise a verified original plan, an error plan (HTTP 401/403/404/429
  * of the post page or the original) or null (refused: ambiguous, mismatched, foreign, malformed, unusable). It never returns the clicked thumbnail.
  */
-async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl }) {
+async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPostVideos = false }) {
   const clicked = parsePawchiveMediaUrl(srcUrl, pageUrl || undefined);
   if (!clicked) return undefined;
   const refuse = (why) => { console.warn('[Image Saver] Pawchive: сохранение оригинала отклонено (' + why + '):', sanitizeUrlForLog(srcUrl)); return null; };
@@ -7854,23 +7530,59 @@ async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl }) {
   if (!fetched.html) return refuse('post page');
   const declared = parsePawchivePostHtml(fetched.html, post);
   if (!declared) return refuse('post identity or declarations');
-  // the selected preview must be one of this post's own images (its cover)
-  const mine = declared.images.filter((i) => i.hash === clicked.hash || i.thumbHash === clicked.hash);
-  if (mine.length === 0) return refuse('preview is not of this post');
-
-  let chosen = null;
-  if (linkedPost) {
-    // a feed card: the post's single video; its cover only for a post without a video
-    if (declared.videos.length > 1) return refuse('several videos');
-    if (declared.videos.length === 1) chosen = parsePawchiveMediaUrl(declared.videos[0], post.url);
-    else if (mine.length === 1) chosen = parsePawchiveMediaUrl(mine[0].url, post.url);
-  } else if (mine.length === 1) {
-    // a thumbnail inside the post page itself: that image
-    chosen = parsePawchiveMediaUrl(mine[0].url, post.url);
+  const picked = selectPawchivePostOriginal(clicked, post, Boolean(linkedPost), declared);
+  if (!picked.chosen) return refuse(picked.why);
+  if (picked.videos) {
+    // an explicit save of a feed preview of a post with several videos saves them all, each as its own item (savePawchivePostVideos); a caller that
+    // cannot do that gets the refusal, never one arbitrary video
+    if (!allowPostVideos) return refuse('several videos');
+    return { pawchivePostVideos: { postUrl: post.url, videos: picked.videos.map((v) => v.url) } };
   }
-  if (!chosen) return refuse('ambiguous');
-  const out = await probePawchiveOriginal(chosen, post.url, srcUrl);
+  const out = await probePawchiveOriginal(picked.chosen, post.url, srcUrl);
   return out.plan || out.fail || refuse('original');
+}
+
+// The explicit save of a feed preview whose post declares several videos: every distinct video (by hash) is its own item. Items are verified one after
+// the other (the shared probe, then the shared verify/download/feedback path of a single save), paced, at most PAWCHIVE_POST_VIDEOS_MAX of them; an item that
+// fails or is refused is reported as its own failed operation and never touches the others. After HTTP 429 no further request is made: every remaining item
+// is reported as a rate-limited failed operation. A repeated declaration is saved once (the selector keeps one entry per hash).
+const PAWCHIVE_POST_VIDEOS_MAX = 20;
+let PAWCHIVE_POST_VIDEOS_PACE_MS = 1000;
+const pawchiveItemInfos = new WeakSet();
+
+async function pawchiveItemFailed(info, tab, url, failure) {
+  const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: url, site: fbSiteOf(info.pageUrl || tab?.url, url) });
+  await fbFail(op, failure);
+  await fbBadgeReporter(op)(failure.code === 'RATE_LIMIT' ? 'RATE' : 'ERR', failure.code === 'RATE_LIMIT' ? '#f59e0b' : '#ef4444');
+}
+
+async function savePawchivePostVideos(batch, info, tab) {
+  const urls = batch.videos.slice(0, PAWCHIVE_POST_VIDEOS_MAX);
+  const tally = { items: batch.videos.length, verified: 0, refused: 0, rateLimited: 0, skipped: batch.videos.length - urls.length };
+  let limited = false;
+  for (let i = 0; i < urls.length; i++) {
+    const url = urls[i];
+    if (limited) {
+      tally.rateLimited++;
+      await pawchiveItemFailed(info, tab, url, { stage: 'resolve', code: 'RATE_LIMIT', status: 429 });
+      continue;
+    }
+    if (i > 0 && PAWCHIVE_POST_VIDEOS_PACE_MS > 0) await new Promise((r) => setTimeout(r, PAWCHIVE_POST_VIDEOS_PACE_MS));
+    const parsed = parsePawchiveMediaUrl(url, batch.postUrl);
+    const out = parsed && parsed.kind === 'file' ? await probePawchiveOriginal(parsed, batch.postUrl, url) : { refused: true };
+    const plan = out.plan || out.fail || null;
+    if (!plan) {
+      tally.refused++;
+      await pawchiveItemFailed(info, tab, url, { stage: 'verify', code: 'NO_MEDIA' });
+      continue;
+    }
+    if (out.fail && out.fail._rateLimited === true) { limited = true; tally.rateLimited++; } else if (out.plan) tally.verified++; else tally.refused++;
+    const itemInfo = { menuItemId: 'save-image-item', srcUrl: url, pageUrl: info.pageUrl, frameId: info.frameId, pawchivePlan: plan };
+    pawchiveItemInfos.add(itemInfo);
+    await onContextMenuClicked(itemInfo, tab);
+  }
+  if (batch.videos.length > urls.length) await pawchiveItemFailed(info, tab, batch.postUrl, { stage: 'resolve', code: 'NO_MEDIA' });
+  console.info('[Image Saver] Pawchive post videos:', tally);
 }
 
 /**
@@ -7878,10 +7590,11 @@ async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl }) {
  * Supports Candidate Groups with variant failover policies, provenance scoring, and deferred validation.
  */
 async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg, fifthArg) {
-  let srcUrl, pageUrl, linkUrl, tabId, domMeta, frameId;
+  let srcUrl, pageUrl, linkUrl, tabId, domMeta, frameId, allowPostVideos = false;
 
   if (typeof firstArg === 'object' && firstArg !== null) {
     frameId = firstArg.frameId;
+    allowPostVideos = firstArg.allowPostVideos === true;
     srcUrl = firstArg.srcUrl;
     pageUrl = firstArg.pageUrl;
     linkUrl = firstArg.linkUrl;
@@ -8066,7 +7779,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
   }
 
   // SITE-PAWCHIVE-01: a Pawchive thumbnail or original is resolved by the post that declares it (no speculative probes, no thumbnail fallback)
-  const pawchivePlan = await resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl });
+  const pawchivePlan = await resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPostVideos });
   if (pawchivePlan !== undefined) return pawchivePlan;
 
   // 1. Initial source URL
@@ -11075,7 +10788,7 @@ async function onContextMenuClicked(info, tab) {
     // bypasses it, and no provider recovery, probe or download runs before it passes.
     const claimsMediaLink = !rawImageUrl && hasMediaAssociation('', rawLinkUrl);
     // An inline Reddit click (UX-11-RD) was proven by the document right before this call; a gesture capture, possibly of another tile, must not decide it.
-    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '' });
+    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || pawchiveItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '' });
     if (owner === 'refused' || owner === 'preview') {
       console.warn(owner === 'preview'
         ? '[Image Saver] The selected video is a seek preview, not the media of the post: save refused without requests'
@@ -11290,6 +11003,12 @@ async function onContextMenuClicked(info, tab) {
         }
       }
 
+      // One video of a Pawchive post whose videos are all saved: the batch owner already proved the post and verified this original
+      if (pawchiveItemInfos.has(info) && info.pawchivePlan) {
+        mediaPlan = info.pawchivePlan;
+        targetMediaUrl = mediaPlan.primaryUrl;
+      }
+
       // Fallback: If DOM metadata is absent or invalid, execute standard resolver search
       if (!targetMediaUrl || !mediaPlan) {
         if (isVideo) {
@@ -11328,10 +11047,18 @@ async function onContextMenuClicked(info, tab) {
             pageUrl: info.pageUrl,
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
-            frameId: info.frameId
+            frameId: info.frameId,
+            allowPostVideos: true
           });
           targetMediaUrl = mediaPlan?.primaryUrl;
         }
+      }
+
+      if (mediaPlan?.pawchivePostVideos) {
+        // the user chose to save a feed preview of a post with several videos: every distinct declared video is a separate item with its own operation
+        await fbDiscard(op);
+        await savePawchivePostVideos(mediaPlan.pawchivePostVideos, info, tab);
+        return;
       }
 
       const tProfilerPlan = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
@@ -12227,7 +11954,6 @@ if (typeof globalThis !== 'undefined') {
   globalThis.resolveTwitterVideoThumb = resolveTwitterVideoThumb;
   globalThis.resolveTwitterVideoThumbUrl = resolveTwitterVideoThumbUrl;
   globalThis.classifyMediaTarget = classifyMediaTarget;
-  globalThis.getMediaMenuTitle = getMediaMenuTitle;
   globalThis.isDanbooruDomain = isDanbooruDomain;
   globalThis.isValidDanbooruMetadata = isValidDanbooruMetadata;
   globalThis.extractMd5FromUrl = extractMd5FromUrl;

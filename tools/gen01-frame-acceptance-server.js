@@ -294,7 +294,7 @@ ${[1, 2, 3, 4].map((k) => `<img src="${ORIGIN}/b/gal-${k}.png" width="200" heigh
 <p>Open each saved video: C1/C2 must carry audio, C3 must not. Not covered (pending, out of scope): blob/MSE, HLS/DASH, DRM players.</p>`),
     '/css.html': page('GEN-01 CSS and overlay', `<style>.cbox{width:240px;height:160px;background-size:cover;border:1px solid #888}.ovc{position:relative;width:240px;height:160px}.ovc img{display:block;margin:0;border:0;width:240px;height:160px}.ov{position:absolute;left:0;top:0;width:240px;height:160px;display:block}.ovc .cbox{border:0}</style>
 <h3>CSS backgrounds and simple overlays</h3>
-<p>These have no image/video context in the native menu. Right-click, choose <b>Image Saver: Save image</b>. Reload the extension and refresh this page first (the capture script is injected at page load).</p>
+<p>These have no image/video context in the native menu. Right-click, choose <b>Image Saver: Save media</b>. Reload the extension and refresh this page first (the capture script is injected at page load).</p>
 <div class="box"><b>CSS1/CSS2 two CSS cards (neighbours)</b><div class="row">
 <div><div class="cbox" style="background-image:url(${ORIGIN}/css/card-a.png)"></div>card A</div>
 <div><div class="cbox" style="background-image:url(${ORIGIN}/css/card-b.png)"></div>card B</div></div></div>
@@ -369,7 +369,7 @@ ${[1, 2, 3, 4].map((k) => `<img src="${ORIGIN}/b/gal-${k}.png" width="200" heigh
 <tr><td>GD5</td><td>the picture above the video</td><td>plain.png (purple), never video-a.mp4</td><td>video-a.mp4</td></tr>
 <tr><td>GD6</td><td>the empty area or page margin</td><td>save item <b>absent</b> (never greyed out); if chosen: <b>no file</b>, ERR</td><td>any download</td></tr>
 <tr><td>GD7</td><td>the card (it disappears about 0.4 s later; wait at least one second, then choose Save)</td><td><b>no file</b>, ERR</td><td>card-a.png or any other file</td></tr>
-<tr><td>GD8</td><td>the picture (it disappears about 0.4 s later; wait at least one second, then choose Save image)</td><td><b>no file</b>, ERR, no request for plain.png</td><td>plain.png</td></tr>
+<tr><td>GD8</td><td>the picture (it disappears about 0.4 s later; wait at least one second, then choose Save media)</td><td><b>no file</b>, ERR, no request for plain.png</td><td>plain.png</td></tr>
 <tr><td>GD9</td><td>the link text (it disappears about 0.4 s later; wait at least one second, then choose Save)</td><td><b>no file</b>, ERR, no request for ov-full-two.png</td><td>ov-full-two.png</td></tr></table>
 <p>The server console must show no request for a file a case calls wrong. Not covered here: provider pages (Reddit, X, Pixiv); the shared guard is the same on every host.</p>
 <script>
@@ -445,7 +445,7 @@ ${[1, 2, 3, 4].map((k) => `<img src="${ORIGIN}/b/gal-${k}.png" width="200" heigh
 <tr><td>DL10</td><td>the video</td><td><b>no file</b>, ERR (the existing rule: only the MP4 signature admits an extensionless generic-binary URL, so WebM there is refused conservatively; the console shows one Range 0-511 request)</td><td>any file, a poster</td></tr>
 <tr><td>DL11, DL12</td><td>the video</td><td><b>no file</b>, ERR</td><td>any file, a poster</td></tr></table>`),
     '/menu.html': page('GEN-01 menu state', `<style>.cbox{width:240px;height:160px;background-size:cover;border:1px solid #888}x-empty{display:block;padding:40px;border:1px dashed #aaa}</style>
-<h3>MENU: absent outside media, and the label follows the current click</h3>
+<h3>MENU: absent outside media, one stable title everywhere</h3>
 <p>Reload the extension and refresh this page. Outside a picture, GIF or video the save item must be <b>absent</b> from the menu (not greyed out). Chrome has no event before its menu opens, so the very first menu right after a fast move may still show the previous state (best effort); pause the pointer for half a second before the right-click. Then run the <b>sequence</b> below without reloading: MS2, MS1, MS3, MS4, MS1.</p>
 <div class="row">
 <div class="box"><b>MS1 ordinary image</b><img src="/plain.png" width="240" height="160" alt=""></div>
@@ -459,15 +459,15 @@ ${[1, 2, 3, 4].map((k) => `<img src="${ORIGIN}/b/gal-${k}.png" width="200" heigh
 <div class="box"><b>MS9 text link straight to a GIF file</b><a href="/anim-top.gif">Download the animation (a file)</a></div>
 <div class="box"><b>MS10 background card (type of its asset not known)</b><div class="cbox" style="background-image:url(/css/card-a.png)"></div></div>
 <table><tr><th>#</th><th>Right-click</th><th>Expected</th><th>Wrong</th></tr>
-<tr><td>MS1</td><td>the image</td><td>one item "Image Saver: Save image"; plain.png</td><td>a GIF/video label, a submenu</td></tr>
-<tr><td>MS2</td><td>the GIF</td><td>one item "Image Saver: Save GIF"; anim-top.gif (native, 3 frames)</td><td>"Save image", a still frame</td></tr>
-<tr><td>MS3</td><td>the video</td><td>one item "Image Saver: Save video"; video-a.mp4</td><td>"Save GIF", a poster</td></tr>
-<tr><td>MS4, MS7, MS8</td><td>the empty area, the sentence, the link text</td><td><b>no Image Saver item</b> in the menu</td><td>a greyed-out item, or an item with the previous label</td></tr>
+<tr><td>MS1</td><td>the image</td><td>one item "Image Saver: Save media"; plain.png</td><td>any other title, a submenu</td></tr>
+<tr><td>MS2</td><td>the GIF</td><td>one item "Image Saver: Save media"; anim-top.gif (native, 3 frames)</td><td>any other title, a still frame</td></tr>
+<tr><td>MS3</td><td>the video</td><td>one item "Image Saver: Save media"; video-a.mp4</td><td>any other title, a poster</td></tr>
+<tr><td>MS4, MS7, MS8</td><td>the empty area, the sentence, the link text</td><td><b>no Image Saver item</b> in the menu</td><td>a greyed-out item</td></tr>
 <tr><td>MS5</td><td>inside the dashed empty container</td><td><b>no Image Saver item</b></td><td>any item (an empty container is not media)</td></tr>
-<tr><td>MS6</td><td>the video inside the shadow root</td><td>one item "Image Saver: Save video"; video-b.webm</td><td>no item (a real shadow-DOM player is a target)</td></tr>
-<tr><td>MS9</td><td>the link text</td><td>one item "Image Saver: Save GIF"; anim-top.gif</td><td>no item, "Save image"</td></tr>
-<tr><td>MS10</td><td>the card</td><td>one item "Image Saver: Save media under cursor" (neutral: the asset's type is unknown); card-a.png</td><td>"Save image", "Save GIF"</td></tr>
-<tr><td>sequence</td><td>MS2, MS1, MS3, MS4, MS1 without reload</td><td>Save GIF, Save image, Save video, absent, Save image</td><td>any label from an earlier step</td></tr></table>
+<tr><td>MS6</td><td>the video inside the shadow root</td><td>one item "Image Saver: Save media"; video-b.webm</td><td>no item (a real shadow-DOM player is a target)</td></tr>
+<tr><td>MS9</td><td>the link text</td><td>one item "Image Saver: Save media"; anim-top.gif</td><td>no item, any other title</td></tr>
+<tr><td>MS10</td><td>the card</td><td>one item "Image Saver: Save media" (the type of the asset is decided by the save, after the click); card-a.png</td><td>any other title</td></tr>
+<tr><td>sequence</td><td>MS2, MS1, MS3, MS4, MS1 without reload</td><td>Save media, Save media, Save media, absent, Save media</td><td>any other title</td></tr></table>
 <script>
 (function () {
   var e = document.getElementById('ms5');
@@ -734,7 +734,7 @@ async function selfCheck() {
   check('GUARD page: the index links to it', text('/').includes('/guard.html'));
   const menuPage = text('/menu.html');
   check('MENU page: ordinary image, GIF, video, empty area, empty and real shadow containers, text, links and a card; relative URLs only', ['MS1', 'MS2', 'MS3', 'MS4', 'MS5', 'MS6', 'MS7', 'MS8', 'MS9', 'MS10'].every((k) => menuPage.includes('<b>' + k + ' ')) && !/(?:src|href)="https?:/i.test(menuPage) && menuPage.includes('/anim-top.gif') && menuPage.includes('/v/video-b.webm') && /attachShadow\(\{ mode: 'open' \}\)\.innerHTML = '<span>/.test(menuPage) && /innerHTML = '<video controls/.test(menuPage));
-  check('MENU page: the index links to it and the sequence is listed', text('/').includes('/menu.html') && menuPage.includes('Save GIF, Save image, Save video, absent, Save image'));
+  check('MENU page: the index links to it and the sequence is listed', text('/').includes('/menu.html') && menuPage.includes('Save media, Save media, Save media, absent, Save media'));
   check('CSS page: a card with a background and a caption inside it (ancestor background case)', /css\/card-b\.png\);padding:8px"><span/.test(cssPage));
   let cssMissing = [];
   let cssUrls = 0;
