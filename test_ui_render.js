@@ -1,4 +1,4 @@
-// test_ui_render.js - rendering tests of the extension pages (UX-08): the real React components (shadcn/ui + Skiper UI parts)
+// Rendering tests of the real extension pages (React, shadcn/ui and Radix UI).
 // bundled from ui/src and run in a jsdom window with the real lib/feedback.js and lib/folder_path.js and a mocked Chrome.
 // Needs the UI dev dependencies:  npm ci --prefix ui   (jsdom, vite, react). Exit code 3 means they are missing.
 // Evidence boundary: jsdom - roles, names, states, events and text are checked; there is no layout, no real focus ring or
@@ -287,7 +287,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(/Сохранение/.test(pend.textContent) && p.qa('svg.animate-spin', pend).length === 1 && p.qa('svg.animate-spin', pend)[0].getAttribute('class').includes('motion-reduce:animate-none'), 'R3e: a pending result shows a spinner that stops under reduced motion');
     await p.click(p.rows()[3].querySelector('button')); // the unnamed failure
     const report = p.q('[data-slot="report"]');
-    assert(report && /Автоматический повтор не выполняется/.test(report.textContent) && /не отправляется автоматически/.test(report.textContent), 'R3f: a failed result shows the manual-retry boundary and the no-submission promise');
+    assert(report && /одна попытка возобновить/.test(report.textContent) && /не отправляется автоматически/.test(report.textContent), 'R3f: a failed result shows the bounded native resume and the no-submission promise');
     const preview = p.q('textarea[aria-label="Предпросмотр отчёта"]');
     assert(preview && preview.readOnly && preview.value.startsWith('Image Saver bug report') && /browser: Chromium 126/.test(preview.value), 'R3g: the report preview is read-only and carries the browser only when reliable');
     await p.unmount();
@@ -516,7 +516,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const ids = p.qa('[id]').map((n) => n.id);
     assert(new Set(ids).size === ids.length, 'R9d: element ids are unique');
     assert(p.qa('h1').length === 1 && p.qa('h2').length >= 4, 'R9e: one page heading and a heading per section');
-    assert(p.q('[data-slot="credits"]') && /shadcn\/ui/.test(p.q('[data-slot="credits"]').textContent) && /Skiper UI/.test(p.q('[data-slot="credits"]').textContent), 'R9f: the interface credits shadcn/ui and Skiper UI');
+    assert(p.q('[data-slot="credits"]') && /shadcn\/ui/.test(p.q('[data-slot="credits"]').textContent) && /Radix UI/.test(p.q('[data-slot="credits"]').textContent), 'R9f: the interface credits its current component libraries');
     await p.unmount();
   }
 
@@ -697,7 +697,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(p.win.location.hash === '#updates' && !p.q('#settingsSaveBar'), 'R12b: Updates deep link and tab do not use the unrelated save bar');
     assert(p.calls.releaseRequests.length === 1 && /Доступна версия 2.0.0.21/.test(p.q('[data-slot="update-status"]').textContent), 'R12c: entering Updates performs a release check and renders the available version');
     const link = p.q('[data-slot="updates"] a');
-    assert(link.href === 'https://github.com/xhthc/image-saver-extension/releases/tag/v2.0.0.21' && link.rel === 'noopener noreferrer' && !p.text().includes('evil'), 'R12d: release link stays in the fixed repository; remote HTML is not rendered');
+    assert(link.href === 'https://github.com/xhthc/ImageSaver/releases/tag/v2.0.0.21' && link.rel === 'noopener noreferrer' && !p.text().includes('evil'), 'R12d: release link stays in the fixed repository; remote HTML is not rendered');
     assert(p.q('#releaseChannelSelect').getAttribute('role') === 'combobox' && p.q('label[for="releaseChannelSelect"]'), 'R12e: release channel has an accessible label');
     assert(/той же папке/.test(p.text()) && /не скачивает и не устанавливает/.test(p.text()), 'R12f: panel explains manual replacement at the same path and reload');
     await p.mousedown(p.tabs()[0]); await p.mousedown(p.tabs()[4]);

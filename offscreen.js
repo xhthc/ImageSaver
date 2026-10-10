@@ -916,20 +916,20 @@ function sanitizeUrlForLog(input) {
   }
   if (typeof input !== 'string') return input;
 
-  const SENSITIVE_KEY_RE = /^(?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|jsc_token|session|bearer)$/i;
+  const SENSITIVE_KEY_RE = /^(?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|a|jsc_token|session|bearer)$/i;
 
   try {
     const parsed = new URL(input);
     let modified = false;
     for (const [key, value] of parsed.searchParams.entries()) {
-      if (SENSITIVE_KEY_RE.test(key) || /token|secret|auth|signature/i.test(key)) {
+      if (SENSITIVE_KEY_RE.test(key) || /token|secret|auth|signature|credential|policy|key-pair-id|hdnts|hdnea/i.test(key)) {
         parsed.searchParams.set(key, '[REDACTED]');
         modified = true;
       }
     }
     return modified ? parsed.toString() : input;
   } catch (_) {
-    return input.replace(/([?&](?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|jsc_token)=)[^&]*/gi, '$1[REDACTED]');
+    return input.replace(/([?&](?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|a|jsc_token|session|bearer|[^?&=]*(?:credential|policy|key-pair-id|hdnts|hdnea)[^?&=]*)=)[^&]*/gi, '$1[REDACTED]');
   }
 }
 
@@ -937,6 +937,7 @@ const GIF_CONVERSION_LIMITS = {
   maxDurationSec: 30.0,
   maxFrames: 150,
   maxDimension: 640,
+  maxInputBytes: 50 * 1024 * 1024,
   maxSizeBytes: 15 * 1024 * 1024, // 15 MB
   totalTimeoutMs: 45000 // 45 seconds total operation budget
 };
@@ -1013,6 +1014,8 @@ async function convertMp4VideoToGif(mediaUrl, options = {}, providerName = 'x') 
   let videoBlobUrl = null;
   let video = null;
   let canvas = null;
+  let response = null;
+  let inputReader = null;
 
   try {
     // 1. Direct synthetic frames support (for unit tests / mock environment)
@@ -1071,12 +1074,26 @@ async function convertMp4VideoToGif(mediaUrl, options = {}, providerName = 'x') 
     // 2. Fetch video media
     console.log(`[Offscreen] Fetching ${providerName === 'reddit' ? 'Reddit animation' : 'tweet_video'} for GIF conversion:`, sanitizeUrlForLog(mediaUrl));
     const resp = await fetch(mediaUrl, { signal: controller.signal });
+    response = resp;
     if (!resp.ok) {
       const err = new Error(`Failed to fetch video: HTTP ${resp.status}`);
       err.status = resp.status;
       throw err;
     }
-    const blob = await resp.blob();
+    if (Number(resp.headers.get('content-length')) > GIF_CONVERSION_LIMITS.maxInputBytes) throw new Error('SIZE_EXCEEDED: GIF input limit is50MiB');
+    if (!resp.body?.getReader) throw new Error('ReadableStream required for bounded GIF input');
+    inputReader = resp.body.getReader();
+    const chunks = [];
+    let inputSize = 0;
+    while (true) {
+      if (controller.signal.aborted) throw new Error('CONVERSION_CANCELLED');
+      const { done, value } = await inputReader.read();
+      if (done) break;
+      inputSize += value.byteLength;
+      if (inputSize > GIF_CONVERSION_LIMITS.maxInputBytes) throw new Error('SIZE_EXCEEDED: GIF input limit is50MiB');
+      chunks.push(value);
+    }
+    const blob = new Blob(chunks, { type: 'video/mp4' });
     if (!blob || blob.size <= 0) {
       throw new Error('Received empty video body (size 0)');
     }
@@ -1292,7 +1309,10 @@ async function convertMp4VideoToGif(mediaUrl, options = {}, providerName = 'x') 
       duration: origDuration
     };
   } finally {
+    controller.abort();
     clearTimeout(timeoutId);
+    if (inputReader) { try { await inputReader.cancel(); } catch (_) {} }
+    else await closeResponseBody(response);
     if (onExternalAbort && options?.signal) {
       try { options.signal.removeEventListener('abort', onExternalAbort); } catch (_) {}
     }

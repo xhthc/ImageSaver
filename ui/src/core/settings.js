@@ -69,6 +69,7 @@ export function createSettings(deps) {
   }
 
   async function load() {
+    store.setState({ loaded: false });
     try {
       const data = await chromeApi.storage.local.get(DEFAULTS);
       store.setState({
@@ -78,12 +79,13 @@ export function createSettings(deps) {
         igShareHost: cleanHost('igShareHost', data.igShareHost),
         ttShareHost: cleanHost('ttShareHost', data.ttShareHost),
         youtubeShareHost: cleanHost('youtubeShareHost', data.youtubeShareHost),
+        loaded: true,
+        status: { text: '', type: '' },
       });
     } catch (error) {
       console.error('[Image Saver Popup] Ошибка загрузки настроек:', error);
-      showMessage('Ошибка загрузки настроек', 'error');
+      store.setState({ status: { text: 'Ошибка загрузки настроек. Перезагрузите страницу, чтобы повторить чтение.', type: 'error' } });
     }
-    store.setState({ loaded: true });
     // The notification preference: unreadable storage keeps the documented default (on) and says so.
     try {
       const prefs = await chromeApi.storage.local.get({ notifySuccess: true });
@@ -101,6 +103,7 @@ export function createSettings(deps) {
 
   async function save() {
     const s = store.getState();
+    if (!s.loaded || s.saving) return false;
     const { root: cleanFolder, changed: folderChanged, error: folderError } = FolderPath.normalizeRoot(s.subfolder);
     if (folderError) {
       // Excessive input is rejected explicitly: nothing is saved and nothing is silently shortened.

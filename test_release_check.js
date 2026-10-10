@@ -39,6 +39,8 @@ const { pathToFileURL } = require('node:url');
     assert.throws(() => selectRelease({}, 'stable'), /invalid/);
   });
   await test('Response URLs/HTML never navigate or persist; anonymous request uses fixed repository', async () => {
+    assert.equal(RELEASES_API, 'https://api.github.com/repos/xhthc/ImageSaver/releases?per_page=100');
+    assert.equal(RELEASES_URL, 'https://github.com/xhthc/ImageSaver/releases');
     const h = harness({ releases: [release('v2.0.0.21', false, { html_url: 'https://evil.test', body: '<script>evil()</script>', assets: [{ browser_download_url: 'https://evil.test' }] })] });
     const u = h.make(); await u.check();
     assert.equal(h.requests[0].url, RELEASES_API);
@@ -102,8 +104,14 @@ const { pathToFileURL } = require('node:url');
     assert.match(u.store.getState().notice, /Не удалось сохранить результат/);
   });
   await test('Future cache timestamp never suppresses checking after clock rollback', async () => {
-    const h = harness({ local: { imageSaverReleaseCheckV1: { channel: 'stable', attemptedAt: Number.MAX_SAFE_INTEGER, checkedAt: Number.MAX_SAFE_INTEGER, release: null } } });
+    const h = harness({ local: { imageSaverReleaseCheckV2: { channel: 'stable', attemptedAt: Number.MAX_SAFE_INTEGER, checkedAt: Number.MAX_SAFE_INTEGER, release: null } } });
     await h.make().check(); assert.equal(h.requests.length, 1);
+  });
+  await test('Cached releases from the previous repository are ignored', async () => {
+    const h = harness({ local: { imageSaverReleaseCheckV1: { channel: 'stable', attemptedAt: 1700000000000, checkedAt: 1700000000000, release: release('v9') } } });
+    const u = h.make(); await u.check();
+    assert.equal(h.requests.length, 1); assert.equal(u.store.getState().release, null);
+    assert.ok(h.local.imageSaverReleaseCheckV2);
   });
   console.log(`Release checks: ${passed}/${passed} passed.`);
 })().catch((error) => { console.error(error); process.exitCode = 1; });

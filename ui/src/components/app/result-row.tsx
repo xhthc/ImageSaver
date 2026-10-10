@@ -11,7 +11,7 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/skiper/tooltip"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PENDING_STATES, formatDateTime, formatTime, rowParts } from "@/core/present.js"
 import { cn } from "@/lib/utils"
 import { ResultDetails, type DetailsEnv } from "@/components/app/result-details"

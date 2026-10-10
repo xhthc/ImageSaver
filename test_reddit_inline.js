@@ -4221,10 +4221,10 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       if (spec && spec.throws) throw spec.throws;
       const status = spec && spec.status !== undefined ? spec.status : 200;
       const text = spec && spec.text !== undefined ? spec.text : JSON.stringify(spec && spec.body !== undefined ? spec.body : {});
-      return { ok: status >= 200 && status < 300, status, headers: { get: (h) => (h.toLowerCase() === 'content-length' && !(spec && spec.noLength) ? (spec && spec.length !== undefined ? String(spec.length) : String(text.length)) : null) }, text: async () => text };
+      return { ok: status >= 200 && status < 300, status, headers: { get: (h) => (h.toLowerCase() === 'content-length' && !(spec && spec.noLength) ? (spec && spec.length !== undefined ? String(spec.length) : String(text.length)) : null) }, body: new Blob([text]).stream() };
     };
     const context = vm.createContext({
-      document: doc, window: win, location: win.location, fetch: frameFetch, AbortController, setTimeout, clearTimeout,
+      document: doc, window: win, location: win.location, fetch: frameFetch, TextDecoder, AbortController, setTimeout, clearTimeout,
       chrome: { runtime: { onMessage: { addListener: (fn) => listeners.push(fn) }, sendMessage: async () => ({}) } },
       console: { log() {}, warn() {}, info() {}, error() {} }, URL, Date, Math, Set, Map, JSON, Array, Object, Number, String, Boolean, RegExp, Promise, encodeURIComponent
     });

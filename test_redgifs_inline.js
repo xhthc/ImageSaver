@@ -171,14 +171,14 @@ function makeWorld({ url = 'https://www.redgifs.com/niches/ecchi-anime', docId =
     u = String(u);
     world.fetchCalls.push(u);
     if (onApi) { const r = onApi(u, world.fetchCalls.length); if (r && typeof r.then === 'function') await r; }
-    const reply = (b) => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(b) });
+    const reply = (b) => ({ ok: true, status: 200, headers: { get: () => null }, body: new Blob([JSON.stringify(b)]).stream() });
     if (u.endsWith('v2/auth/temporary')) return reply({ token: TOKEN });
     const id = decodeURIComponent(u.split('/v2/gifs/')[1] || '');
     return reply({ gif: world.gifs[id] });
   };
   world.ctx = vm.createContext({
     window: win, document: doc, chrome, fetch: fetchImpl, console: { log() {}, warn() {}, error() {} },
-    URL, Array, Object, Number, String, Boolean, Set, Map, Uint8Array, Promise, JSON, Math, RegExp, Error, Symbol, AbortController,
+    URL, TextDecoder, Array, Object, Number, String, Boolean, Set, Map, Uint8Array, Promise, JSON, Math, RegExp, Error, Symbol, AbortController,
     crypto: webcrypto,
     Date: { now: () => world.now },
     requestAnimationFrame: (fn) => { const id = world.timerSeq++; world.timers.push({ id, at: world.now + 16, fn, every: 0, raf: true }); return id; },

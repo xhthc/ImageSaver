@@ -347,7 +347,7 @@ function createIntegratedEnvironment({
         ok: true,
         status: 200,
         headers: { get: (h) => h.toLowerCase() === 'content-type' ? 'video/mp4' : '10240' },
-        blob: async () => new Blob([fetchBody], { type: 'video/mp4' })
+        body: new Blob([fetchBody], { type: 'video/mp4' }).stream()
       };
     }
   };

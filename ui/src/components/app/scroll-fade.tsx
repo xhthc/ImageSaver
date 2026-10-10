@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
-import { ProgressiveBlur } from "@/components/skiper/progressive-blur"
 import { cn } from "@/lib/utils"
 
 /**
  * A bounded, natively scrolling region (keyboard and wheel scrolling stay the browser's own). While more content is
- * hidden below the visible part, a Skiper UI progressive blur fades the bottom edge; it never intercepts the pointer.
+ * hidden below the visible part, a CSS gradient fades the bottom edge without intercepting the pointer.
  */
 export function ScrollFade({
   children,
@@ -45,7 +44,7 @@ export function ScrollFade({
       >
         {children}
       </div>
-      {more ? <ProgressiveBlur position="bottom" height="28px" blurAmount="2px" /> : null}
+      {more ? <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-7 bg-gradient-to-t from-background to-transparent" /> : null}
     </div>
   )
 }

@@ -223,7 +223,7 @@ function makeChrome(state) {
     assert(present.hasReport(noMedia) && !present.hasReport(other) && present.hasReport(rec({ state: 'interrupted', output: {}, failure: failure('download', 'download_interrupted') })) && !present.hasReport(rec({ state: 'cancelled', output: {}, failure: failure('save', 'cancelled') })), '24g: only failed and interrupted results offer the retry hint and the report');
     const rep = present.buildReportText(FB, noMedia, 'save fails <b>bold</b> https://x.test/?token=NOTE123', { version: '2.0.0', browser: 'Chromium 126' });
     assert(rep.startsWith('Image Saver bug report') && /browser: Chromium 126/.test(rep) && /user_notes: save fails/.test(rep) && !/NOTE123|https?:/.test(rep), '24h: the report carries the browser only when reliable and redacts the notes');
-    assert(/Автоматический повтор не выполняется/.test(present.RETRY_HINT) && /не отправляется автоматически/.test(present.REPORT_PRIVACY), '24i: the manual retry boundary and the no-submission promise are stated');
+    assert(/одна попытка возобновить/.test(present.RETRY_HINT) && /не отправляется автоматически/.test(present.REPORT_PRIVACY), '24i: the bounded native resume and the no-submission promise are stated');
     let clip = null;
     await present.copyText('abc', { clipboard: { writeText: async (t) => { clip = t; } } });
     let denied = false;
@@ -374,11 +374,17 @@ function makeChrome(state) {
     assert(await a.settings.save() === false && /Не удалось сохранить настройки/.test(st().status.text) && st().saving === false, '26i3: a storage failure on save is reported and releases the button');
     a.state.failSet = false;
 
-    const unreadable = createSettings({ chrome: makeChrome({ session: [], history: [], local: {}, failGet: true }).chrome, FolderPath, setTimeout: () => 0, clearTimeout() {} });
+    const unreadableState = { session: [], history: [], local: { subfolder: 'MyMedia', xShareHost: 'fixupx.com' }, failGet: true };
+    const unreadableApi = makeChrome(unreadableState);
+    const unreadable = createSettings({ chrome: unreadableApi.chrome, FolderPath, setTimeout: () => 0, clearTimeout() {} });
     const origErr = console.error; console.error = () => {};
     await unreadable.load();
     console.error = origErr;
-    assert(unreadable.store.getState().notify.checked === true && /показано значение по умолчанию/.test(unreadable.store.getState().notify.error) && /Ошибка загрузки настроек/.test(unreadable.store.getState().status.text) && unreadable.store.getState().loaded === true, '26j: an unreadable preference shows the documented default and tells the user');
+    assert(unreadable.store.getState().notify.checked === true && /показано значение по умолчанию/.test(unreadable.store.getState().notify.error) && /Ошибка загрузки настроек/.test(unreadable.store.getState().status.text) && unreadable.store.getState().loaded === false, '26j: unreadable settings keep the form disabled and explain the failure');
+    assert(await unreadable.save() === false && unreadableApi.calls.localSets.length === 0 && unreadableState.local.subfolder === 'MyMedia', '26j2: a failed read cannot overwrite existing preferences with defaults');
+    unreadableState.failGet = false;
+    await unreadable.load();
+    assert(unreadable.store.getState().loaded && unreadable.store.getState().subfolder === 'MyMedia' && unreadable.store.getState().xShareHost === 'fixupx.com' && await unreadable.save(), '26j3: successful reloading restores existing settings and permits saving');
     const e3 = createHistory({ chrome: makeChrome({ session: [], history: [], local: { historyEnabled: 'true' } }).chrome, FB });
     await e3.start();
     assert(e3.store.getState().enabled === false, '26k: a malformed history preference is shown as off (opt-in preserved)');
@@ -697,7 +703,7 @@ function makeChrome(state) {
     assert(contrast([255, 255, 255], over(rgb(tok.destructive), 0.6, rgb(tok.card))) >= 4.5 && C('primary-foreground', 'destructive') >= 4.5, '30e: white text on the destructive badge/button (also at 60% opacity over a card) has contrast >= 4.5:1');
     assert(C('border', 'background') >= 1.3 && C('ring', 'background') >= 3, `30f: borders are visible and the focus ring has contrast >= 3:1 against the page (${C('ring', 'background').toFixed(2)})`);
     assert(/--danger/.test(css) && !/text-red-|text-destructive/.test(['quick-app', 'full-app', 'result-row', 'result-details', 'stats-card', 'settings-panels', 'history-panel', 'results-list'].map((n) => read(`ui/src/components/app/${n}.tsx`)).join('\n') + read('ui/src/components/ui/alert.tsx')), '30g: error text uses the checked danger colour, not the darker destructive fill');
-    assert(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*0\.01ms !important[\s\S]*transition-duration:\s*0\.01ms !important/.test(css) && /motion-reduce:animate-none/.test(read('ui/src/components/app/result-row.tsx')) && /motion-reduce:/.test(read('ui/src/components/skiper/tooltip.tsx')), '30h: animations and transitions are removed under prefers-reduced-motion (global rule plus explicit classes)');
+    assert(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*0\.01ms !important[\s\S]*transition-duration:\s*0\.01ms !important/.test(css) && /motion-reduce:animate-none/.test(read('ui/src/components/app/result-row.tsx')) && !/animate-|transition-/.test(read('ui/src/components/ui/tooltip.tsx')), '30h: reduced-motion rules cover animated controls; the tooltip has no motion');
     assert(/color-scheme:\s*dark/.test(css) && /@custom-variant dark/.test(css) && /<html lang="ru" class="dark">/.test(read('ui/popup.html')) && /<html lang="ru" class="dark">/.test(read('ui/quick.html')), '30i: both pages are explicitly dark with the Russian language set');
   }
 
@@ -916,6 +922,7 @@ function makeChrome(state) {
       clearTimeout: fakeClearTimeout
     };
     const sCtrl = createSettings(setDeps);
+    await sCtrl.load();
     await sCtrl.save();
     assert(scheduledCb !== null, '32a: showMessage scheduled status auto-clear timer');
     sCtrl.dispose();

@@ -1111,15 +1111,32 @@
     const headers = { Accept: 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
     const response = await fetch(PROVIDER_API + path, { method: 'GET', headers, credentials: 'omit', cache: 'no-store', signal });
-    if (!response || response.ok !== true) return { ok: false };
+    if (!response) return { ok: false };
     const declared = Number(response.headers && typeof response.headers.get === 'function' ? response.headers.get('content-length') : NaN);
-    if (Number.isFinite(declared) && declared > PROVIDER_MAX_BYTES) return { ok: false };
-    const text = await response.text();
-    if (typeof text !== 'string' || text.length > PROVIDER_MAX_BYTES) return { ok: false };
+    if (response.ok !== true || declared > PROVIDER_MAX_BYTES || !response.body?.getReader) {
+      try { await response.body?.cancel(); } catch (_) {}
+      return { ok: false };
+    }
+    const reader = response.body.getReader();
+    const chunks = [];
+    let size = 0;
     try {
-      return { ok: true, json: JSON.parse(text) };
+      while (true) {
+        if (signal?.aborted) return { ok: false };
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > PROVIDER_MAX_BYTES) return { ok: false };
+        chunks.push(value);
+      }
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+      return { ok: true, json: JSON.parse(new TextDecoder().decode(bytes)) };
     } catch (_) {
       return { ok: false };
+    } finally {
+      try { await reader.cancel(); } catch (_) {}
     }
   }
 

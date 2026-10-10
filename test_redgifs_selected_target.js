@@ -252,7 +252,7 @@ function createTestEnvironment(pageUrl = 'https://www.redgifs.com/watch/Impertur
       ok: true,
       status: 200,
       headers: { get: () => '100' },
-      text: async () => JSON.stringify({ token: 'mock-token' })
+      body: new Blob([JSON.stringify({ token: 'mock-token' })]).stream()
     };
   };
 
@@ -263,6 +263,8 @@ function createTestEnvironment(pageUrl = 'https://www.redgifs.com/watch/Impertur
     fetch: mockFetch,
     console: { log() {}, warn() {}, error() {} },
     URL,
+    TextDecoder,
+    AbortController,
     Date,
     Array,
     Object,
@@ -774,7 +776,7 @@ runTestAsync('F1 production listener and provider path: the unchanged blob playe
     env.ctx.fetch = async (url) => {
       env.fetchCalls.push({ url: String(url) });
       const body = String(url).endsWith('v2/auth/temporary') ? { token: 'synthetic-session-token' } : gif;
-      return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(body) };
+      return { ok: true, status: 200, headers: { get: () => null }, body: new Blob([JSON.stringify(body)]).stream() };
     };
     env.ctx.setLastContextmenuTarget(video, [video, env.body]);
     return { env, video };
@@ -1226,7 +1228,7 @@ const mediaOf = (name, suffix = '', ext = 'mp4') => `https://media.redgifs.com/$
 
 // Provider mock: the guest session, then the clip by id; hooks run on every request (a way to change the page during the lookup)
 function providerMock(env, gifs, { onRequest, status = 200 } = {}) {
-  const reply = (body) => ({ ok: status === 200, status, headers: { get: () => null }, text: async () => JSON.stringify(body) });
+  const reply = (body) => ({ ok: status === 200, status, headers: { get: () => null }, body: new Blob([JSON.stringify(body)]).stream() });
   env.ctx.fetch = async (url, opts) => {
     const u = String(url);
     env.fetchCalls.push({ url: u, opts });

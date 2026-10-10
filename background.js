@@ -1312,7 +1312,7 @@ function sanitizeUrlForLog(input) {
   }
   if (typeof input !== 'string') return input;
 
-  const SENSITIVE_KEY_RE = /^(?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|jsc_token|session|bearer)$/i;
+  const SENSITIVE_KEY_RE = /^(?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|a|jsc_token|session|bearer)$/i;
 
   try {
     const parsed = new URL(input);
@@ -1327,7 +1327,7 @@ function sanitizeUrlForLog(input) {
     return modified ? parsed.toString() : input;
   } catch (_) {
     // If not a full valid URL, fallback to regex replacement
-    return input.replace(/([?&](?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|jsc_token)=)[^&]*/gi, '$1[REDACTED]');
+    return input.replace(/([?&](?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|a|jsc_token|session|bearer|[^?&=]*(?:credential|policy|key-pair-id|hdnts|hdnea)[^?&=]*)=)[^&]*/gi, '$1[REDACTED]');
   }
 }
 
@@ -9115,43 +9115,60 @@ if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
  * as the download manager saves pre-fetched data locally without a secondary external network request.
  */
 async function fetchPixivImageAsDataUrl(targetImageUrl) {
-  console.log('[Image Saver] [Pixiv Download Path] Загрузка изображения через fetch:', targetImageUrl);
+  console.log('[Image Saver] [Pixiv Download Path] Загрузка изображения через fetch:', sanitizeUrlForLog(targetImageUrl));
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 20000);
-
-  let response;
+  const maxBytes = 50 * 1024 * 1024;
+  let response, reader;
   try {
     response = await fetch(targetImageUrl, {
       method: 'GET',
       signal: controller.signal
     });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  if (!response.ok) {
-    throw new Error(`Pixiv fetch failed with HTTP ${response.status} ${response.statusText}`);
-  }
-
-  const contentType = response.headers.get('content-type') || 'image/jpeg';
-  const arrayBuffer = await response.arrayBuffer();
-
-  // Convert ArrayBuffer to Base64 Data URL in 32KB chunks to prevent call stack overflow
-  const bytes = new Uint8Array(arrayBuffer);
-  let base64 = '';
-  if (typeof btoa === 'function') {
-    let binary = '';
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    if (!response.ok) throw new Error(`Pixiv fetch failed with HTTP ${response.status}`);
+    const declaredType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (declaredType && !declaredType.startsWith('image/') && declaredType !== 'application/octet-stream') {
+      throw new Error('Invalid image MIME from Pixiv');
     }
-    base64 = btoa(binary);
-  } else if (typeof Buffer !== 'undefined') {
-    base64 = Buffer.from(bytes).toString('base64');
+    if (Number(response.headers.get('content-length')) > maxBytes) throw new Error('SIZE_EXCEEDED: Pixiv image limit is50MiB');
+    if (!response.body?.getReader) throw new Error('ReadableStream required for bounded Pixiv fetch');
+    reader = response.body.getReader();
+    const chunks = [];
+    let size = 0;
+    while (true) {
+      if (controller.signal.aborted) throw new Error('TIMEOUT: Pixiv fetch aborted');
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) throw new Error('SIZE_EXCEEDED: Pixiv image limit is50MiB');
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const contentType = sniffMediaMagicBytes(bytes);
+    if (!contentType?.startsWith('image/')) throw new Error('Invalid image bytes or empty body from Pixiv');
+    if (declaredType.startsWith('image/') && declaredType.replace('image/jpg', 'image/jpeg') !== contentType) {
+      throw new Error('Invalid image MIME does not match Pixiv bytes');
+    }
+    // Chunking avoids the argument-stack limit when encoding an accepted image.
+    let base64;
+    if (typeof btoa === 'function') {
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      base64 = btoa(binary);
+    } else if (typeof Buffer !== 'undefined') {
+      base64 = Buffer.from(bytes).toString('base64');
+    } else throw new Error('Image base64 encoder unavailable');
+    if (controller.signal.aborted) throw new Error('TIMEOUT: Pixiv fetch aborted');
+    console.log(`[Image Saver] [Pixiv Download Path] Изображение успешно получено в память (${bytes.length} байт, ${contentType})`);
+    return `data:${contentType};base64,${base64}`;
+  } finally {
+    controller.abort();
+    clearTimeout(timeoutId);
+    if (reader) { try { await reader.cancel(); } catch (_) {} }
+    else await cancelResponseBody(response);
   }
-
-  console.log(`[Image Saver] [Pixiv Download Path] Изображение успешно получено в память (${bytes.length} байт, ${contentType})`);
-  return `data:${contentType};base64,${base64}`;
 }
 
 // ============================================================================

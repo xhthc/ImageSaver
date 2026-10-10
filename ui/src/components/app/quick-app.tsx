@@ -2,7 +2,7 @@ import { History, Settings } from "lucide-react"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/skiper/tooltip"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { BrandMark } from "@/components/app/brand"
 import { ResultsList } from "@/components/app/results-list"
 import { createQuick } from "@/core/quick.js"

@@ -174,6 +174,7 @@ function createTestSandbox(overrides = {}) {
     const rawFetch = overrides.fetch;
     effectiveFetch = async (...args) => {
       const resp = await rawFetch(...args);
+      if (resp && !resp.headers) resp.headers = { get: () => null };
       if (resp && typeof resp.blob === 'function' && resp.body === undefined) {
         let consumed = false;
         resp.body = {

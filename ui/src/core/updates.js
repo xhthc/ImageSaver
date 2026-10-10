@@ -1,9 +1,9 @@
 import { createStore } from './store.js';
 
-export const RELEASES_URL = 'https://github.com/xhthc/image-saver-extension/releases';
-export const RELEASES_API = 'https://api.github.com/repos/xhthc/image-saver-extension/releases?per_page=100';
+export const RELEASES_URL = 'https://github.com/xhthc/ImageSaver/releases';
+export const RELEASES_API = 'https://api.github.com/repos/xhthc/ImageSaver/releases?per_page=100';
 export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const CACHE_KEY = 'imageSaverReleaseCheckV1';
+const CACHE_KEY = 'imageSaverReleaseCheckV2'; // The old cache belongs to the previous repository.
 const CHANNEL_KEY = 'imageSaverReleaseChannel';
 const ERRORS = {
   network: 'Не удалось связаться с GitHub. Проверьте подключение и повторите проверку.',

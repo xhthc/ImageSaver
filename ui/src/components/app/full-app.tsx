@@ -3,7 +3,7 @@ import { Bell, FolderOpen, History, Share2, RefreshCw } from "lucide-react"
 
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { TooltipProvider } from "@/components/skiper/tooltip"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { BrandMark } from "@/components/app/brand"
 import { HistoryPanel } from "@/components/app/history-panel"
 import { ResultsList } from "@/components/app/results-list"
@@ -119,10 +119,10 @@ export function FullApp({ settings }: { settings: SettingsController }) {
 
         <footer className="space-y-1 border-t pt-3 text-xs text-muted-foreground">
           <p>
-            <strong className="font-semibold text-foreground">Как пользоваться:</strong> нажмите правой кнопкой мыши по любой картинке на странице и выберите <em>«Сохранить картинку»</em>.
+            <strong className="font-semibold text-foreground">Как пользоваться:</strong> нажмите правой кнопкой мыши по изображению, видео или превью поста и выберите <em>«Image Saver: Save media»</em>.
           </p>
           <p data-slot="credits">
-            Интерфейс: <span>shadcn/ui</span>; компоненты Custom tooltip и Progressive Blur — <span>Skiper UI</span> (skiper-ui.com). Лицензии —{" "}
+            Интерфейс: <span>shadcn/ui</span>, <span>Radix UI</span> и <span>Lucide</span>. Лицензии —{" "}
             <a href="./THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener noreferrer" className="text-ring underline underline-offset-2 hover:text-foreground">
               THIRD_PARTY_NOTICES.txt
             </a>

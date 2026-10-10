@@ -627,7 +627,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     let copyFailed = false;
     try { await present.copyText(rep1, navi); } catch (_) { copyFailed = true; }
     assert(copyFailed && clipboard.texts.length === 1, '12h: a clipboard failure propagates, so the UI can report it truthfully and select the text for manual copy');
-    assert(/Автоматический повтор не выполняется/.test(present.RETRY_HINT) && !present.hasReport(ls.records.find((r) => r.state === 'complete')) && !/>\s*(Повторить|Retry)/i.test(read('ui/src/components/app/result-details.tsx')), '12i: no automatic/blind retry control; the manual retry boundary is explained');
+    assert(/одна попытка возобновить/.test(present.RETRY_HINT) && !present.hasReport(ls.records.find((r) => r.state === 'complete')) && !/>\s*(Повторить|Retry)/i.test(read('ui/src/components/app/result-details.tsx')), '12i: no blind retry control; the bounded native resume is explained');
 
     const settingsCtl = createSettings({ chrome: uiChrome, FolderPath: {}, setTimeout: () => 0, clearTimeout() {} });
     await settingsCtl.setNotifySuccess(false);

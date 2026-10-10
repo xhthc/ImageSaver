@@ -25,6 +25,11 @@ const a = inventory(committed)
 const b = inventory(tmp)
 fs.rmSync(tmp, { recursive: true, force: true })
 const problems = []
+const notices = fs.readFileSync(path.join(committed, 'THIRD_PARTY_NOTICES.txt'), 'utf8').replace(/\r\n/g, '\n')
+for (const name of ['tailwindcss', 'tw-animate-css']) {
+  const licence = fs.readFileSync(path.join(ui, 'node_modules', name, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n').trim()
+  if (!notices.includes(licence)) problems.push(`missing complete CSS licence in shipped notices: ${name}`)
+}
 for (const [file, hash] of b) {
   if (!a.has(file)) problems.push(`missing in popup/: ${file}`)
   else if (a.get(file) !== hash) problems.push(`differs: ${file}`)

@@ -467,6 +467,7 @@ const sandbox = {
   },
   URL: global.URL,
   URLSearchParams: global.URLSearchParams,
+  btoa: global.btoa,
   setTimeout: setTimeout,
   clearTimeout: clearTimeout,
   AbortController: global.AbortController,
@@ -515,6 +516,7 @@ const sandbox = {
           if (lh === 'content-length') return contentLength;
         }
       },
+      body: urlStr.startsWith('https://i.pximg.net/') ? new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 2, 0xff, 0xd9])]).stream() : undefined,
       arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer
     };
   },
@@ -16271,12 +16273,8 @@ async function runTests() {
       offscreenSandbox.fetch = async () => ({
         ok: true,
         status: 200,
-        blob: async () => ({
-          size: 1024,
-          slice: () => ({
-            arrayBuffer: async () => validFtypBytes.buffer
-          })
-        })
+        headers: { get: () => null },
+        body: new Blob([validFtypBytes], { type: 'video/mp4' }).stream()
       });
 
       const mockCanvas = {
@@ -31176,7 +31174,7 @@ async function runTests() {
           if (spec.throws) throw spec.throws;
           const status = spec.status !== undefined ? spec.status : 200;
           const text = spec.text !== undefined ? spec.text : JSON.stringify(spec.body);
-          return { ok: status >= 200 && status < 300, status, headers: { get: () => null }, text: async () => text };
+          return { ok: status >= 200 && status < 300, status, headers: { get: () => null }, body: new Blob([text]).stream() };
         }
         mediaCalls.push(url);
         const o = mediaOverrides[url];
@@ -31524,7 +31522,7 @@ async function runTests() {
             apiCalls.push(url);
             if (onClipLookup && /v2\/gifs\//.test(url)) onClipLookup();
             const body = /v2\/auth\/temporary$/.test(url) ? { token: TOKEN } : { gif: { id: ID, hasAudio: true, urls: urlsOf(hd) } };
-            return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(body) };
+            return { ok: true, status: 200, headers: { get: () => null }, body: new Blob([JSON.stringify(body)]).stream() };
           }
           mediaCalls.push(url);
           return { ok: true, status: 200, headers: { get: (h) => (h.toLowerCase() === 'content-type' ? 'video/mp4' : '1000') }, body: null };
