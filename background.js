@@ -7271,16 +7271,17 @@ async function resolveMediaTarget(options = {}) {
 
 // ---- SITE-PAWCHIVE-01: originals from Pawchive previews ----------------------------------------------------------------------------------------------
 // A creator-feed card shows img.pawchive.pw/thumbnail/data/aa/bb/<sha256>.<ext>; the post page (https://pawchive.pw/<service>/user/<id>/post/<id>) declares
-// the originals on file.pawchive.pw/data/aa/bb/<sha256>.<ext>?f=<name>: a video in .post__videos and .post__attachments, the cover in a.fileThumb. The
-// video and its cover have different hashes, so no address can be derived from the thumbnail. Rules: a card's post link selects ALL the post's distinct videos
-// (by hash; each is its own item, see savePawchivePostVideos), its cover only when the post has no video; a link to an original, or a thumbnail inside a post page, selects exactly that image; ambiguity,
+// the originals on file.pawchive.pw (or a data node nN.pawchive.pw)/data/aa/bb/<sha256>.<ext>?f=<name>: a video in .post__videos and .post__attachments, the cover in a.fileThumb. The
+// video and its cover have different hashes, so no address can be derived from the thumbnail. Rules: a card's post link selects ALL the post's distinct declared
+// originals, videos, images and GIFs incl. the cover (by hash; each is its own item, see savePawchivePostMedia); a link to an original, or a thumbnail inside a post page, selects exactly that image; ambiguity,
 // a mismatch, foreign metadata or an unusable original is a refusal, never the thumbnail, never a guessed path.
 const PAWCHIVE_HTML_MAX_BYTES = 1024 * 1024;
 const PAWCHIVE_HTML_TIMEOUT_MS = 8000;
 const PAWCHIVE_VIDEO_EXTS = new Set(['mp4', 'webm', 'm4v', 'mov', 'mkv', 'avi']);
 const PAWCHIVE_IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif']);
 
-// kind 'thumb' (img.pawchive.pw/thumbnail/data/...) or 'file' (file.pawchive.pw/data/...): exact host, https, no credentials or port, aa/bb = the hash start
+// kind 'thumb' (img.pawchive.pw/thumbnail/data/...) or 'file' (file.pawchive.pw/data/... or a numbered data node such as n2.pawchive.pw/data/..., which
+// post pages declare for attachments and covers): exact host, https, no credentials or port, aa/bb = the hash start
 function parsePawchiveMediaUrl(raw, base) {
   if (typeof raw !== 'string' || !raw || raw.length > 2048 || /\s/.test(raw)) return null;
   let u;
@@ -7288,7 +7289,7 @@ function parsePawchiveMediaUrl(raw, base) {
   if (u.protocol !== 'https:' || u.username || u.password || u.port || u.hash) return null;
   const host = u.hostname.toLowerCase();
   const m = u.pathname.match(/^\/(thumbnail\/)?data\/([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})\.([A-Za-z0-9]{1,5})$/);
-  if (!m || (m[1] ? host !== 'img.pawchive.pw' : host !== 'file.pawchive.pw')) return null;
+  if (!m || (m[1] ? host !== 'img.pawchive.pw' : !/^(?:file|n\d{1,2})\.pawchive\.pw$/.test(host))) return null;
   if (m[4].slice(0, 2) !== m[2] || m[4].slice(2, 4) !== m[3]) return null;
   return { kind: m[1] ? 'thumb' : 'file', hash: m[4], ext: m[5].toLowerCase(), url: raw };
 }
@@ -7472,17 +7473,17 @@ function selectPawchivePostOriginal(clicked, post, isFeedCard, declared) {
   if (mine.length === 0) return { why: 'preview is not of this post' };
   let chosen = null;
   if (isFeedCard) {
-    // a feed card: the post's declared videos (every distinct file, by hash); its cover only for a post without a video
-    const videos = [];
-    for (const raw of declared.videos) {
+    // a feed card: every distinct original the post declares (videos, then images and GIFs incl. the cover; one per hash). Thumbnails and posters are
+    // never declarations (parsePawchivePostHtml accepts only originals), so they are never items.
+    const items = [];
+    for (const raw of [...declared.videos, ...declared.images.map((i) => i.url)]) {
       const v = parsePawchiveMediaUrl(raw, post.url);
-      if (!v) return { why: 'unusable video' };
-      if (!videos.some((x) => x.hash === v.hash)) videos.push(v);
+      if (!v) return { why: 'unusable original' };
+      if (!items.some((x) => x.hash === v.hash)) items.push(v);
     }
-    // several videos: the resolver saves each one separately (resolvePawchiveOriginalPlan)
-    if (videos.length > 1) return { chosen: videos[0], videos };
-    if (videos.length === 1) chosen = videos[0];
-    else if (mine.length === 1) chosen = parsePawchiveMediaUrl(mine[0].url, post.url);
+    // several originals: the resolver saves each one separately (resolvePawchiveOriginalPlan)
+    if (items.length > 1) return { chosen: items[0], items };
+    chosen = items[0] || null;
   } else if (mine.length === 1) {
     // a thumbnail inside the post page itself: that image
     chosen = parsePawchiveMediaUrl(mine[0].url, post.url);
@@ -7495,7 +7496,7 @@ function selectPawchivePostOriginal(clicked, post, isFeedCard, declared) {
  * returns undefined when the selection is not one (the generic pipeline continues), otherwise a verified original plan, an error plan (HTTP 401/403/404/429
  * of the post page or the original) or null (refused: ambiguous, mismatched, foreign, malformed, unusable). It never returns the clicked thumbnail.
  */
-async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPostVideos = false }) {
+async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPostMedia = false }) {
   const clicked = parsePawchiveMediaUrl(srcUrl, pageUrl || undefined);
   if (!clicked) return undefined;
   const refuse = (why) => { console.warn('[Image Saver] Pawchive: сохранение оригинала отклонено (' + why + '):', sanitizeUrlForLog(srcUrl)); return null; };
@@ -7532,22 +7533,22 @@ async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPost
   if (!declared) return refuse('post identity or declarations');
   const picked = selectPawchivePostOriginal(clicked, post, Boolean(linkedPost), declared);
   if (!picked.chosen) return refuse(picked.why);
-  if (picked.videos) {
-    // an explicit save of a feed preview of a post with several videos saves them all, each as its own item (savePawchivePostVideos); a caller that
-    // cannot do that gets the refusal, never one arbitrary video
-    if (!allowPostVideos) return refuse('several videos');
-    return { pawchivePostVideos: { postUrl: post.url, videos: picked.videos.map((v) => v.url) } };
+  if (picked.items) {
+    // an explicit save of a feed preview of a post with several originals saves them all, each as its own item (savePawchivePostMedia); a caller that
+    // cannot do that gets the refusal, never one arbitrary original
+    if (!allowPostMedia) return refuse('several originals');
+    return { pawchivePostMedia: { postUrl: post.url, items: picked.items.map((v) => v.url) } };
   }
   const out = await probePawchiveOriginal(picked.chosen, post.url, srcUrl);
   return out.plan || out.fail || refuse('original');
 }
 
-// The explicit save of a feed preview whose post declares several videos: every distinct video (by hash) is its own item. Items are verified one after
-// the other (the shared probe, then the shared verify/download/feedback path of a single save), paced, at most PAWCHIVE_POST_VIDEOS_MAX of them; an item that
-// fails or is refused is reported as its own failed operation and never touches the others. After HTTP 429 no further request is made: every remaining item
-// is reported as a rate-limited failed operation. A repeated declaration is saved once (the selector keeps one entry per hash).
-const PAWCHIVE_POST_VIDEOS_MAX = 20;
-let PAWCHIVE_POST_VIDEOS_PACE_MS = 1000;
+// The explicit save of a feed preview whose post declares several originals: every distinct video, image or GIF (by hash) is its own item. Items are verified
+// one after the other (the shared probe with its per-kind MIME check, then the shared verify/download/feedback path of a single save), paced, at most
+// PAWCHIVE_POST_MEDIA_MAX of them; an item that fails or is refused is reported as its own failed operation and never touches the others. After HTTP 429 no
+// further request is made: every remaining item is reported as a rate-limited failed operation. A repeated declaration is saved once (one entry per hash).
+const PAWCHIVE_POST_MEDIA_MAX = 20;
+let PAWCHIVE_POST_MEDIA_PACE_MS = 1000;
 const pawchiveItemInfos = new WeakSet();
 
 async function pawchiveItemFailed(info, tab, url, failure) {
@@ -7556,9 +7557,9 @@ async function pawchiveItemFailed(info, tab, url, failure) {
   await fbBadgeReporter(op)(failure.code === 'RATE_LIMIT' ? 'RATE' : 'ERR', failure.code === 'RATE_LIMIT' ? '#f59e0b' : '#ef4444');
 }
 
-async function savePawchivePostVideos(batch, info, tab) {
-  const urls = batch.videos.slice(0, PAWCHIVE_POST_VIDEOS_MAX);
-  const tally = { items: batch.videos.length, verified: 0, refused: 0, rateLimited: 0, skipped: batch.videos.length - urls.length };
+async function savePawchivePostMedia(batch, info, tab) {
+  const urls = batch.items.slice(0, PAWCHIVE_POST_MEDIA_MAX);
+  const tally = { items: batch.items.length, verified: 0, refused: 0, rateLimited: 0, skipped: batch.items.length - urls.length };
   let limited = false;
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i];
@@ -7567,7 +7568,7 @@ async function savePawchivePostVideos(batch, info, tab) {
       await pawchiveItemFailed(info, tab, url, { stage: 'resolve', code: 'RATE_LIMIT', status: 429 });
       continue;
     }
-    if (i > 0 && PAWCHIVE_POST_VIDEOS_PACE_MS > 0) await new Promise((r) => setTimeout(r, PAWCHIVE_POST_VIDEOS_PACE_MS));
+    if (i > 0 && PAWCHIVE_POST_MEDIA_PACE_MS > 0) await new Promise((r) => setTimeout(r, PAWCHIVE_POST_MEDIA_PACE_MS));
     const parsed = parsePawchiveMediaUrl(url, batch.postUrl);
     const out = parsed && parsed.kind === 'file' ? await probePawchiveOriginal(parsed, batch.postUrl, url) : { refused: true };
     const plan = out.plan || out.fail || null;
@@ -7581,8 +7582,8 @@ async function savePawchivePostVideos(batch, info, tab) {
     pawchiveItemInfos.add(itemInfo);
     await onContextMenuClicked(itemInfo, tab);
   }
-  if (batch.videos.length > urls.length) await pawchiveItemFailed(info, tab, batch.postUrl, { stage: 'resolve', code: 'NO_MEDIA' });
-  console.info('[Image Saver] Pawchive post videos:', tally);
+  if (batch.items.length > urls.length) await pawchiveItemFailed(info, tab, batch.postUrl, { stage: 'resolve', code: 'NO_MEDIA' });
+  console.info('[Image Saver] Pawchive post media:', tally);
 }
 
 /**
@@ -7590,11 +7591,11 @@ async function savePawchivePostVideos(batch, info, tab) {
  * Supports Candidate Groups with variant failover policies, provenance scoring, and deferred validation.
  */
 async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg, fifthArg) {
-  let srcUrl, pageUrl, linkUrl, tabId, domMeta, frameId, allowPostVideos = false;
+  let srcUrl, pageUrl, linkUrl, tabId, domMeta, frameId, allowPostMedia = false;
 
   if (typeof firstArg === 'object' && firstArg !== null) {
     frameId = firstArg.frameId;
-    allowPostVideos = firstArg.allowPostVideos === true;
+    allowPostMedia = firstArg.allowPostMedia === true;
     srcUrl = firstArg.srcUrl;
     pageUrl = firstArg.pageUrl;
     linkUrl = firstArg.linkUrl;
@@ -7779,7 +7780,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
   }
 
   // SITE-PAWCHIVE-01: a Pawchive thumbnail or original is resolved by the post that declares it (no speculative probes, no thumbnail fallback)
-  const pawchivePlan = await resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPostVideos });
+  const pawchivePlan = await resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPostMedia });
   if (pawchivePlan !== undefined) return pawchivePlan;
 
   // 1. Initial source URL
@@ -11003,7 +11004,7 @@ async function onContextMenuClicked(info, tab) {
         }
       }
 
-      // One video of a Pawchive post whose videos are all saved: the batch owner already proved the post and verified this original
+      // One original of a Pawchive post whose originals are all saved: the batch owner already proved the post and verified this original
       if (pawchiveItemInfos.has(info) && info.pawchivePlan) {
         mediaPlan = info.pawchivePlan;
         targetMediaUrl = mediaPlan.primaryUrl;
@@ -11048,16 +11049,16 @@ async function onContextMenuClicked(info, tab) {
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
             frameId: info.frameId,
-            allowPostVideos: true
+            allowPostMedia: true
           });
           targetMediaUrl = mediaPlan?.primaryUrl;
         }
       }
 
-      if (mediaPlan?.pawchivePostVideos) {
-        // the user chose to save a feed preview of a post with several videos: every distinct declared video is a separate item with its own operation
+      if (mediaPlan?.pawchivePostMedia) {
+        // the user chose to save a feed preview of a post with several originals: every distinct declared original is a separate item with its own operation
         await fbDiscard(op);
-        await savePawchivePostVideos(mediaPlan.pawchivePostVideos, info, tab);
+        await savePawchivePostMedia(mediaPlan.pawchivePostMedia, info, tab);
         return;
       }
 
