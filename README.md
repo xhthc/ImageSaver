@@ -48,7 +48,7 @@ The committed `popup/` pages are ready to use. Node/npm are needed only for deve
 
 Right-click an image, video or supported post preview and select **Image Saver: Save media**. On X, Shift + right-click can open the browser menu when the site handles right-click itself.
 
-The toolbar popup shows recent results. Its full page contains history, saving preferences, notifications, link settings and release checks. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
+The toolbar popup shows recent results. Its full page contains history, saving preferences, notifications, link settings and release checks. The interface is available in English and Russian: choose **Language** at the top of the full page. The choice applies at once to the extension pages, notifications and inline buttons; without a saved choice a Russian browser shows Russian and any other browser English. The context-menu item stays **Image Saver: Save media** in both languages. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
 
 Paths are relative to the browser's Downloads directory. Arbitrary drive paths and author folders are planned. The browser owns ordinary transfers; eligible `NETWORK_FAILED` downloads get one native resume attempt.
 

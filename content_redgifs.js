@@ -9,6 +9,15 @@
     targetScope[GUARD_KEY] = true;
   }
 
+  const isI18n = globalThis.ImageSaverI18n;
+  const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
+  const isLabel = (element, field, key, fallback, vars) => {
+    if (isLabels) isLabels.label(element, field, key, vars, fallback);
+    else if (field === 'textContent') element.textContent = fallback;
+    else if (fallback === null) element.removeAttribute(field);
+    else element.setAttribute(field, fallback);
+  };
+
   let lastContextmenuTarget = null;
   let lastContextmenuPath = [];
   let lastContextmenuTime = 0;
@@ -1473,12 +1482,12 @@
     const root = typeof host.attachShadow === 'function' ? host.attachShadow({ mode: 'closed' }) : host;
     const btn = document.createElement('button');
     btn.setAttribute('type', 'button');
-    btn.setAttribute('aria-label', 'Image Saver: Save this clip');
-    btn.setAttribute('title', 'Image Saver: Save this clip');
+    isLabel(btn, 'aria-label', 'inline.saveClipAria', 'Image Saver: Save this clip');
+    isLabel(btn, 'title', 'inline.saveClipAria', 'Image Saver: Save this clip');
     // the download icon and the single-button look of the X and Reddit inline controls (same path, colors and border), as a 32 px round button
     const icon = inlineIcon();
     if (icon) btn.appendChild(icon);
-    else btn.textContent = 'Save';
+    else isLabel(btn, 'textContent', 'inline.save', 'Save');
     for (const [k, v] of [['all', 'initial'], ['box-sizing', 'border-box'], ['display', 'flex'], ['align-items', 'center'], ['justify-content', 'center'],
       ['width', `${INLINE.SIZE}px`], ['height', `${INLINE.SIZE}px`], ['border-radius', '9999px'], ['border', '1px solid rgba(255,255,255,0.55)'],
       ['background', 'rgba(15,20,25,0.78)'], ['color', '#fff'], ['cursor', 'pointer'], ['padding', '0'],

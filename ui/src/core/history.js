@@ -2,8 +2,8 @@
 // statistics inputs and the durable clear. Behavior is the one of the former popup/history.js.
 //
 // - Recording is off unless `historyEnabled === true`; an unreadable preference is shown (and treated) as off.
-// - Turning recording off never deletes records; "Очистить историю" (HISTORY_CLEAR) is the only deletion.
-// - Failures are shown as text and never thrown.
+// - Turning recording off never deletes records; "Clear history" (HISTORY_CLEAR) is the only deletion.
+// - Failures are shown as text and never thrown; messages are catalogue keys (lib/i18n.js), translated when rendered.
 // - UX-06: while the page is open a change of the history store's key (an operation finished, a clear elsewhere) triggers a new
 //   HISTORY_LIST request, and a change of the recording preference elsewhere updates the switch. One storage subscription, removed
 //   by dispose(); no timer and no polling; a change during a request is coalesced into one more request.
@@ -38,10 +38,10 @@ export function createHistory(deps) {
     try {
       const res = await chromeApi.runtime.sendMessage({ action });
       if (!res || res.success !== true || !Array.isArray(res.records)) throw new Error('HISTORY_UNAVAILABLE');
-      store.setState({ error: res.pruneFailed ? 'Не удалось удалить устаревшие записи из хранилища: они скрыты, но будут удалены при следующей успешной очистке.' : '' });
+      store.setState({ error: res.pruneFailed ? 'history.error.prune' : '' });
       return res.records.map(FB.sanitizeRecord).filter(Boolean);
     } catch (_) {
-      store.setState({ error: action === 'HISTORY_CLEAR' ? 'Не удалось очистить историю: данные не удалены.' : 'Не удалось загрузить историю.' });
+      store.setState({ error: action === 'HISTORY_CLEAR' ? 'history.error.clear' : 'history.error.load' });
       return null;
     }
   };
@@ -80,7 +80,7 @@ export function createHistory(deps) {
       const prefs = await chromeApi.storage.local.get({ [ENABLED_KEY]: false });
       if (!touched) store.setState({ enabled: prefs[ENABLED_KEY] === true });
     } catch (_) {
-      if (!touched) store.setState({ enabled: false, prefError: 'Не удалось прочитать настройку истории: считается выключенной.' });
+      if (!touched) store.setState({ enabled: false, prefError: 'history.error.prefRead' });
     }
     store.setState({ prefReady: true });
     return sync(true);
@@ -95,14 +95,14 @@ export function createHistory(deps) {
       await chromeApi.storage.local.set({ [ENABLED_KEY]: wanted });
       store.setState({ prefError: '' });
     } catch (_) {
-      store.setState({ enabled: previous, prefError: 'Не удалось сохранить настройку истории.' });
+      store.setState({ enabled: previous, prefError: 'history.error.prefSave' });
     }
   }
 
   async function clear() {
     store.setState({ clearStatus: '', clearing: true });
     const after = await load('HISTORY_CLEAR');
-    if (after && !disposed) store.setState({ records: after, status: 'ready', clearStatus: 'История очищена.' });
+    if (after && !disposed) store.setState({ records: after, status: 'ready', clearStatus: 'history.cleared' });
     store.setState({ clearing: false });
     return after;
   }

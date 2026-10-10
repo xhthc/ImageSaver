@@ -125,6 +125,8 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
       },
       show: (id) => env.shown.push(id)
     },
+    // a Russian browser UI with no saved language: notifications use the Russian catalogue (UI-LOCALIZATION-01)
+    i18n: { getUILanguage: () => 'ru' },
     storage: {
       session: area(() => env.session, { set: () => env.failSessionSet }),
       local: area(() => env.local, { get: () => env.failLocalGet, set: () => env.failLocalWrite })
@@ -181,6 +183,9 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
 
 (async () => {
   const FBLib = (() => { const sb = { URL }; vm.createContext(sb); vm.runInContext(read('lib/feedback.js'), sb); return sb.ImageSaverFeedback; })();
+  // the page controllers keep catalogue keys; the Russian text is what a Russian interface shows (UI-LOCALIZATION-01)
+  const I18n = (() => { const sb = {}; vm.createContext(sb); vm.runInContext(read('lib/i18n.js'), sb); return sb.ImageSaverI18n; })();
+  const ru = (m) => I18n.message('ru', m);
   const coreMod = (name) => import(pathToFileURL(path.resolve(ROOT, 'ui/src/core', name)).href);
   const { createFeedbackList } = await coreMod('feedbackList.js');
   const { createHistory } = await coreMod('history.js');
@@ -634,7 +639,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     assert(env.local.notifySuccess === false, '12j: the routine-success preference persists immediately');
     env.failLocalSet = true;
     await settingsCtl.setNotifySuccess(true);
-    assert(settingsCtl.store.getState().notify.checked === false && /Не удалось сохранить настройку/.test(settingsCtl.store.getState().notify.error) && env.local.notifySuccess === false, '12k: a storage failure reverts the preference and is reported');
+    assert(settingsCtl.store.getState().notify.checked === false && /Не удалось сохранить настройку/.test(ru(settingsCtl.store.getState().notify.error)) && env.local.notifySuccess === false, '12k: a storage failure reverts the preference and is reported');
     env.failLocalSet = false;
 
     await list.openFull(ls.records[0]);
@@ -653,7 +658,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     const brokenChrome = Object.assign({}, uiChrome, { runtime: Object.assign({}, uiChrome.runtime, { sendMessage: async () => { throw new Error('NO_WORKER'); } }) });
     const broken = createFeedbackList({ chrome: brokenChrome, FB: FBLib, navigator: navi }, { limit: 5 });
     await broken.start();
-    assert(broken.store.getState().status === 'error' && /Не удалось загрузить результаты/.test(broken.store.getState().error), '12o: a messaging failure is shown as text, the page keeps working');
+    assert(broken.store.getState().status === 'error' && /Не удалось загрузить результаты/.test(ru(broken.store.getState().error)), '12o: a messaging failure is shown as text, the page keeps working');
 
     // Unknown metadata renders honestly
     const unknownRec = FBLib.sanitizeRecord({ id: 'op-unknown1', createdAt: Date.now(), state: 'complete' });
@@ -971,21 +976,21 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     clipboard.fail = true;
     let linkCopyFailed = false;
     try { await present.copyText(postHref, navi); } catch (_) { linkCopyFailed = true; }
-    assert(linkCopyFailed && /Не удалось скопировать ссылку/.test(read('ui/src/components/app/result-details.tsx')), '17ad: a clipboard failure propagates and the UI reports it truthfully');
+    assert(linkCopyFailed && /Не удалось скопировать ссылку/.test(I18n.t('ru', 'post.copyFailed')) && /"post\.copyFailed"/.test(read('ui/src/components/app/result-details.tsx')), '17ad: a clipboard failure propagates and the UI reports it truthfully');
     const failRec = hs().records.find((r) => r !== okRec);
-    assert(present.postUrlOf(FBLib, failRec) === '' && /неизвестна/.test(read('ui/src/components/app/result-details.tsx')) && present.hasReport(failRec), '17ae: unknown post says so (no invented link) and a failed entry still offers the bug report');
+    assert(present.postUrlOf(FBLib, failRec) === '' && /неизвестна/.test(I18n.t('ru', 'post.unknown')) && /"post\.unknown"/.test(read('ui/src/components/app/result-details.tsx')) && present.hasReport(failRec), '17ae: unknown post says so (no invented link) and a failed entry still offers the bug report');
     await hctl.setEnabled(false);
     assert(envX.local.historyEnabled === false, '17af: the history preference is persisted');
     envX.failUiSet = true;
     await hctl.setEnabled(true);
-    assert(hs().enabled === false && /Не удалось сохранить настройку/.test(hs().prefError), '17ag: a preference save failure reverts the switch and says so');
+    assert(hs().enabled === false && /Не удалось сохранить настройку/.test(ru(hs().prefError)), '17ag: a preference save failure reverts the switch and says so');
     envX.failUiSet = false;
     envX.failLocalWrite = true;
     await hctl.clear();
-    assert(/данные не удалены/.test(hs().error) && hs().records.length === 2, '17ah: a failed clear leaves the list and says nothing was deleted');
+    assert(/данные не удалены/.test(ru(hs().error)) && hs().records.length === 2, '17ah: a failed clear leaves the list and says nothing was deleted');
     envX.failLocalWrite = false;
     await hctl.clear();
-    assert(hs().clearStatus === 'История очищена.' && hs().records.length === 0, '17ai: a successful clear empties the list');
+    assert(ru(hs().clearStatus) === 'История очищена.' && hs().records.length === 0, '17ai: a successful clear empties the list');
 
     // static contract
     const detailsHtml = read('popup/popup.html');
@@ -1048,7 +1053,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     const domDefault = await mkUi(makeEnv());
     assert(domDefault.store.getState().enabled === false, '18f: with no stored preference the UI shows history as off');
     const domBroken = await mkUi(makeEnv(), true);
-    assert(domBroken.store.getState().enabled === false && /считается выключенной/.test(domBroken.store.getState().prefError), '18g: an unreadable preference is not shown as enabled and the user is told');
+    assert(domBroken.store.getState().enabled === false && /считается выключенной/.test(ru(domBroken.store.getState().prefError)), '18g: an unreadable preference is not shown as enabled and the user is told');
 
     // 2 + 4. seven-day retention, persistent pruning
     const eR = makeEnv({ local: { historyEnabled: true } });
@@ -1071,7 +1076,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     eP.failLocalWrite = false;
     const rp = await saveOne(eP, 'p1');
     assert(rp.state === 'complete' && stored(eP).every((e) => e.id !== 'op-corr0020') && stored(eP).length === 1, '18l: a later successful write also removes the expired entry; saving was never affected');
-    assert(/7 дней/.test(read('ui/src/components/app/history-panel.tsx')) && /7 дней/.test(present.STATS_SCOPE_NOTE) && !/30/.test(read('lib/feedback_history.js').replace(/\/\/.*$/gm, '')) && /RETENTION_MS = 7 \*/.test(read('lib/feedback_history.js')), '18m: retention is 7 days in code and UI text');
+    assert(/7 дней/.test(I18n.t('ru', 'history.desc')) && /7 days/.test(I18n.t('en', 'history.desc')) && /"history\.desc"/.test(read('ui/src/components/app/history-panel.tsx')) && /7 дней/.test(present.STATS_SCOPE_NOTE) && /7 days/.test(I18n.t('en', 'stats.scope')) && !/30/.test(read('lib/feedback_history.js').replace(/\/\/.*$/gm, '')) && /RETENTION_MS = 7 \*/.test(read('lib/feedback_history.js')), '18m: retention is 7 days in code and UI text');
 
     // 3. durable clear boundary
     const eC = makeEnv({ local: { historyEnabled: true } });
@@ -1117,7 +1122,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     eF.failLocalWrite = true;
     await dom.clear();
     eF.failLocalWrite = false;
-    assert(/данные не удалены/.test(dom.store.getState().error) && dom.store.getState().records.length === 1, '18v: the UI reports the failed clear truthfully');
+    assert(/данные не удалены/.test(ru(dom.store.getState().error)) && dom.store.getState().records.length === 1, '18v: the UI reports the failed clear truthfully');
   }
 
   // =================================================================================================
@@ -1412,7 +1417,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     assert(list.store.getState().records.length === 0, '21i: clearing the completed results empties the open list');
     await hist.clear();
     await settleUi();
-    assert(hist.store.getState().records.length === 0 && hist.store.getState().clearStatus === 'История очищена.', '21j: clearing the history empties it');
+    assert(hist.store.getState().records.length === 0 && ru(hist.store.getState().clearStatus) === 'История очищена.', '21j: clearing the history empties it');
 
     // a hidden list shows a failure but keeps it unacknowledged until it is shown (the visible list of the first part is closed)
     list.dispose(); hist.dispose();

@@ -1,5 +1,13 @@
 // content_x.js - Lightweight content script scoped strictly to X/Twitter
 (() => {
+  const isI18n = globalThis.ImageSaverI18n;
+  const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
+  const isLabel = (element, field, key, fallback, vars) => {
+    if (isLabels) isLabels.label(element, field, key, vars, fallback);
+    else if (field === 'textContent') element.textContent = fallback;
+    else if (fallback === null) element.removeAttribute(field);
+    else element.setAttribute(field, fallback);
+  };
   let lastContextmenuX = 0;
   let lastContextmenuY = 0;
   let savedMediaDescriptor = null;
@@ -1350,8 +1358,8 @@
     wrap.className = 'image-saver-x-copy-wrap';
     wrap.setAttribute('role', 'button');
     wrap.setAttribute('tabindex', '0');
-    wrap.setAttribute('title', 'Image Saver: Скопировать ссылку на пост');
-    wrap.setAttribute('aria-label', 'Copy post link');
+    isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
+    isLabel(wrap, 'aria-label', 'inline.copyPostAria', 'Copy post link');
 
     const btn = document.createElement('div');
     btn.className = 'image-saver-x-copy-btn';
@@ -1366,10 +1374,10 @@
       const shareUrl = tweetUrl ? formatXShareUrl(tweetUrl, cachedXShareHost) : null;
       if (!shareUrl) {
         wrap.classList.add('is-error');
-        wrap.setAttribute('title', 'Image Saver: Не удалось определить ссылку на пост');
+        isLabel(wrap, 'title', 'inline.postUnknown', 'Image Saver: Не удалось определить ссылку на пост');
         setTimeout(() => {
           wrap.classList.remove('is-error');
-          wrap.setAttribute('title', 'Image Saver: Скопировать ссылку на пост');
+          isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
         }, 2000);
         return;
       }
@@ -1401,11 +1409,11 @@
       if (copied) {
         wrap.classList.add('is-success');
         btn.innerHTML = SVG_CHECK_ICON;
-        wrap.setAttribute('title', '✓ Ссылка скопирована!');
+        isLabel(wrap, 'title', 'inline.copied', '✓ Ссылка скопирована!');
         setTimeout(() => {
           wrap.classList.remove('is-success');
           btn.innerHTML = SVG_LINK_ICON;
-          wrap.setAttribute('title', 'Image Saver: Скопировать ссылку на пост');
+          isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
         }, 1800);
       } else {
         wrap.classList.add('is-error');
@@ -1895,21 +1903,21 @@
       hs.setProperty('align-items', tier === 'compact' ? 'center' : 'flex-end');
       hs.setProperty('justify-content', 'flex-end');
     }
-    btn.setAttribute('aria-label', 'Image Saver: Save this media');
-    btn.setAttribute('title', 'Image Saver: Save this media');
+    isLabel(btn, 'aria-label', 'inline.saveThisAria', 'Image Saver: Save this media');
+    isLabel(btn, 'title', 'inline.saveThisAria', 'Image Saver: Save this media');
     // wide: the words; compact: icons only, the count on "Save all"; the accessible names are the full words in every tier
-    lbl.textContent = tier === 'wide' ? 'Save this' : '';
+    isLabel(lbl, 'textContent', tier === 'wide' ? 'inline.saveThis' : null, tier === 'wide' ? 'Save this' : '');
     lbl.style.setProperty('display', tier === 'wide' ? 'inline' : 'none');
-    lblAll.textContent = tier === 'wide' ? `Save all (${n})` : (tier === 'compact' ? String(n) : '');
+    isLabel(lblAll, 'textContent', tier === 'wide' ? 'inline.saveAll' : null, tier === 'wide' ? `Save all (${n})` : (tier === 'compact' ? String(n) : ''), { n });
     lblAll.style.setProperty('display', multi ? 'inline' : 'none');
     if (multi) {
       btnAll.removeAttribute('hidden');
-      btnAll.setAttribute('aria-label', `Image Saver: Save all ${n} media in this post`);
-      btnAll.setAttribute('title', `Image Saver: Save all ${n} media in this post`);
+      isLabel(btnAll, 'aria-label', 'inline.saveAllAria', `Image Saver: Save all ${n} media in this post`, { n });
+      isLabel(btnAll, 'title', 'inline.saveAllAria', `Image Saver: Save all ${n} media in this post`, { n });
     } else {
       btnAll.setAttribute('hidden', '');
-      btnAll.removeAttribute('aria-label');
-      btnAll.removeAttribute('title');
+      isLabel(btnAll, 'aria-label', null, null);
+      isLabel(btnAll, 'title', null, null);
       btnAll.style.setProperty('display', 'none');
     }
   }

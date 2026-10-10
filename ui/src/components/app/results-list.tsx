@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ResultRow } from "@/components/app/result-row"
 import { ScrollFade } from "@/components/app/scroll-fade"
 import { createFeedbackList } from "@/core/feedbackList.js"
+import { useI18n } from "@/hooks/use-i18n"
 import { useStore } from "@/hooks/use-store"
 import { getEnv } from "@/lib/env"
 
@@ -15,6 +16,7 @@ type Controller = ReturnType<typeof createFeedbackList>
 
 function ListBody({ controller, compact }: { controller: Controller; compact: boolean }) {
   const state: any = useStore(controller.store)
+  const { t, msg } = useI18n()
   const env = { FB: getEnv().FB, navigator: controller.env.navigator, version: controller.env.version, browser: controller.env.browser }
   const unread = new Set<string>(state.unreadIds)
   const openFull = controller.canOpenFull ? (record: any) => { void controller.openFull(record) } : undefined
@@ -34,7 +36,7 @@ function ListBody({ controller, compact }: { controller: Controller; compact: bo
     body = (
       <p className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground" data-slot="empty">
         <Inbox className="size-4 shrink-0" aria-hidden="true" />
-        Пока нет результатов сохранения.
+        {t("results.empty")}
       </p>
     )
   } else {
@@ -60,14 +62,14 @@ function ListBody({ controller, compact }: { controller: Controller; compact: bo
       <div aria-live="polite" data-slot="listbox">{body}</div>
       {state.error ? (
         <Alert variant="destructive" role="alert" className="mt-2">
-          <AlertDescription>{state.error}</AlertDescription>
+          <AlertDescription>{msg(state.error)}</AlertDescription>
         </Alert>
       ) : null}
       {!compact ? (
         <div className="mt-3">
           <Button type="button" variant="outline" size="sm" disabled={state.clearing} onClick={() => { void controller.clear() }}>
             <Eraser />
-            Очистить завершённые
+            {t("results.clear")}
           </Button>
         </div>
       ) : null}
@@ -97,6 +99,7 @@ export function ResultsList({
   heading?: boolean
 }) {
   const [controller, setController] = useState<Controller | null>(null)
+  const { t } = useI18n()
 
   useEffect(() => {
     const env = getEnv()
@@ -116,10 +119,10 @@ export function ResultsList({
   }, [controller, visible])
 
   return (
-    <section aria-label="Недавние результаты сохранения" data-slot="results-section">
+    <section aria-label={t("results.aria")} data-slot="results-section">
       {heading ? (
         <h2 className="mb-2 text-sm font-semibold tracking-tight" data-slot="heading">
-          {compact ? "Последние сохранения" : "Результаты сохранения"}
+          {compact ? t("quick.recent") : t("results.heading")}
         </h2>
       ) : null}
       {controller ? (

@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { BrandMark } from "@/components/app/brand"
 import { HistoryPanel } from "@/components/app/history-panel"
+import { LanguageSelect } from "@/components/app/language-select"
 import { ResultsList } from "@/components/app/results-list"
 import {
   EmbedPanel,
@@ -15,26 +16,22 @@ import {
   UpdatesPanel,
   type SettingsController,
 } from "@/components/app/settings-panels"
+import { I18n } from "@/core/i18n.js"
 import { DEFAULT_SECTION, SECTIONS, SETTINGS_SECTIONS, focusIdFromLocation, sectionFromLocation } from "@/core/nav.js"
+import { useI18n } from "@/hooks/use-i18n"
 import { getEnv } from "@/lib/env"
 
-const TAB_LABELS: Record<string, string> = {
-  history: "Статистика и история",
-  saving: "Сохранение",
-  notifications: "Уведомления",
-  embed: "Embed",
-  updates: "Обновления",
-}
 const TAB_ICONS: Record<string, typeof History> = { history: History, saving: FolderOpen, notifications: Bell, embed: Share2, updates: RefreshCw }
 
 /**
- * The full extension page. Four sections as an accessible tab list. Deep links: popup.html#<section>,
+ * The full extension page. Five sections as an accessible tab list. Deep links: popup.html#<section>,
  * popup.html?section=<section>, popup.html?op=<operation id> (history section, that operation is opened).
- * All panels stay mounted (hidden when inactive) so unsaved edits survive a tab switch and a results list that was
- * rendered while hidden acknowledges its failures only after the History panel is actually shown.
+ * All panels stay mounted (hidden when inactive) so unsaved edits survive a tab switch and a language change, and a results
+ * list that was rendered while hidden acknowledges its failures only after the History panel is actually shown.
  */
 export function FullApp({ settings }: { settings: SettingsController }) {
   const env = getEnv()
+  const { t } = useI18n()
   const [section, setSection] = useState<string>(() => sectionFromLocation(env.location))
   const focusId = focusIdFromLocation(env.location)
 
@@ -62,16 +59,17 @@ export function FullApp({ settings }: { settings: SettingsController }) {
   return (
     <TooltipProvider>
       <div className="mx-auto flex min-h-screen w-full max-w-[880px] flex-col gap-4 px-4 py-5 sm:px-6" data-popup="full">
-        <header className="flex items-center gap-3 border-b pb-4">
+        <header className="flex flex-wrap items-center gap-3 border-b pb-4">
           <BrandMark className="size-11" />
-          <div>
+          <div className="min-w-0 flex-1">
             <h1 className="text-lg font-bold tracking-tight">Image Saver</h1>
-            <p className="text-xs text-muted-foreground">История, статистика и настройки</p>
+            <p className="text-xs text-muted-foreground">{t("app.subtitle")}</p>
           </div>
+          <LanguageSelect />
         </header>
 
         <Tabs value={section} onValueChange={select} className="flex-1 gap-4">
-          <TabsList variant="line" aria-label="Разделы" className="h-auto w-full flex-wrap justify-start gap-1 border-b pb-0">
+          <TabsList variant="line" aria-label={t("app.sections")} className="h-auto w-full flex-wrap justify-start gap-1 border-b pb-0">
             {SECTIONS.map((name) => {
               const Icon = TAB_ICONS[name]
               return (
@@ -82,14 +80,14 @@ export function FullApp({ settings }: { settings: SettingsController }) {
                   className="h-9 flex-none px-3 data-[state=active]:text-foreground data-[state=active]:after:opacity-100 after:!bottom-[-1px]"
                 >
                   <Icon aria-hidden="true" />
-                  {TAB_LABELS[name]}
+                  {t(`tab.${name}`)}
                 </TabsTrigger>
               )
             })}
           </TabsList>
 
           <TabsContent value="history" forceMount hidden={section !== "history"} className="space-y-4 data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">Статистика и история</h2>
+            <h2 className="sr-only">{t("tab.history")}</h2>
             <Card data-slot="recent">
               <CardContent>
                 <ResultsList compact={false} focusId={focusId} visible={section === "history"} />
@@ -98,19 +96,19 @@ export function FullApp({ settings }: { settings: SettingsController }) {
             <HistoryPanel />
           </TabsContent>
           <TabsContent value="saving" forceMount hidden={section !== "saving"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">Сохранение</h2>
+            <h2 className="sr-only">{t("tab.saving")}</h2>
             <SavingPanel settings={settings} />
           </TabsContent>
           <TabsContent value="notifications" forceMount hidden={section !== "notifications"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">Уведомления</h2>
+            <h2 className="sr-only">{t("tab.notifications")}</h2>
             <NotificationsPanel settings={settings} />
           </TabsContent>
           <TabsContent value="embed" forceMount hidden={section !== "embed"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">Embed</h2>
+            <h2 className="sr-only">{t("tab.embed")}</h2>
             <EmbedPanel settings={settings} />
           </TabsContent>
           <TabsContent value="updates" forceMount hidden={section !== "updates"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">Обновления</h2>
+            <h2 className="sr-only">{t("tab.updates")}</h2>
             <UpdatesPanel active={section === "updates"} />
           </TabsContent>
         </Tabs>
@@ -119,10 +117,11 @@ export function FullApp({ settings }: { settings: SettingsController }) {
 
         <footer className="space-y-1 border-t pt-3 text-xs text-muted-foreground">
           <p>
-            <strong className="font-semibold text-foreground">Как пользоваться:</strong> нажмите правой кнопкой мыши по изображению, видео или превью поста и выберите <em>«Image Saver: Save media»</em>.
+            <strong className="font-semibold text-foreground">{t("app.howto.label")}</strong> {t("app.howto.text")}{" "}
+            <em>{t("app.howto.menu", { title: I18n.MENU_TITLE })}</em>.
           </p>
           <p data-slot="credits">
-            Интерфейс: <span>shadcn/ui</span>, <span>Radix UI</span> и <span>Lucide</span>. Лицензии —{" "}
+            {t("app.credits.label")} <span>shadcn/ui</span>, <span>Radix UI</span> {t("app.credits.and")} <span>Lucide</span>. {t("app.credits.licenses")}{" "}
             <a href="./THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener noreferrer" className="text-ring underline underline-offset-2 hover:text-foreground">
               THIRD_PARTY_NOTICES.txt
             </a>

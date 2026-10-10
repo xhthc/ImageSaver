@@ -1380,6 +1380,62 @@ async function runYouTubeSharingTests() {
     assert(idD === null, 'Active container with child attribute conflicting with page URL fails closed');
   }
 
+  // UI-LOCALIZATION-01: the inline labels follow the interface language when the shared catalogue (lib/i18n.js) runs first, as the
+  // manifest loads it: no saved choice -> the browser language; a saved choice wins; existing buttons follow language changes.
+  console.log('\n--- Suite L: Inline labels follow the interface language ---');
+  {
+    const i18nCode = fs.readFileSync(path.resolve(__dirname, 'lib/i18n.js'), 'utf8');
+    const settle = () => new Promise((r) => setTimeout(r, 5));
+    const labelled = async ({ uiLanguage, saved, deferPreference = false }) => {
+      const listeners = [];
+      const local = saved === undefined ? {} : { uiLanguage: saved };
+      let releaseRead;
+      const preferenceReady = deferPreference ? new Promise((r) => { releaseRead = r; }) : Promise.resolve();
+      const chromeL = {
+        runtime: { lastError: null },
+        i18n: { getUILanguage: () => uiLanguage },
+        storage: {
+          local: { get: async (defaults) => { await preferenceReady; return Object.assign({}, defaults, local); }, set: async (items) => { Object.assign(local, items); } },
+          onChanged: { addListener(cb) { listeners.push(cb); } }
+        }
+      };
+      const sb = {
+        URL, chrome: chromeL, document: mockDoc, navigator: { language: uiLanguage, clipboard: mockNavigator.clipboard }, console, setTimeout, clearTimeout,
+        window: { addEventListener() {}, location: { href: 'https://www.youtube.com/shorts/dQw4w9WgXcQ' }, navigator: mockNavigator }
+      };
+      vm.createContext(sb);
+      vm.runInContext(i18nCode, sb);
+      vm.runInContext(ytCode, sb);
+      await settle();
+      const button = () => {
+        const renderer = new TestDomElement('ytd-reel-video-renderer');
+        const actions = new TestDomElement('div', { id: 'actions' });
+        renderer.appendChild(actions);
+        renderer.appendChild(new TestDomElement('a', { href: '/shorts/LANG_TEST_1' }));
+        sb.__injectCopyButtonToYouTubeShort(renderer);
+        return actions.querySelector('.image-saver-yt-copy-wrap');
+      };
+      return { button, releaseRead: async () => { releaseRead(); await settle(); }, change: async (value) => { for (const cb of listeners) cb({ uiLanguage: { newValue: value } }, 'local'); await settle(); } };
+    };
+
+    const en = await labelled({ uiLanguage: 'en-US' });
+    let b = en.button();
+    assert(b.getAttribute('title') === 'Image Saver: Copy Short link' && b.getAttribute('aria-label') === 'Copy Short link', 'L1: an English browser with no saved choice gets English inline labels');
+    await en.change('ru');
+    assert(b.getAttribute('title') === 'Image Saver: Скопировать ссылку на Short' && b.getAttribute('aria-label') === 'Скопировать ссылку на Short', 'L2: a language change updates the existing button without reinjection');
+    const delayed = await labelled({ uiLanguage: 'en', saved: 'ru', deferPreference: true });
+    const early = delayed.button();
+    assert(early.getAttribute('title') === 'Image Saver: Copy Short link', 'L6: the browser language is used while the preference read is pending');
+    await delayed.releaseRead();
+    assert(early.getAttribute('title') === 'Image Saver: Скопировать ссылку на Short' && early.getAttribute('aria-label') === 'Скопировать ссылку на Short', 'L7: a delayed saved preference updates an already drawn button');
+    const saved = await labelled({ uiLanguage: 'ru-RU', saved: 'en' });
+    assert(saved.button().getAttribute('title') === 'Image Saver: Copy Short link', 'L3: a saved English choice wins over a Russian browser');
+    const invalid = await labelled({ uiLanguage: 'ru', saved: 'de' });
+    assert(invalid.button().getAttribute('title') === 'Image Saver: Скопировать ссылку на Short', 'L4: an invalid saved value falls back to the browser language');
+    const other = await labelled({ uiLanguage: 'de-DE' });
+    assert(other.button().getAttribute('aria-label') === 'Copy Short link', 'L5: a non-Russian browser gets English');
+  }
+
   console.log(`\n======================================================`);
   console.log(`Total tests passed: ${passedTests}`);
   console.log(`Total tests failed: ${failedTests}`);

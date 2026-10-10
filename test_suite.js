@@ -20027,19 +20027,22 @@ async function runTests() {
     const popupHtml = fs.readFileSync(path.resolve(__dirname, 'ui/src/components/app/settings-panels.tsx'), 'utf8');
 
     // 226.1: Embed panel structure and exact user-owned labels
+    // UI-LOCALIZATION-01: each option is a host plus its translated role; the Russian labels are rendered from the catalogue (lib/i18n.js)
+    const embedI18n = (() => { const sb = {}; vm.createContext(sb); vm.runInContext(fs.readFileSync(path.resolve(__dirname, 'lib/i18n.js'), 'utf8'), sb); return sb.ImageSaverI18n; })();
+    const embedOption = (host, role, label) => popupHtml.includes(`["${host}", "${role}"]`) && embedI18n.t('ru', role, { host }) === label;
     assert(
       popupHtml.includes('"igShareHostSelect"') &&
       popupHtml.includes('"ttShareHostSelect"') &&
       popupHtml.includes('"xShareHostSelect"') &&
-      popupHtml.includes('x.com (оригинал, по умолчанию)') &&
-      popupHtml.includes('fixupx.com (основной)') &&
-      popupHtml.includes('cunnyx.com (резерв)') &&
-      popupHtml.includes('instagram.com (оригинал, по умолчанию)') &&
-      popupHtml.includes('oginstagram.com (основной)') &&
-      popupHtml.includes('kirkstagram.com (резерв)') &&
-      popupHtml.includes('tiktok.com (оригинал, по умолчанию)') &&
-      popupHtml.includes('tnktok.com (основной)') &&
-      popupHtml.includes('d.tnktok.com (резерв)') &&
+      embedOption('x.com', 'embed.original', 'x.com (оригинал, по умолчанию)') &&
+      embedOption('fixupx.com', 'embed.primary', 'fixupx.com (основной)') &&
+      embedOption('cunnyx.com', 'embed.backup', 'cunnyx.com (резерв)') &&
+      embedOption('instagram.com', 'embed.original', 'instagram.com (оригинал, по умолчанию)') &&
+      embedOption('oginstagram.com', 'embed.primary', 'oginstagram.com (основной)') &&
+      embedOption('kirkstagram.com', 'embed.backup', 'kirkstagram.com (резерв)') &&
+      embedOption('tiktok.com', 'embed.original', 'tiktok.com (оригинал, по умолчанию)') &&
+      embedOption('tnktok.com', 'embed.primary', 'tnktok.com (основной)') &&
+      embedOption('d.tnktok.com', 'embed.backup', 'd.tnktok.com (резерв)') &&
       !popupHtml.includes('eeinstagram.com') &&
       !popupHtml.includes('uuinstagram.com') &&
       !popupHtml.includes('ddinstagram.com') &&

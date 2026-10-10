@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { BrandMark } from "@/components/app/brand"
 import { ResultsList } from "@/components/app/results-list"
 import { createQuick } from "@/core/quick.js"
+import { useI18n } from "@/hooks/use-i18n"
 import { useStore } from "@/hooks/use-store"
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -14,6 +15,7 @@ export type QuickController = ReturnType<typeof createQuick>
 /** The compact toolbar popup: recent results while history is enabled, otherwise a small invitation to enable it. */
 export function QuickApp({ quick }: { quick: QuickController }) {
   const s: any = useStore(quick.store)
+  const { t, msg } = useI18n()
   const showList = s.ready && s.enabled
   const showInvite = s.ready && !s.enabled && !s.dismissed
   const empty = s.ready && !showList && !showInvite
@@ -27,7 +29,7 @@ export function QuickApp({ quick }: { quick: QuickController }) {
             <h1 className="text-base font-bold tracking-tight">Image Saver</h1>
             {showList ? (
               <p className="text-xs text-muted-foreground" id="quickSubtitle">
-                Последние сохранения
+                {t("quick.recent")}
               </p>
             ) : null}
           </div>
@@ -38,14 +40,14 @@ export function QuickApp({ quick }: { quick: QuickController }) {
                 id="openSettingsButton"
                 variant="ghost"
                 size="icon"
-                aria-label="Настройки"
+                aria-label={t("quick.settings")}
                 onClick={() => { void quick.openSettings("saving") }}
               >
                 <Settings />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom" align="end">
-              Настройки
+              {t("quick.settings")}
             </TooltipContent>
           </Tooltip>
         </header>
@@ -65,31 +67,29 @@ export function QuickApp({ quick }: { quick: QuickController }) {
 
         {showInvite ? (
           <main id="quickMain">
-            <aside id="historyInvite" aria-label="Предложение включить историю" className="space-y-3 rounded-lg border bg-card p-3">
+            <aside id="historyInvite" aria-label={t("quick.invite.aria")} className="space-y-3 rounded-lg border bg-card p-3">
               <div className="flex gap-2.5">
                 <History className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                <p className="text-sm leading-snug">
-                  Включите историю, чтобы здесь появлялись последние сохранения. Это можно сделать и позже на странице настроек.
-                </p>
+                <p className="text-sm leading-snug">{t("quick.invite.text")}</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" size="sm" id="enableHistoryButton" aria-label="Включить историю" onClick={() => { void quick.enableHistory() }}>
-                  Включить историю
+                <Button type="button" size="sm" id="enableHistoryButton" aria-label={t("quick.invite.enable")} onClick={() => { void quick.enableHistory() }}>
+                  {t("quick.invite.enable")}
                 </Button>
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
                   id="dismissHistoryInviteButton"
-                  aria-label="Скрыть предложение включить историю"
+                  aria-label={t("quick.invite.dismissAria")}
                   onClick={() => { void quick.dismissInvite() }}
                 >
-                  Скрыть
+                  {t("quick.invite.dismiss")}
                 </Button>
               </div>
               {s.inviteError ? (
                 <Alert variant="destructive" role="alert">
-                  <AlertDescription>{s.inviteError}</AlertDescription>
+                  <AlertDescription>{msg(s.inviteError)}</AlertDescription>
                 </Alert>
               ) : null}
             </aside>

@@ -1,5 +1,13 @@
 // content_reddit.js - Reddit DOM detection and post metadata extraction for Image Saver
 (() => {
+  const isI18n = globalThis.ImageSaverI18n;
+  const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
+  const isLabel = (element, field, key, fallback, vars) => {
+    if (isLabels) isLabels.label(element, field, key, vars, fallback);
+    else if (field === 'textContent') element.textContent = fallback;
+    else if (fallback === null) element.removeAttribute(field);
+    else element.setAttribute(field, fallback);
+  };
   let lastContextmenuTarget = null;
   let lastContextmenuPath = [];
   let lastContextmenuTime = 0;
@@ -1801,20 +1809,20 @@
       hs.setProperty('align-items', tier === 'compact' ? 'center' : 'flex-end');
       hs.setProperty('justify-content', 'flex-end');
     }
-    btn.setAttribute('aria-label', 'Image Saver: Save this media');
-    btn.setAttribute('title', 'Image Saver: Save this media');
-    lbl.textContent = tier === 'wide' ? 'Save this' : '';
+    isLabel(btn, 'aria-label', 'inline.saveThisAria', 'Image Saver: Save this media');
+    isLabel(btn, 'title', 'inline.saveThisAria', 'Image Saver: Save this media');
+    isLabel(lbl, 'textContent', tier === 'wide' ? 'inline.saveThis' : null, tier === 'wide' ? 'Save this' : '');
     lbl.style.setProperty('display', tier === 'wide' ? 'inline' : 'none');
-    lblAll.textContent = tier === 'wide' ? `Save all (${n})` : (tier === 'compact' ? String(n) : '');
+    isLabel(lblAll, 'textContent', tier === 'wide' ? 'inline.saveAll' : null, tier === 'wide' ? `Save all (${n})` : (tier === 'compact' ? String(n) : ''), { n });
     lblAll.style.setProperty('display', multi ? 'inline' : 'none');
     if (multi) {
       btnAll.removeAttribute('hidden');
-      btnAll.setAttribute('aria-label', `Image Saver: Save all ${n} media in this post`);
-      btnAll.setAttribute('title', `Image Saver: Save all ${n} media in this post`);
+      isLabel(btnAll, 'aria-label', 'inline.saveAllAria', `Image Saver: Save all ${n} media in this post`, { n });
+      isLabel(btnAll, 'title', 'inline.saveAllAria', `Image Saver: Save all ${n} media in this post`, { n });
     } else {
       btnAll.setAttribute('hidden', '');
-      btnAll.removeAttribute('aria-label');
-      btnAll.removeAttribute('title');
+      isLabel(btnAll, 'aria-label', null, null);
+      isLabel(btnAll, 'title', null, null);
       btnAll.style.setProperty('display', 'none');
     }
   }

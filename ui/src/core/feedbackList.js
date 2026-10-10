@@ -25,7 +25,7 @@ export function browserLabel(nav) {
   }
 }
 
-const UNAVAILABLE = 'Не удалось загрузить результаты сохранения.';
+const UNAVAILABLE = 'results.error'; // a catalogue key (lib/i18n.js), translated when rendered
 
 /**
  * @param {{ chrome: any, FB: any, navigator?: any }} deps

@@ -105,6 +105,8 @@ function makeChrome(state) {
       },
     },
     tabs: { create: async (o) => { if (state.failTabs) throw new Error('TABS'); calls.tabsCreate.push(o.url); return { id: 1 }; } },
+    // the browser UI language (UI-LOCALIZATION-01): Russian unless a test sets state.uiLanguage; a saved uiLanguage wins over it
+    i18n: { getUILanguage: () => (state.uiLanguage === undefined ? 'ru' : state.uiLanguage) },
   };
   return { chrome, calls };
 }
@@ -154,15 +156,19 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await U.act(async () => { setter.call(el, value); el.dispatchEvent(new win.Event('input', { bubbles: true })); await sleep(0); });
     await p.settle(2);
   };
+  // the pages render inside the language provider, as quick-main.tsx and full-main.tsx do
+  p.language = U.createLanguage({ chrome, navigator: win.navigator });
+  const provide = (el, titleKey) => U.React.createElement(U.I18nProvider, { language: p.language, titleKey }, el);
   if (kind === 'quick') {
     p.quick = U.createQuick({ chrome, window: win });
-    await U.act(async () => { root.render(U.React.createElement(U.QuickApp, { quick: p.quick })); });
+    await U.act(async () => { root.render(provide(U.React.createElement(U.QuickApp, { quick: p.quick }))); });
     await p.quick.ready;
   } else {
     p.settings = U.createSettings({ chrome, FolderPath: win.ImageSaverFolderPath });
-    await U.act(async () => { root.render(U.React.createElement(U.FullApp, { settings: p.settings })); });
+    await U.act(async () => { root.render(provide(U.React.createElement(U.FullApp, { settings: p.settings }), 'app.title')); });
     await p.settings.load();
   }
+  await U.act(async () => { await p.language.ready; });
   await p.settle(8);
   p.rows = () => p.qa('[data-slot="result-item"]');
   p.tabs = () => p.qa('[role="tab"]');
@@ -217,8 +223,9 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     dom.window.eval(libFeedback); dom.window.chrome = chrome; dom.window.MessageChannel = MessageChannel; dom.window.eval(bundle); dom.window.IS_REACT_ACT_ENVIRONMENT = true;
     const U = dom.window.__ui;
     const quick = U.createQuick({ chrome, window: dom.window });
+    const language = U.createLanguage({ chrome, navigator: dom.window.navigator });
     const root = U.createRoot(dom.window.document.getElementById('root'));
-    await U.act(async () => { root.render(U.React.createElement(U.QuickApp, { quick })); });
+    await U.act(async () => { root.render(U.React.createElement(U.I18nProvider, { language }, U.React.createElement(U.QuickApp, { quick }))); });
     assert(dom.window.document.querySelector('h1') && !dom.window.document.querySelector('main') && !dom.window.document.querySelector('[data-slot="result-item"]'), 'R2a: until the preferences were read only the header is shown (no flash of the wrong view)');
     release();
     await quick.ready;
@@ -528,7 +535,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const p = await page('quick', state);
     const rows = () => p.rows().map((r) => ({ name: (r.querySelector('[data-slot="name"]') || r.querySelector('[data-slot="legacy"]')).textContent, kind: r.getAttribute('data-state-kind'), unread: r.getAttribute('data-unread') }));
     assert(rows().length === 1 && rows()[0].name === 'first.jpg', 'R10a: the popup opens with one result');
-    assert((state.changeListeners || []).length === 2, 'R10b: the popup holds two subscriptions: the preferences and the results list');
+    assert((state.changeListeners || []).length === 3, 'R10b: the popup holds three subscriptions: the preferences, the interface language and the results list');
 
     state.session.push(rec({ state: 'saving', filename: 'moving.jpg', filenameKind: 'intended', output: {} }));
     emit(state);
@@ -560,7 +567,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p.settle(8);
     assert(p.rows().length === 0 && /Пока нет результатов сохранения\./.test(p.q('[data-slot="empty"]').textContent), 'R10i: a clear elsewhere empties the open popup');
     await p.unmount();
-    assert((state.changeListeners || []).length === 1, 'R10j: closing the popup removes the results subscription (the preferences controller of the page remains until the page is gone)');
+    assert((state.changeListeners || []).length === 2, 'R10j: closing the popup removes the results subscription (the preferences and language controllers of the page remain until the page is gone)');
     const requests = p.calls.messages.length;
     state.session.push(rec());
     emit(state);
@@ -578,7 +585,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await f.settle(10);
     assert(val('total') === '2' && val('failed') === '1' && f.qa('[data-slot="history"] [data-slot="result-item"]').length === 2 && f.qa('[data-slot="results-section"] [data-slot="result-item"]').length === 2, 'R10m: the open full page shows the new failure in the results and in the history, and updates the statistics');
     await f.unmount();
-    assert((fstate.changeListeners || []).length === 0, 'R10n: closing the page removes the subscriptions of the results list and the history');
+    assert((fstate.changeListeners || []).length === 1, 'R10n: closing the page removes the subscriptions of the results list and the history (only the page-lifetime language controller remains)');
   }
 
   // =================================================================================================
@@ -697,7 +704,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(p.win.location.hash === '#updates' && !p.q('#settingsSaveBar'), 'R12b: Updates deep link and tab do not use the unrelated save bar');
     assert(p.calls.releaseRequests.length === 1 && /Доступна версия 2.0.0.21/.test(p.q('[data-slot="update-status"]').textContent), 'R12c: entering Updates performs a release check and renders the available version');
     const link = p.q('[data-slot="updates"] a');
-    assert(link.href === 'https://github.com/xhthc/ImageSaver/releases/tag/v2.0.0.21' && link.rel === 'noopener noreferrer' && !p.text().includes('evil'), 'R12d: release link stays in the fixed repository; remote HTML is not rendered');
+    assert(link.href === 'https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.21' && link.rel === 'noopener noreferrer' && !p.text().includes('evil'), 'R12d: release link stays in the fixed repository; remote HTML is not rendered');
     assert(p.q('#releaseChannelSelect').getAttribute('role') === 'combobox' && p.q('label[for="releaseChannelSelect"]'), 'R12e: release channel has an accessible label');
     assert(/той же папке/.test(p.text()) && /не скачивает и не устанавливает/.test(p.text()), 'R12f: panel explains manual replacement at the same path and reload');
     await p.mousedown(p.tabs()[0]); await p.mousedown(p.tabs()[4]);
@@ -711,6 +718,72 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const empty = await page('full', { session: [], history: [], local: {} }, { hash: '#updates' });
     assert(/пока нет/.test(empty.q('[data-slot="update-status"]').textContent) && empty.calls.releaseRequests.length === 1, 'R12k: Updates deep link handles an empty published-release list');
     await empty.unmount();
+  }
+
+  // =================================================================================================
+  console.log('\n--- R13. UI-LOCALIZATION-01: English / Русский on both pages, live switch, persistence and failures ---');
+  {
+    const chooseLanguage = async (p, name) => {
+      await p.key(p.q('#languageSelect'), 'Enter');
+      await p.settle(6);
+      const option = p.qa('[role="option"]').find((o) => o.textContent.trim() === name);
+      if (!option) return false;
+      await p.key(option, 'Enter');
+      await p.settle(8);
+      return true;
+    };
+    const tabNames = (p) => p.tabs().map((t) => t.textContent.trim()).join('|');
+    const failRec = rec({ state: 'failed', filename: 'clip <img src=x onerror=1> & co.mp4', filenameKind: 'intended', output: { type: 'video', ext: '.mp4', evidence: 'filename_hint' }, failure: failure('download', 'download_interrupted', { downloadError: 'NETWORK_FAILED' }) });
+    const state = { session: [rec({ filename: 'Фото.jpg' }), failRec], history: [rec({ filename: 'old-entry.jpg' })], local: { historyEnabled: true } };
+
+    const full = await page('full', state, { hash: '#saving' });
+    assert(tabNames(full) === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления' && full.doc.documentElement.lang === 'ru' && full.doc.title === 'Image Saver: история и настройки', 'R13a: a Russian browser with no saved choice shows the Russian page (lang and title follow)');
+    const langBox = full.q('#languageSelect');
+    assert(langBox && langBox.getAttribute('role') === 'combobox' && full.q('label[for="languageSelect"]').textContent === 'Язык' && /Русский/.test(langBox.textContent), 'R13b: the language choice is a labelled combobox showing the current language');
+    const quick = await page('quick', state);
+    assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Настройки' && quick.doc.documentElement.lang === 'ru', 'R13c: the compact popup opens in the same language');
+
+    // an unsaved edit survives en -> ru -> en; only the language is written
+    await full.type(full.q('#subfolderInput'), 'Unsaved/Edit');
+    const setsBefore = full.calls.localSets.length;
+    assert(await chooseLanguage(full, 'English'), 'R13d: setup - English is offered by its own name');
+    assert(tabNames(full) === 'Statistics and history|Saving|Notifications|Embed|Updates' && full.doc.documentElement.lang === 'en' && full.doc.title === 'Image Saver: history and settings', 'R13e: ru -> en switches the open page at once (tabs, lang, title)');
+    assert(full.q('#subfolderInput').value === 'Unsaved/Edit' && full.q('#folderPreviewPath').textContent === 'Downloads/Unsaved/Edit/photo.jpg' && JSON.stringify(full.calls.localSets.slice(setsBefore)) === JSON.stringify([{ uiLanguage: 'en' }]), 'R13f: the unsaved folder edit is kept and only uiLanguage is written');
+    assert(/Save settings/.test(full.q('#saveButton').textContent) && /“Image Saver: Save media”/.test(full.text()) && full.q('label[for="languageSelect"]').textContent === 'Language', 'R13g: buttons, labels and the fixed menu title follow');
+    await quick.settle(6);
+    assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && quick.doc.documentElement.lang === 'en' && /Saved/.test(quick.rows()[1].textContent) && /new/.test(quick.rows()[0].textContent), 'R13h: the open compact popup follows the change made on the full page (rows and accessible names)');
+    assert(quick.q('[data-slot="name"]').textContent === 'clip <img src=x onerror=1> & co.mp4' && quick.doc.querySelectorAll('img').length === 0, 'R13i: an original file name is shown as text in every language, never as markup');
+    assert(await chooseLanguage(full, 'Русский') && tabNames(full).startsWith('Статистика и история') && full.q('#subfolderInput').value === 'Unsaved/Edit', 'R13j: en -> ru keeps the edit');
+    assert(await chooseLanguage(full, 'English') && tabNames(full).startsWith('Statistics and history') && full.q('#subfolderInput').value === 'Unsaved/Edit' && state.local.uiLanguage === 'en' && state.local.subfolder === undefined, 'R13k: ru -> en again; the folder edit is still unsaved');
+    await full.mousedown(full.tabs()[0]);
+    assert(/Operations in history/.test(full.text()) && /Save history/.test(full.text()) && /Clear finished/.test(full.text()), 'R13l: statistics, history and results are English');
+    const failRow = full.qa('[data-slot="results-section"] [data-slot="result-item"]').find((r) => r.getAttribute('data-state-kind') === 'failed');
+    await full.click(failRow.querySelector('button'));
+    assert(/Download interrupted/.test(failRow.textContent) && /Chrome code: NETWORK_FAILED/.test(failRow.textContent) && /Copy report/.test(failRow.textContent) && /Image Saver bug report/.test(failRow.querySelector('textarea[readonly]').value), 'R13m: an older record is shown in English; diagnostic codes and the report format stay intact');
+
+    // close / reopen: the saved choice is read again
+    await quick.unmount();
+    await full.unmount();
+    const reopened = await page('full', state);
+    assert(tabNames(reopened).startsWith('Statistics and history') && reopened.doc.documentElement.lang === 'en', 'R13n: a reopened page uses the saved English choice over the Russian browser');
+
+    // a failed write keeps the language and says so
+    state.failSet = true;
+    await chooseLanguage(reopened, 'Русский');
+    assert(tabNames(reopened).startsWith('Statistics and history') && state.local.uiLanguage === 'en' && /Could not save the language/.test(reopened.q('[data-slot="language-status"]').textContent), 'R13o: a failed write keeps English and reports the failure (no success state)');
+    state.failSet = false;
+    await reopened.unmount();
+
+    // an unreadable preference shows the browser language and says so; an English browser defaults to English
+    const unreadable = await page('full', { session: [], history: [], local: { uiLanguage: 'en' }, failGet: true });
+    assert(tabNames(unreadable).startsWith('Статистика и история') && /Не удалось прочитать сохранённый язык/.test(unreadable.q('[data-slot="language-status"]').textContent), 'R13p: an unreadable preference shows the browser language with a message');
+    await unreadable.unmount();
+    const enBrowser = await page('quick', { session: [], history: [], local: {}, uiLanguage: 'en-US' });
+    assert(enBrowser.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && /Enable history/.test(enBrowser.q('#enableHistoryButton').textContent), 'R13q: an English browser with no saved choice gets the English compact popup');
+    await enBrowser.unmount();
+    const invalid = await page('quick', { session: [], history: [], local: { uiLanguage: 'de' }, uiLanguage: 'ru-RU' });
+    assert(invalid.q('#openSettingsButton').getAttribute('aria-label') === 'Настройки' && invalid.calls.localSets.length === 0, 'R13r: an invalid saved value falls back to the browser language and is not rewritten');
+    await invalid.unmount();
   }
 
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);

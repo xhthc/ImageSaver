@@ -12,6 +12,7 @@ import { StatsCard } from "@/components/app/stats-card"
 import { browserLabel } from "@/core/feedbackList.js"
 import { createHistory } from "@/core/history.js"
 import { statsView } from "@/core/present.js"
+import { useI18n } from "@/hooks/use-i18n"
 import { useStore } from "@/hooks/use-store"
 import { getEnv } from "@/lib/env"
 
@@ -20,6 +21,7 @@ type Controller = ReturnType<typeof createHistory>
 
 function HistoryBody({ controller }: { controller: Controller }) {
   const state: any = useStore(controller.store)
+  const { t, msg, lang } = useI18n()
   const env = getEnv()
   const detailsEnv = {
     FB: env.FB,
@@ -27,7 +29,7 @@ function HistoryBody({ controller }: { controller: Controller }) {
     version: (() => { try { return env.chrome.runtime.getManifest().version } catch { return "" } })(),
     browser: browserLabel(env.navigator),
   }
-  const view = statsView(env.FB, state.records, state.status === "loading" ? "loading" : state.status === "error" ? "error" : "ok", state.enabled)
+  const view = statsView(env.FB, state.records, state.status === "loading" ? "loading" : state.status === "error" ? "error" : "ok", state.enabled, lang)
 
   return (
     <div className="space-y-4">
@@ -36,11 +38,9 @@ function HistoryBody({ controller }: { controller: Controller }) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <HistoryIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-            История сохранений
+            {t("history.title")}
           </CardTitle>
-          <CardDescription className="text-xs">
-            Хранится только на этом устройстве: не более 50 записей и не дольше 7 дней. В истории нет ссылок на файлы, медиа и подписанных адресов; ссылка на пост показывается, только если пост удалось определить надёжно.
-          </CardDescription>
+          <CardDescription className="text-xs">{t("history.desc")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-start gap-3 rounded-lg border bg-background/40 p-3">
@@ -52,12 +52,12 @@ function HistoryBody({ controller }: { controller: Controller }) {
               className="mt-0.5"
             />
             <Label htmlFor="historyEnabledSwitch" className="cursor-pointer text-sm leading-snug font-normal">
-              Вести историю сохранений (по умолчанию выключено; выключение не удаляет уже записанное)
+              {t("history.switch")}
             </Label>
           </div>
           {state.prefError ? (
             <Alert variant="destructive" role="alert">
-              <AlertDescription>{state.prefError}</AlertDescription>
+              <AlertDescription>{msg(state.prefError)}</AlertDescription>
             </Alert>
           ) : null}
 
@@ -71,7 +71,7 @@ function HistoryBody({ controller }: { controller: Controller }) {
             {state.status === "ready" && !state.records.length ? (
               <p className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground" data-slot="empty">
                 <Inbox className="size-4 shrink-0" aria-hidden="true" />
-                История пуста.
+                {t("history.empty")}
               </p>
             ) : null}
             {state.status === "ready" && state.records.length ? (
@@ -84,16 +84,16 @@ function HistoryBody({ controller }: { controller: Controller }) {
           </div>
           {state.error ? (
             <Alert variant="destructive" role="alert">
-              <AlertDescription>{state.error}</AlertDescription>
+              <AlertDescription>{msg(state.error)}</AlertDescription>
             </Alert>
           ) : null}
           <div className="flex flex-wrap items-center gap-3">
             <Button type="button" variant="outline" size="sm" disabled={state.clearing} onClick={() => { void controller.clear() }}>
               <Trash2 />
-              Очистить историю
+              {t("history.clear")}
             </Button>
             <p role="status" aria-live="polite" className="min-h-4 text-xs text-muted-foreground" data-slot="clear-status">
-              {state.clearStatus}
+              {msg(state.clearStatus)}
             </p>
           </div>
         </CardContent>

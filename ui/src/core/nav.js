@@ -2,7 +2,7 @@
 // popup.html?op=<operation id> (opens the history section; the results list expands that operation).
 
 export const SECTIONS = Object.freeze(['history', 'saving', 'notifications', 'embed', 'updates']);
-// Sections served by the explicit "Сохранить настройки" button; the others apply immediately.
+// Sections served by the explicit "Save settings" button; the others apply immediately.
 export const SETTINGS_SECTIONS = Object.freeze(['saving', 'embed']);
 export const DEFAULT_SECTION = 'history';
 

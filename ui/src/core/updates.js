@@ -1,16 +1,17 @@
 import { createStore } from './store.js';
 
-export const RELEASES_URL = 'https://github.com/xhthc/ImageSaver/releases';
-export const RELEASES_API = 'https://api.github.com/repos/xhthc/ImageSaver/releases?per_page=100';
+export const RELEASES_URL = 'https://github.com/xhthc/MediaLatch/releases';
+export const RELEASES_API = 'https://api.github.com/repos/xhthc/MediaLatch/releases?per_page=100';
 export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const CACHE_KEY = 'imageSaverReleaseCheckV2'; // The old cache belongs to the previous repository.
+const CACHE_KEY = 'imageSaverReleaseCheckV3'; // Old endpoint failures must not suppress checks after the repository rename.
 const CHANNEL_KEY = 'imageSaverReleaseChannel';
+// Error codes of a check and their catalogue keys (lib/i18n.js); the store keeps the key, the page translates it.
 const ERRORS = {
-  network: 'Не удалось связаться с GitHub. Проверьте подключение и повторите проверку.',
-  timeout: 'GitHub не ответил за 10 секунд. Повторите проверку позже.',
-  limit: 'GitHub ограничил запросы. Повторите проверку позже.',
-  unavailable: 'Репозиторий или релизы недоступны. Если проект закрыт, проверка заработает после его публичной публикации.',
-  invalid: 'GitHub вернул неподдерживаемый ответ. Откройте страницу релизов вручную.',
+  network: 'updates.error.network',
+  timeout: 'updates.error.timeout',
+  limit: 'updates.error.limit',
+  unavailable: 'updates.error.unavailable',
+  invalid: 'updates.error.invalid',
 };
 
 // Chrome manifest versions have one to four numeric components. Release tags must match the manifest, optionally with v.
@@ -75,7 +76,7 @@ export function createUpdates(deps) {
           error: Object.hasOwn(ERRORS, cache.error) ? ERRORS[cache.error] : '',
         } : {}) });
       } catch (_) {
-        if (!disposed) store.setState({ notice: 'Не удалось прочитать настройки обновлений. Доступна ручная проверка.' });
+        if (!disposed) store.setState({ notice: 'updates.notice.read' });
       }
       if (!disposed) store.setState({ loaded: true });
     })();
@@ -110,7 +111,7 @@ export function createUpdates(deps) {
       if (disposed) return;
       const cache = { channel: state.channel, attemptedAt: now(), checkedAt, release, error };
       let notice = '';
-      try { await chrome.storage.local.set({ [CACHE_KEY]: cache }); } catch (_) { notice = 'Не удалось сохранить результат проверки. При следующем открытии проверка может повториться.'; }
+      try { await chrome.storage.local.set({ [CACHE_KEY]: cache }); } catch (_) { notice = 'updates.notice.cache'; }
       if (!disposed) store.setState({ ...cache, error: ERRORS[error] || '', notice, checking: false });
     })();
     try { await pending; } finally { pending = null; controller = null; }
@@ -120,7 +121,7 @@ export function createUpdates(deps) {
     if (disposed || pending || store.getState().checking || !['stable', 'beta'].includes(channel) || channel === store.getState().channel) return;
     store.setState({ checking: true });
     try { await chrome.storage.local.set({ [CHANNEL_KEY]: channel }); } catch (_) {
-      if (!disposed) store.setState({ checking: false, notice: 'Не удалось сохранить канал обновлений.' });
+      if (!disposed) store.setState({ checking: false, notice: 'updates.notice.channel' });
       return;
     }
     if (disposed) return;

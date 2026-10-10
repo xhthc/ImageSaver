@@ -46,6 +46,7 @@ All executed JavaScript and binary-processing libraries are bundled locally. Git
 ## Remaining store gates
 
 - Load the exact runtime ZIP in a clean Chromium profile. Confirm installation, permissions, popup/settings/history, unchanged first-click Save media and actual saved files.
+- Check both interface languages: English -> Russian -> English on the full page and the popup, close/reopen and browser restart, both page sizes, notifications, inline button labels and accessible names, and a failed language save. The native menu title must stay **Image Saver: Save media**.
 - Verify representative X, Reddit, RedGIFs and Pawchive image/video/GIF cases, including video audio where declared, reload/restart, missing files and rate-limit behavior. Existing ordinary acceptance does not establish every layout or browser.
 - Test at least Chrome plus the main Helium environment; broader Chromium/Firefox acceptance remains separate.
 - Capture real product screenshots using neutral, permitted media. Do not reuse private logs, account details or mature source-site previews in store imagery.

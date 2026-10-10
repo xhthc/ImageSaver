@@ -34,9 +34,9 @@ try {
   git('init', '-q');
   write('tools/package.mjs', fs.readFileSync(path.join(__dirname, 'tools/package.mjs')));
   const manifest = { manifest_version: 3, version: '2.0.0.25', background: { service_worker: 'background.js' },
-    action: { default_popup: 'popup/quick.html' }, icons: { 128: 'icons/128.png' }, content_scripts: [{ js: ['content_x.js'] }] };
+    action: { default_popup: 'popup/quick.html' }, icons: { 128: 'icons/128.png' }, content_scripts: [{ js: ['lib/i18n.js', 'content_x.js'] }] };
   write('manifest.json', JSON.stringify(manifest));
-  for (const file of ['background.js', 'content_x.js', 'offscreen.js', 'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'lib/gifenc.js',
+  for (const file of ['background.js', 'content_x.js', 'offscreen.js', 'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'lib/gifenc.js', 'lib/i18n.js',
     'popup/THIRD_PARTY_NOTICES.txt', 'popup/assets/app.js', 'icons/128.png']) write(file, 'committed');
   write('background.js', 'committed\nsecond line\n');
   write('offscreen.html', '<script src="offscreen.js"></script>');
@@ -56,6 +56,7 @@ try {
   assert.equal(metadata.sha256, sha(fs.readFileSync(output.archive)));
   const entries = metadata.files.map(f => f.path);
   assert(entries.includes('manifest.json') && entries.includes('lib/gifenc.js'));
+  assert(entries.includes('lib/i18n.js'), 'the interface catalogue referenced by the manifest ships in the runtime ZIP');
   assert(!entries.some(f => /AGENTS|CLAUDE|GEMINI|local-notes|recovery|^ui\/|^test_|private\.png/.test(f)));
   const zip = fs.readFileSync(output.archive);
   for (const entry of metadata.files) {

@@ -5,14 +5,13 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
-  RETRY_HINT,
-  REPORT_PRIVACY,
   buildReportText,
   copyText,
   filenameLine,
   hasReport,
   postUrlOf,
 } from "@/core/present.js"
+import { useI18n } from "@/hooks/use-i18n"
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export type DetailsEnv = { FB: any; navigator: any; version: string; browser: string }
@@ -20,7 +19,9 @@ export type DetailsEnv = { FB: any; navigator: any; version: string; browser: st
 /** Failure report: the notes and the preview are the allow-listed text; it is copied only on a click, never sent. */
 function ReportBox({ record, env }: { record: any; env: DetailsEnv }) {
   const notesId = useId()
+  const { t } = useI18n()
   const [notes, setNotes] = useState("")
+  // the status is kept as a key, so a language change re-renders it
   const [status, setStatus] = useState("")
   const [ok, setOk] = useState(false)
   const preview = useRef<HTMLTextAreaElement>(null)
@@ -35,11 +36,11 @@ function ReportBox({ record, env }: { record: any; env: DetailsEnv }) {
     try {
       await copyText(current, env.navigator)
       setOk(true)
-      setStatus("Отчёт скопирован в буфер обмена.")
+      setStatus("report.copied")
     } catch {
       // Truthful failure: nothing was copied. Select the text so the user can copy it manually.
       setOk(false)
-      setStatus("Не удалось скопировать автоматически. Выделите текст отчёта и нажмите Ctrl+C.")
+      setStatus("report.copyFailed")
       try {
         preview.current?.focus()
         preview.current?.select()
@@ -52,16 +53,16 @@ function ReportBox({ record, env }: { record: any; env: DetailsEnv }) {
   return (
     <div className="space-y-2" data-slot="report">
       <Alert data-slot="retry-hint">
-        <AlertDescription className="text-xs">{RETRY_HINT}</AlertDescription>
+        <AlertDescription className="text-xs">{t("report.retryHint")}</AlertDescription>
       </Alert>
-      <p className="text-xs text-muted-foreground">{REPORT_PRIVACY}</p>
+      <p className="text-xs text-muted-foreground">{t("report.privacy")}</p>
       <Textarea
         id={notesId}
         value={notes}
         maxLength={env.FB.LIMITS.notes}
         rows={2}
-        aria-label="Что вы делали (необязательно)"
-        placeholder="Что вы делали (необязательно)"
+        aria-label={t("report.notes")}
+        placeholder={t("report.notes")}
         className="min-h-0 text-xs"
         onChange={(e) => setNotes(e.target.value)}
       />
@@ -70,16 +71,16 @@ function ReportBox({ record, env }: { record: any; env: DetailsEnv }) {
         readOnly
         rows={8}
         value={text}
-        aria-label="Предпросмотр отчёта"
+        aria-label={t("report.preview")}
         className="min-h-0 font-mono text-[11px] leading-snug"
       />
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" size="sm" variant="secondary" onClick={copy}>
           {ok ? <Check /> : <ClipboardCopy />}
-          Копировать отчёт
+          {t("report.copy")}
         </Button>
         <p role="status" aria-live="polite" className="min-h-4 text-xs text-muted-foreground">
-          {status}
+          {status ? t(status) : ""}
         </p>
       </div>
     </div>
@@ -89,26 +90,27 @@ function ReportBox({ record, env }: { record: any; env: DetailsEnv }) {
 /** Link to the owning post (history only): a real link only for a validated post URL, otherwise an honest "unknown". */
 function PostBlock({ record, env }: { record: any; env: DetailsEnv }) {
   const post = postUrlOf(env.FB, record)
-  const [status, setStatus] = useState("")
+  const { t } = useI18n()
+  const [status, setStatus] = useState("") // a catalogue key
   if (!post) {
     return (
       <p className="text-xs text-muted-foreground" data-slot="post">
-        Ссылка на пост: неизвестна (не удалось надёжно определить пост-владелец).
+        {t("post.unknown")}
       </p>
     )
   }
   async function copy() {
     try {
       await copyText(post, env.navigator)
-      setStatus("Ссылка скопирована в буфер обмена.")
+      setStatus("post.copied")
     } catch {
-      setStatus("Не удалось скопировать ссылку автоматически. Откройте её и скопируйте из адресной строки.")
+      setStatus("post.copyFailed")
     }
   }
   return (
     <div className="space-y-1.5" data-slot="post">
       <p className="text-xs break-all">
-        <span className="text-muted-foreground">Пост: </span>
+        <span className="text-muted-foreground">{t("post.label")} </span>
         <a
           href={post}
           target="_blank"
@@ -122,10 +124,10 @@ function PostBlock({ record, env }: { record: any; env: DetailsEnv }) {
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" size="sm" variant="secondary" onClick={copy}>
           <Link2 />
-          Копировать ссылку на пост
+          {t("post.copy")}
         </Button>
         <p role="status" aria-live="polite" className="min-h-4 text-xs text-muted-foreground">
-          {status}
+          {status ? t(status) : ""}
         </p>
       </div>
     </div>
@@ -144,8 +146,9 @@ export function ResultDetails({
   showPost?: boolean
   onOpenFull?: (record: any) => void
 }) {
-  const summary = env.FB.summarize(record)
-  const nameLine = filenameLine(record)
+  const { t, lang } = useI18n()
+  const summary = env.FB.summarize(record, lang)
+  const nameLine = filenameLine(record, lang)
   return (
     <div className="space-y-3 rounded-lg border bg-background/50 p-3 text-xs" data-slot="result-details">
       <div className="space-y-1">
@@ -176,7 +179,7 @@ export function ResultDetails({
       {onOpenFull ? (
         <Button type="button" size="sm" variant="outline" onClick={() => onOpenFull(record)}>
           <ExternalLink />
-          Открыть на странице истории
+          {t("details.openFull")}
         </Button>
       ) : null}
     </div>

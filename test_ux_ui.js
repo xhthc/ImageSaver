@@ -25,6 +25,9 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
 const load = (file) => { const sb = { URL, console }; vm.createContext(sb); vm.runInContext(read(file), sb); return sb; };
 const FB = load('lib/feedback.js').ImageSaverFeedback;
 const FolderPath = load('lib/folder_path.js').ImageSaverFolderPath;
+// UI-LOCALIZATION-01: controllers store catalogue keys; the Russian text is what a Russian interface renders.
+const I18n = load('lib/i18n.js').ImageSaverI18n;
+const ru = (m) => I18n.message('ru', m);
 
 // ---------------------------------------------------------------------------------------------------
 // Records and a message-answering Chrome mock
@@ -138,10 +141,13 @@ function makeChrome(state) {
     assert(!/dangerouslySetInnerHTML|innerHTML|insertAdjacentHTML|eval\(|new Function|document\.write|XMLHttpRequest|sendBeacon|WebSocket/.test(srcText) && !/\bfetch\b/.test(nonUpdateSrc), '21j: UI has no HTML injection, eval or telemetry; release-check controller is the only network boundary');
     const full = read('ui/src/components/app/full-app.tsx');
     const pan = read('ui/src/components/app/settings-panels.tsx');
-    assert(['Статистика и история', 'Сохранение', 'Уведомления', 'Embed', 'Обновления'].every((l) => full.includes(`"${l}"`)) && /role|Tabs/.test(full), '21k: the five sections have their names (Radix Tabs provides the tab/tabpanel roles)');
+    assert(['history', 'saving', 'notifications', 'embed', 'updates'].map((n) => I18n.t('ru', `tab.${n}`)).join('|') === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления'
+      && ['history', 'saving', 'notifications', 'embed', 'updates'].map((n) => I18n.t('en', `tab.${n}`)).join('|') === 'Statistics and history|Saving|Notifications|Embed|Updates'
+      && full.includes('t(`tab.${name}`)') && /role|Tabs/.test(full), '21k: the five sections have their names in both languages (Radix Tabs provides the tab/tabpanel roles)');
     const ids = ['subfolderInput', 'folderModeSingle', 'folderModeBySiteType', 'xShareHostSelect', 'igShareHostSelect', 'ttShareHostSelect', 'youtubeShareHostSelect', 'saveButton', 'statusMessage', 'folderPreviewPath'];
     assert(ids.every((id) => (pan + read('ui/src/components/app/settings-panels.tsx')).includes(`"${id}"`) || pan.includes(`id="${id}"`)), '21l: every existing settings element ID is preserved on the full page');
-    assert(/меняют только ссылки/.test(pan) && /Ошибки сохранения остаются видимыми всегда/.test(pan) && /Настройка применяется сразу/.test(pan), '21m: Embed explains that it changes copied links; Notifications explain immediate saving and always-visible failures');
+    assert(/меняют только ссылки/.test(I18n.t('ru', 'embed.desc')) && /Ошибки сохранения остаются видимыми всегда/.test(I18n.t('ru', 'notify.hintErrors')) && /Настройка применяется сразу/.test(I18n.t('ru', 'notify.hint'))
+      && /change only the links/.test(I18n.t('en', 'embed.desc')) && ['"embed.desc"', '"notify.hintErrors"', '"notify.hint"'].every((k) => pan.includes(k)), '21m: Embed explains that it changes copied links; Notifications explain immediate saving and always-visible failures');
     assert(!/gear-button/.test(full) && /openSettingsButton/.test(read('ui/src/components/app/quick-app.tsx')) && !/openSettingsButton/.test(full), '21n: the settings gear exists only in the compact popup');
     const css = read('ui/src/index.css');
     assert(/prefers-reduced-motion:\s*reduce/.test(css) && /:focus-visible/.test(css), '21o: reduced motion and visible keyboard focus are global rules');
@@ -288,19 +294,19 @@ function makeChrome(state) {
     await h.setEnabled(false);
     assert(hs().enabled === false && state.local.historyEnabled === false && /Запись истории выключена/.test(view().disabledNote) && tile(view(), 'total').value === 2, '25o: switching recording off explains the behavior and keeps the statistics of existing entries');
     await h.clear();
-    assert(hs().records.length === 0 && hs().clearStatus === 'История очищена.' && view().state === 'empty', '25p: clearing empties the statistics');
+    assert(hs().records.length === 0 && ru(hs().clearStatus) === 'История очищена.' && view().state === 'empty', '25p: clearing empties the statistics');
     state.history.push(rec());
     state.failClear = true;
     await h.clear();
-    assert(/данные не удалены/.test(hs().error) && hs().records.length === 0 && hs().clearStatus === '' && hs().clearing === false, '25q: a failed clear is reported truthfully (nothing claimed cleared)');
+    assert(/данные не удалены/.test(ru(hs().error)) && hs().records.length === 0 && hs().clearStatus === '' && hs().clearing === false, '25q: a failed clear is reported truthfully (nothing claimed cleared)');
     const stateErr = { session: [], history: [], local: {}, failMessages: true };
     const h2 = createHistory({ chrome: makeChrome(stateErr).chrome, FB });
     await h2.start();
-    assert(h2.store.getState().status === 'error' && /Не удалось загрузить историю/.test(h2.store.getState().error) && present.statsView(FB, h2.store.getState().records, 'error', false).state === 'error', '25r: a messaging failure shows loading errors instead of statistics');
+    assert(h2.store.getState().status === 'error' && /Не удалось загрузить историю/.test(ru(h2.store.getState().error)) && present.statsView(FB, h2.store.getState().records, 'error', false).state === 'error', '25r: a messaging failure shows loading errors instead of statistics');
     const stP = { session: [], history: [rec()], local: { historyEnabled: true }, pruneFailed: true };
     const h3 = createHistory({ chrome: makeChrome(stP).chrome, FB });
     await h3.start();
-    assert(/Не удалось удалить устаревшие записи из хранилища/.test(h3.store.getState().error) && h3.store.getState().status === 'ready', '25s: a failed pruning is reported while the retained records are still shown');
+    assert(/Не удалось удалить устаревшие записи из хранилища/.test(ru(h3.store.getState().error)) && h3.store.getState().status === 'ready', '25s: a failed pruning is reported while the retained records are still shown');
     const off2 = createHistory({ chrome: makeChrome({ session: [], history: [rec(), rec()], local: { historyEnabled: false, historyInviteDismissed: true } }).chrome, FB });
     await off2.start();
     assert(off2.store.getState().records.length === 2 && off2.store.getState().enabled === false && /Запись истории выключена/.test(present.statsView(FB, off2.store.getState().records, 'ok', false).disabledNote), '25t: the full page still shows retained records and statistics while recording is off, and explains it');
@@ -338,11 +344,11 @@ function makeChrome(state) {
     const saved = a.calls.localSets[a.calls.localSets.length - 1];
     assert(JSON.stringify(Object.keys(saved).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && saved.folderOrganizationMode === 'by_site_and_type' && !('askEveryTime' in saved) && saved.xShareHost === 'fixupx.com' && saved.youtubeShareHost === 'koutube.com' && saved.igShareHost === 'instagram.com' && saved.ttShareHost === 'tiktok.com', '26c: "Сохранить настройки" writes exactly the six remaining Saving/Embed keys with allowlisted values');
     assert(a.state.local.notifySuccess === false && a.state.local.historyEnabled === true && a.state.local.unrelatedKey === 'keep-me', '26d: saving settings leaves notifySuccess, historyEnabled and unrelated values untouched');
-    assert(st().subfolder === 'My/Pics' && /Настройки успешно сохранены/.test(st().status.text) && st().status.type === 'success' && timers.pop().ms === STATUS_MS, '26d2: the form shows the sanitized value and a success message that clears itself');
+    assert(st().subfolder === 'My/Pics' && /Настройки успешно сохранены/.test(ru(st().status.message)) && st().status.type === 'success' && timers.pop().ms === STATUS_MS, '26d2: the form shows the sanitized value and a success message that clears itself');
 
     a.settings.setField('subfolder', 'a:b/c');
     await a.settings.save();
-    assert(/Папка исправлена: ab\/c/.test(st().status.text), '26d3: a corrected folder is reported');
+    assert(/Папка исправлена: ab\/c/.test(ru(st().status.message)), '26d3: a corrected folder is reported');
 
     const before = a.calls.localSets.length;
     await a.settings.setNotifySuccess(true);
@@ -358,20 +364,20 @@ function makeChrome(state) {
 
     a.state.failSet = true;
     await a.settings.setNotifySuccess(false);
-    assert(st().notify.checked === true && /Не удалось сохранить настройку уведомлений/.test(st().notify.error) && a.state.local.notifySuccess === true, '26h: a storage failure reverts the notification preference and says so');
+    assert(st().notify.checked === true && /Не удалось сохранить настройку уведомлений/.test(ru(st().notify.error)) && a.state.local.notifySuccess === true, '26h: a storage failure reverts the notification preference and says so');
     await hist.setEnabled(true);
-    assert(hist.store.getState().enabled === false && /Не удалось сохранить настройку истории/.test(hist.store.getState().prefError) && a.state.local.historyEnabled === false, '26h2: a storage failure reverts the history switch and says so');
+    assert(hist.store.getState().enabled === false && /Не удалось сохранить настройку истории/.test(ru(hist.store.getState().prefError)) && a.state.local.historyEnabled === false, '26h2: a storage failure reverts the history switch and says so');
     a.settings.setField('subfolder', 'x'.repeat(300));
     const setsBefore = a.calls.localSets.length;
     assert(await a.settings.save() === false);
     a.state.failSet = false;
-    assert(a.calls.localSets.length === setsBefore && /Слишком|максимум/.test(st().status.text) && st().status.type === 'error' && st().subfolder === 'x'.repeat(300) && a.settings.preview().error === true, '26i: an invalid root is rejected explicitly, nothing is written and the input is not silently shortened');
+    assert(a.calls.localSets.length === setsBefore && /Слишком|максимум/.test(ru(st().status.message)) && st().status.type === 'error' && st().subfolder === 'x'.repeat(300) && a.settings.preview().error === true, '26i: an invalid root is rejected explicitly, nothing is written and the input is not silently shortened');
     a.settings.setField('subfolder', 'a/b/c/d/e/f/g/h/i');
     await a.settings.save();
-    assert(/Слишком много вложенных папок \(максимум 8\)/.test(st().status.text), '26i2: too many nested folders are rejected with the limit');
+    assert(/Слишком много вложенных папок \(максимум 8\)/.test(ru(st().status.message)), '26i2: too many nested folders are rejected with the limit');
     a.settings.setField('subfolder', 'ok');
     a.state.failSet = true;
-    assert(await a.settings.save() === false && /Не удалось сохранить настройки/.test(st().status.text) && st().saving === false, '26i3: a storage failure on save is reported and releases the button');
+    assert(await a.settings.save() === false && /Не удалось сохранить настройки/.test(ru(st().status.message)) && st().saving === false, '26i3: a storage failure on save is reported and releases the button');
     a.state.failSet = false;
 
     const unreadableState = { session: [], history: [], local: { subfolder: 'MyMedia', xShareHost: 'fixupx.com' }, failGet: true };
@@ -380,7 +386,7 @@ function makeChrome(state) {
     const origErr = console.error; console.error = () => {};
     await unreadable.load();
     console.error = origErr;
-    assert(unreadable.store.getState().notify.checked === true && /показано значение по умолчанию/.test(unreadable.store.getState().notify.error) && /Ошибка загрузки настроек/.test(unreadable.store.getState().status.text) && unreadable.store.getState().loaded === false, '26j: unreadable settings keep the form disabled and explain the failure');
+    assert(unreadable.store.getState().notify.checked === true && /показано значение по умолчанию/.test(ru(unreadable.store.getState().notify.error)) && /Ошибка загрузки настроек/.test(ru(unreadable.store.getState().status.message)) && unreadable.store.getState().loaded === false, '26j: unreadable settings keep the form disabled and explain the failure');
     assert(await unreadable.save() === false && unreadableApi.calls.localSets.length === 0 && unreadableState.local.subfolder === 'MyMedia', '26j2: a failed read cannot overwrite existing preferences with defaults');
     unreadableState.failGet = false;
     await unreadable.load();
@@ -390,7 +396,7 @@ function makeChrome(state) {
     assert(e3.store.getState().enabled === false, '26k: a malformed history preference is shown as off (opt-in preserved)');
     const e4 = createHistory({ chrome: makeChrome({ session: [], history: [], local: {}, failGet: true }).chrome, FB });
     await e4.start();
-    assert(e4.store.getState().enabled === false && /считается выключенной/.test(e4.store.getState().prefError), '26l: an unreadable history preference is off and says so');
+    assert(e4.store.getState().enabled === false && /считается выключенной/.test(ru(e4.store.getState().prefError)), '26l: an unreadable history preference is off and says so');
     assert(cleanHost('xShareHost', 'evil.example') === 'x.com' && cleanHost('igShareHost', 'kirkstagram.com') === 'kirkstagram.com' && cleanHost('ttShareHost', '__proto__') === 'tiktok.com' && cleanHost('youtubeShareHost', 'koutube.com') === 'koutube.com' && ALLOWED_HOSTS.xShareHost.length === 3, '26m: a share host outside its allow-list falls back to the original service');
     const mal = await mountSettings({ xShareHost: 'evil.example', folderOrganizationMode: 'bogus', askEveryTime: 'yes', subfolder: 42 });
     assert(mal.st().xShareHost === 'x.com' && mal.st().folderOrganizationMode === 'single' && !('askEveryTime' in mal.st()) && mal.st().subfolder === 'SavedImages', '26n: malformed values are normalized and the removed preference is ignored');
@@ -441,9 +447,9 @@ function makeChrome(state) {
 
     const f = await mountQuick({}, { failSet: true });
     await f.quick.enableHistory();
-    assert(f.state.local.historyEnabled === undefined && f.showInvite() && !f.showList() && f.st().mounted === false && /Не удалось включить историю: настройка не сохранена/.test(f.st().inviteError), '27m: a failed write leaves history disabled and shows a truthful error');
+    assert(f.state.local.historyEnabled === undefined && f.showInvite() && !f.showList() && f.st().mounted === false && /Не удалось включить историю: настройка не сохранена/.test(ru(f.st().inviteError)), '27m: a failed write leaves history disabled and shows a truthful error');
     await f.quick.dismissInvite();
-    assert(f.state.local.historyInviteDismissed === undefined && f.showInvite() && /Не удалось запомнить выбор/.test(f.st().inviteError), '27n: a failed dismissal write keeps the invitation and says so');
+    assert(f.state.local.historyInviteDismissed === undefined && f.showInvite() && /Не удалось запомнить выбор/.test(ru(f.st().inviteError)), '27n: a failed dismissal write keeps the invitation and says so');
     const g = await mountQuick({}, { failGet: true });
     assert(g.showInvite() && !g.showList() && g.st().ready === true, '27o: an unreadable preference means disabled (the invitation is shown, no list)');
 
@@ -644,7 +650,7 @@ function makeChrome(state) {
     await flaky.started;
     flaky.list.setVisible(true);
     await settle();
-    assert(flaky.seen() === 1 && /Не удалось загрузить результаты сохранения/.test(flaky.list.store.getState().error), '29n: a failed acknowledgement is reported');
+    assert(flaky.seen() === 1 && /Не удалось загрузить результаты сохранения/.test(ru(flaky.list.store.getState().error)), '29n: a failed acknowledgement is reported');
     flaky.state.failMarkSeen = false;
     flaky.list.setVisible(false); flaky.list.setVisible(true);
     await settle();
@@ -668,10 +674,10 @@ function makeChrome(state) {
     await bad.started;
     bad.state.failMessages = true;
     await bad.list.clear();
-    assert(bad.list.store.getState().records.length === 2 && /Не удалось загрузить результаты сохранения/.test(bad.list.store.getState().error) && bad.list.store.getState().clearing === false, '29s: a failed clear keeps the list and says so');
+    assert(bad.list.store.getState().records.length === 2 && /Не удалось загрузить результаты сохранения/.test(ru(bad.list.store.getState().error)) && bad.list.store.getState().clearing === false, '29s: a failed clear keeps the list and says so');
     const broken = createFeedbackList({ chrome: makeChrome({ session: [], history: [], local: {}, failMessages: true }).chrome, FB }, {});
     await broken.start();
-    assert(broken.store.getState().status === 'error' && /Не удалось загрузить результаты/.test(broken.store.getState().error), '29t: a messaging failure is shown as text, the page keeps working');
+    assert(broken.store.getState().status === 'error' && /Не удалось загрузить результаты/.test(ru(broken.store.getState().error)), '29t: a messaging failure is shown as text, the page keeps working');
     const s2 = createStore({ n: 0 });
     let calls2 = 0;
     const un = s2.subscribe(() => { calls2++; });
@@ -704,7 +710,7 @@ function makeChrome(state) {
     assert(C('border', 'background') >= 1.3 && C('ring', 'background') >= 3, `30f: borders are visible and the focus ring has contrast >= 3:1 against the page (${C('ring', 'background').toFixed(2)})`);
     assert(/--danger/.test(css) && !/text-red-|text-destructive/.test(['quick-app', 'full-app', 'result-row', 'result-details', 'stats-card', 'settings-panels', 'history-panel', 'results-list'].map((n) => read(`ui/src/components/app/${n}.tsx`)).join('\n') + read('ui/src/components/ui/alert.tsx')), '30g: error text uses the checked danger colour, not the darker destructive fill');
     assert(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*0\.01ms !important[\s\S]*transition-duration:\s*0\.01ms !important/.test(css) && /motion-reduce:animate-none/.test(read('ui/src/components/app/result-row.tsx')) && !/animate-|transition-/.test(read('ui/src/components/ui/tooltip.tsx')), '30h: reduced-motion rules cover animated controls; the tooltip has no motion');
-    assert(/color-scheme:\s*dark/.test(css) && /@custom-variant dark/.test(css) && /<html lang="ru" class="dark">/.test(read('ui/popup.html')) && /<html lang="ru" class="dark">/.test(read('ui/quick.html')), '30i: both pages are explicitly dark with the Russian language set');
+    assert(/color-scheme:\s*dark/.test(css) && /@custom-variant dark/.test(css) && /<html lang="en" class="dark">/.test(read('ui/popup.html')) && /<html lang="en" class="dark">/.test(read('ui/quick.html')) && /documentElement\.lang = value\.lang/.test(read('ui/src/hooks/use-i18n.tsx')), '30i: both pages are explicitly dark; the static lang is replaced at runtime by the interface language');
   }
 
   // =================================================================================================
@@ -859,7 +865,7 @@ function makeChrome(state) {
     f.state.failMessages = true;
     emit(f.state, FEED);
     await settle();
-    assert(f.rows().length === 1 && /Не удалось загрузить результаты/.test(f.list.store.getState().error) && f.list.store.getState().status === 'ready', '31u: a failed refresh keeps the shown list and says so');
+    assert(f.rows().length === 1 && /Не удалось загрузить результаты/.test(ru(f.list.store.getState().error)) && f.list.store.getState().status === 'ready', '31u: a failed refresh keeps the shown list and says so');
     f.state.failMessages = false;
     f.state.session.push(rec({ filename: 'after-failure.jpg' }));
     emit(f.state, FEED);
@@ -928,7 +934,7 @@ function makeChrome(state) {
     sCtrl.dispose();
     assert(timerCleared, '32b: dispose immediately cleared status auto-clear timer');
     scheduledCb();
-    assert(sCtrl.store.getState().status.text !== '', '32c: post-disposal timer callback leaves state untouched');
+    assert(sCtrl.store.getState().status.message !== '', '32c: post-disposal timer callback leaves state untouched');
 
     // 32d: Subfolder path sanitization edge case: whitespace/slashes only -> root: '', changed: true
     const sState = { local: {} };
@@ -940,7 +946,7 @@ function makeChrome(state) {
     assert(saveRes === true, '32d: saving whitespace/slashes root succeeds');
     assert(sState.local.subfolder === '', '32e: root normalized to empty string');
     assert(
-      sEdge.store.getState().status.text.includes('Загрузки'),
+      ru(sEdge.store.getState().status.message).includes('Загрузки'),
       '32f: status message reports fallback to default Загрузки directory'
     );
 
@@ -981,7 +987,7 @@ function makeChrome(state) {
     await notifyCtrl.setNotifySuccess(false);
     assert(notifyCtrl.store.getState().notify.checked === true, '32q: failed notify toggle reverts checkbox state');
     assert(
-      notifyCtrl.store.getState().notify.error.includes('Не удалось сохранить настройку'),
+      ru(notifyCtrl.store.getState().notify.error).includes('Не удалось сохранить настройку'),
       '32r: failed notify toggle shows Russian error message'
     );
     notifyState.failSet = false;
@@ -1095,6 +1101,188 @@ function makeChrome(state) {
       nav.operationUrl(makeChrome({}).chrome, 'op/with spaces').includes('op=op%2Fwith%20spaces'),
       '32zv: operationUrl encodes special characters in id'
     );
+  }
+
+  // ---------------------------------------------------------------------------------------------------
+  console.log('\n--- 33. UI-LOCALIZATION-01: English / Russian catalogue, language preference and translated views ---');
+  {
+    const { createLanguage, LANGUAGE_KEY } = await core('language.js');
+    const placeholders = (s) => (s.match(/\{[A-Za-z0-9_]+\}/g) || []).sort().join(',');
+    const enKeys = Object.keys(I18n.STRINGS.en).sort();
+    const ruKeys = Object.keys(I18n.STRINGS.ru).sort();
+    assert(JSON.stringify(enKeys) === JSON.stringify(ruKeys) && enKeys.length > 150, `33a: both languages define exactly the same ${enKeys.length} keys`);
+    assert(enKeys.every((k) => placeholders(I18n.STRINGS.en[k]) === placeholders(I18n.STRINGS.ru[k])), '33b: every key has the same placeholders in both languages');
+    assert(enKeys.every((k) => I18n.STRINGS.en[k].trim() && I18n.STRINGS.ru[k].trim() && !/<[a-z/!]/i.test(I18n.STRINGS.en[k] + I18n.STRINGS.ru[k])), '33c: no empty text and no markup in the catalogue (texts are rendered as text)');
+    const same = enKeys.filter((k) => I18n.STRINGS.en[k] === I18n.STRINGS.ru[k]);
+    assert(JSON.stringify(same) === JSON.stringify(['stats.type.gif', 'tab.embed', 'type.gif']), '33d: every text is translated except names that are the same in both languages: ' + same.join(', '));
+    assert(I18n.MENU_TITLE === 'Image Saver: Save media' && !enKeys.some((k) => /Save (image|video|GIF)\b/.test(I18n.STRINGS.en[k]) && /^menu/.test(k)), '33e: the native menu title is the fixed "Image Saver: Save media" in both languages (no per-type titles)');
+    // keys used by the sources exist in the catalogue
+    const uiSrc = ['ui/src/components/app', 'ui/src/core', 'ui/src/hooks'].flatMap((d) => fs.readdirSync(path.resolve(ROOT, d)).map((f) => read(`${d}/${f}`))).join('\n')
+      + ['content_x.js', 'content_reddit.js', 'content_redgifs.js', 'content_instagram.js', 'content_tiktok.js', 'content_youtube.js', 'lib/feedback_tracker.js'].map(read).join('\n');
+    const used = new Set([...uiSrc.matchAll(/\b(?:t|isText|tr\.t|text)\(\s*["'`]([a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)+)["'`]/g)].map((m) => m[1]));
+    // every quoted key-shaped string whose first segment is a catalogue prefix (stored messages, EMBED_FIELDS labels, status keys)
+    const prefixes = new Set(enKeys.map((k) => k.split('.')[0]));
+    const stored = new Set([...uiSrc.matchAll(/["'`]([a-z]+(?:\.[A-Za-z0-9]+)+)["'`]/g)].map((m) => m[1]).filter((k) => prefixes.has(k.split('.')[0]) && !/\.(js|mjs|tsx?|json|html|com|pw|cr|png|jpg)$/.test(k)));
+    const missing = [...used, ...stored].filter((k) => !Object.prototype.hasOwnProperty.call(I18n.STRINGS.en, k) && !/^(tab|embed)\.\$/.test(k));
+    assert(used.size > 60 && stored.size > 100 && missing.length === 0, `33f: every catalogue key used in the sources exists (${used.size} direct uses, ${stored.size} key strings): ${missing.slice(0, 8).join(', ')}`);
+
+    // interpolation and fallbacks
+    assert(I18n.t('en', 'updates.installed', { version: '2.0.0.25' }) === 'Installed version: 2.0.0.25' && I18n.t('ru', 'updates.installed', { version: '2.0.0.25' }) === 'Установленная версия: 2.0.0.25', '33g: placeholders are substituted in both languages');
+    assert(I18n.t('en', 'filename.actual', { name: '{name} <b>x</b> $& $1' }) === 'File name: {name} <b>x</b> $& $1 (actual, reported by Chrome)', '33h: a substituted value is inserted literally (no second substitution, no $-patterns, no markup interpretation)');
+    assert(I18n.t('en', 'updates.installed') === 'Installed version: {version}' && I18n.t('de', 'results.empty') === 'No save results yet.' && I18n.t('ru', 'no.such.key') === 'no.such.key', '33i: a missing value keeps its placeholder; an unknown language uses English; an unknown key is shown as itself');
+    assert(I18n.message('en', '') === '' && I18n.message('en', 'history.cleared') === 'History cleared.' && I18n.message('ru', { key: 'settings.error.tooDeep', vars: { max: 8 } }) === 'Слишком много вложенных папок (максимум 8)', '33j: stored messages (key or { key, vars }) render in the requested language');
+
+    // the default rule: a valid saved choice wins; otherwise Russian only for a Russian browser
+    assert(['ru', 'ru-RU', 'RU', 'ru_RU'].every((u) => I18n.browserDefault(u) === 'ru') && ['en', 'en-US', 'de-DE', 'uk', 'rus', '', undefined, null].every((u) => I18n.browserDefault(u) === 'en'), '33k: Russian browser -> ru, every other or unknown browser language -> en');
+    assert(I18n.resolve('en', 'ru') === 'en' && I18n.resolve('ru', 'en-US') === 'ru' && ['EN', 'de', 1, null, undefined, {}, ''].every((v) => I18n.resolve(v, 'ru-RU') === 'ru' && I18n.resolve(v, 'fr') === 'en'), '33l: a saved valid choice wins; an invalid saved value is ignored');
+    assert(I18n.locale('ru') === 'ru-RU' && I18n.locale('en') === 'en-US', '33m: dates and numbers use the locale of the language');
+
+    // Inline text and accessible names stay current even inside closed shadow roots. Narrow/hidden actions must stay narrow/hidden.
+    const inlineListeners = [];
+    const labels = I18n.follow({
+      i18n: { getUILanguage: () => 'en' },
+      storage: { onChanged: { addListener: (cb) => inlineListeners.push(cb) } }
+    }, null, () => {});
+    const inlineNode = { textContent: '', attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; } };
+    const inlineChange = (lang) => inlineListeners.forEach((cb) => cb({ uiLanguage: { newValue: lang } }, 'local'));
+    labels.label(inlineNode, 'textContent', 'inline.saveAll', { n: 2 });
+    labels.label(inlineNode, 'title', 'inline.saveAllAria', { n: 2 });
+    inlineChange('ru');
+    assert(inlineNode.textContent === 'Все (2)' && inlineNode.attrs.title.endsWith('(2)'), '33inline-a: existing count text and accessible names switch together');
+    labels.label(inlineNode, 'textContent', 'inline.saveAll', { n: 5 });
+    inlineChange('en');
+    assert(inlineNode.textContent === 'Save all (5)', '33inline-b: relabelling uses the latest media count');
+    labels.label(inlineNode, 'textContent', null, null, '5');
+    labels.label(inlineNode, 'title', null, null, null);
+    inlineChange('ru');
+    assert(inlineNode.textContent === '5' && !('title' in inlineNode.attrs), '33inline-c: a switch preserves compact counts and removed titles');
+    labels.label(inlineNode, 'title', 'inline.copied');
+    inlineChange('en');
+    assert(inlineNode.attrs.title === '✓ Link copied!', '33inline-d: a switch keeps the current success state instead of restoring the idle label');
+
+    // the language controller
+    const langPage = (local, extra = {}) => {
+      const state = { local: { ...local }, ...extra };
+      const made = makeChrome(state);
+      made.chrome.i18n = { getUILanguage: () => (extra.ui === undefined ? 'ru-RU' : extra.ui) };
+      return { state, made, lang: createLanguage({ chrome: made.chrome }) };
+    };
+    let L = langPage({});
+    await L.lang.ready;
+    assert(L.lang.store.getState().lang === 'ru' && L.lang.store.getState().error === '' && L.made.calls.localSets.length === 0, '33n: no saved choice and a Russian browser -> Russian, nothing is written');
+    L = langPage({}, { ui: 'en-GB' });
+    await L.lang.ready;
+    assert(L.lang.store.getState().lang === 'en', '33o: no saved choice and a non-Russian browser -> English');
+    L = langPage({ [LANGUAGE_KEY]: 'en' });
+    await L.lang.ready;
+    assert(LANGUAGE_KEY === 'uiLanguage' && L.lang.store.getState().lang === 'en', '33p: a saved English choice wins over a Russian browser');
+    L = langPage({ [LANGUAGE_KEY]: 'fr' });
+    await L.lang.ready;
+    assert(L.lang.store.getState().lang === 'ru' && L.state.local.uiLanguage === 'fr' && L.made.calls.localSets.length === 0, '33q: an invalid saved value is ignored and not rewritten');
+    L = langPage({ [LANGUAGE_KEY]: 'en' }, { failGet: true });
+    await L.lang.ready;
+    assert(L.lang.store.getState().lang === 'ru' && L.lang.store.getState().error === 'lang.readFailed' && L.made.calls.localSets.length === 0 && L.state.local.uiLanguage === 'en', '33r: an unreadable preference shows the browser language, says so and writes nothing (the saved value is kept)');
+    // en -> ru -> en with persistence
+    L = langPage({}, { ui: 'en-US' });
+    await L.lang.ready;
+    assert(await L.lang.setLanguage('ru') === true && L.lang.store.getState().lang === 'ru' && L.state.local.uiLanguage === 'ru', '33s: en -> ru: saved, then shown');
+    assert(await L.lang.setLanguage('en') === true && L.lang.store.getState().lang === 'en' && L.state.local.uiLanguage === 'en' && JSON.stringify(L.made.calls.localSets) === JSON.stringify([{ uiLanguage: 'ru' }, { uiLanguage: 'en' }]), '33t: ru -> en: saved, then shown; only the language key is written');
+    const reopened = createLanguage({ chrome: L.made.chrome });
+    await reopened.ready;
+    assert(reopened.store.getState().lang === 'en', '33u: a reopened page (or a restarted browser) reads the saved choice');
+    assert(await L.lang.setLanguage('de') === false && L.made.calls.localSets.length === 2, '33v: an unsupported language is refused without a write');
+    // a failed write keeps the previous language and reports it, never a success state
+    L.state.failSet = true;
+    assert(await L.lang.setLanguage('ru') === false && L.lang.store.getState().lang === 'en' && L.lang.store.getState().error === 'lang.saveFailed' && L.lang.store.getState().saving === false && L.state.local.uiLanguage === 'en', '33w: a failed write keeps the previous language, reports the failure and leaves the stored value intact');
+    L.state.failSet = false;
+    assert(await L.lang.setLanguage('ru') === true && L.lang.store.getState().error === '', '33x: a later successful write clears the failure');
+    // a change on another extension page applies live; an older read never overrides it
+    const other = createLanguage({ chrome: L.made.chrome });
+    await other.ready;
+    await L.made.chrome.storage.local.set({ uiLanguage: 'en' });
+    assert(other.store.getState().lang === 'en' && L.lang.store.getState().lang === 'en', '33y: a change made on another page applies to every open page');
+    await L.made.chrome.storage.local.set({ uiLanguage: 'ru' });
+    await L.made.chrome.storage.local.set({ uiLanguage: 'xx' });
+    assert(other.store.getState().lang === 'en', '33z: an invalid value written elsewhere falls back to the browser language (English here)');
+    const gateState = { local: { uiLanguage: 'ru' } };
+    let releaseGate;
+    gateState.getGate = new Promise((r) => { releaseGate = r; });
+    const gm = makeChrome(gateState);
+    gm.chrome.i18n = { getUILanguage: () => 'en' };
+    const slow = createLanguage({ chrome: gm.chrome });
+    delete gateState.getGate;
+    await gm.chrome.storage.local.set({ uiLanguage: 'en' });
+    releaseGate();
+    await slow.ready;
+    assert(slow.store.getState().lang === 'en', '33za: an older, slower read does not override a newer change');
+    const concurrent = langPage({ uiLanguage: 'en' });
+    await concurrent.lang.ready;
+    const commitLanguage = concurrent.made.chrome.storage.local.set;
+    let finishLanguageWrite;
+    const writeCompletion = new Promise((r) => { finishLanguageWrite = r; });
+    concurrent.made.chrome.storage.local.set = async (value) => { await commitLanguage(value); await writeCompletion; };
+    const olderWrite = concurrent.lang.setLanguage('ru');
+    await new Promise(setImmediate);
+    await commitLanguage({ uiLanguage: 'en' }); // another page committed a newer choice before the older completion arrived
+    finishLanguageWrite();
+    await olderWrite;
+    assert(concurrent.lang.store.getState().lang === 'en' && concurrent.state.local.uiLanguage === 'en' && concurrent.lang.store.getState().saving === false, '33race: an older write completion cannot override a newer language change from another page');
+    concurrent.lang.dispose();
+    other.dispose();
+    const before = (L.state.changeListeners || []).length;
+    reopened.dispose();
+    assert((L.state.changeListeners || []).length === before - 1, '33zb: dispose removes the storage subscription');
+
+    // a language switch does not touch unsaved settings edits
+    const sState = { local: {} };
+    const sm = makeChrome(sState);
+    sm.chrome.i18n = { getUILanguage: () => 'en' };
+    const sCtl = createSettings({ chrome: sm.chrome, FolderPath });
+    const sLang = createLanguage({ chrome: sm.chrome });
+    await sCtl.load();
+    await sLang.ready;
+    sCtl.setField('subfolder', 'Unsaved/Edit');
+    sCtl.setField('xShareHost', 'fixupx.com');
+    await sLang.setLanguage('ru');
+    await sLang.setLanguage('en');
+    assert(sCtl.store.getState().subfolder === 'Unsaved/Edit' && sCtl.store.getState().xShareHost === 'fixupx.com' && JSON.stringify(sm.calls.localSets) === JSON.stringify([{ uiLanguage: 'ru' }, { uiLanguage: 'en' }]), '33zc: switching the language keeps unsaved settings edits and writes only the language');
+    assert(sCtl.preview('en').text === 'Downloads/Unsaved/Edit/photo.jpg' && sCtl.preview('ru').text === 'Загрузки/Unsaved/Edit/photo.jpg', '33zd: the example path follows the language; the folder name stays as typed');
+    sCtl.setField('subfolder', '1/2/3/4/5/6/7/8/9');
+    assert(sCtl.preview('en').text === 'Too many nested folders (maximum 8)' && sCtl.preview('ru').text === 'Слишком много вложенных папок (максимум 8)', '33ze: validation messages are translated with their limits');
+
+    // translated views of the same structured record (persisted records hold no text)
+    const okRec = rec({ filename: 'Фото «оригинал».jpg', output: { type: 'pic', ext: '.jpg', evidence: 'verified_mime', mime: 'image/jpeg', sizeBytes: 1004544, sizeKind: 'measured' } });
+    const failRec = rec({ state: 'failed', filename: '', filenameKind: '', output: {}, failure: failure('verify', 'server_error', { status: 500, code: 'HTTP_500' }) });
+    const enRow = present.rowParts(FB, okRec, 'en');
+    const ruRow = present.rowParts(FB, okRec, 'ru');
+    assert(enRow.name === 'Фото «оригинал».jpg' && ruRow.name === enRow.name && enRow.meta === 'Saved — example.com · image .jpg' && ruRow.meta === 'Сохранено — example.com · изображение .jpg', '33zf: a row is presented in the selected language; the original file name is kept as it is');
+    const enSum = FB.summarize(failRec, 'en');
+    assert(enSum.title === 'Server error' && /HTTP error 500/.test(enSum.explanation) && enSum.lines.includes('Stage: checking the content') && enSum.lines.includes('HTTP status: 500') && enSum.lines.includes('Code: HTTP_500') && FB.summarize(failRec).title === 'Ошибка сервера', '33zg: failure details translate while diagnostic codes and statuses stay intact');
+    assert(FB.formatSize(1004544, 'en') === '981 KB' && FB.formatSize(1004544, 'ru') === '981 КБ' && FB.formatSize(1536, 'en') === '1.5 KB' && FB.formatSize(1536, 'ru') === '1,5 КБ' && FB.formatSize(1536) === '1,5 КБ', '33zh: sizes use the unit and decimal mark of the language');
+    assert(present.filenameLine(okRec, 'en') === 'File name: Фото «оригинал».jpg (actual, reported by Chrome)', '33zi: the file-name line is translated around the unchanged name');
+    const enStats = present.statsView(FB, [okRec, failRec], 'ok', true, 'en');
+    assert(enStats.tiles[0].label === 'Operations in history' && /^Known total size: at least 981 KB\. Size measured for 1 of 1 successful saves\.$/.test(enStats.sizeText) && /50 operations/.test(enStats.note), '33zj: statistics are presented in English');
+    assert(FB.buildReport(failRec, { env: { version: '2.0.0' } }) === FB.buildReport(failRec, { env: { version: '2.0.0' } }) && /^Image Saver bug report\n/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })) && /http_status: 500/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })), '33zk: the copied bug report keeps its single format');
+    const t0 = Date.UTC(2026, 9, 10, 15, 5);
+    assert(present.formatDateTime(t0, 'en-US') !== present.formatDateTime(t0, 'ru-RU') && /\d/.test(present.formatTime(t0, 'en-US')), '33zl: dates are formatted with the locale of the language');
+
+    // notifications follow the saved language (service worker notifier)
+    const trackerCtx = (() => { const sb = { URL, console }; vm.createContext(sb); for (const f of ['lib/i18n.js', 'lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), sb); return sb; })();
+    const notifyWith = async (deps) => {
+      const sink = [];
+      const notify = trackerCtx.ImageSaverFeedbackTracker.createNotifier({ getPrefs: async () => ({ notifySuccess: true }), notifications: { create: async (id, o) => { sink.push(o); return id; } }, iconUrl: 'i.png', ...deps });
+      await notify(trackerCtx.ImageSaverFeedback.sanitizeRecord(JSON.parse(JSON.stringify(failRec))));
+      await notify(trackerCtx.ImageSaverFeedback.sanitizeRecord(JSON.parse(JSON.stringify(okRec))));
+      return sink;
+    };
+    let n = await notifyWith({ getLang: async () => 'en' });
+    assert(n[0].title === 'Image Saver: Server error' && n[0].contextMessage === 'Click to open the details' && n[1].title === 'example.com: saved' && !/Resource/.test(n[1].message), '33zm: a saved English choice gives English notifications');
+    n = await notifyWith({ getLang: async () => 'ru' });
+    assert(n[0].title === 'Image Saver: Ошибка сервера' && n[0].contextMessage === 'Нажмите, чтобы открыть подробности' && n[1].title === 'example.com: сохранено' && !/Ресурс/.test(n[1].message), '33zn: a saved Russian choice gives Russian notifications');
+    n = await notifyWith({ getLang: async () => { throw new Error('UNREADABLE'); } });
+    assert(n[0].title === 'Image Saver: Server error', '33zo: an unreadable choice falls back to the browser rule (no Russian browser here -> English) and the notification is still shown');
+    n = await notifyWith({ getLang: async () => 'de' });
+    assert(n.length === 2 && n[1].title === 'example.com: saved', '33zp: an invalid saved value falls back to the browser rule');
   }
 
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);

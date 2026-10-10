@@ -20,7 +20,7 @@ Copy-link settings may produce links to third-party preview services. Copying su
 
 ## Local storage
 
-- **Preferences and release-check cache:** local browser extension storage, until changed or the extension's data is removed.
+- **Preferences and release-check cache:** local browser extension storage, until changed or the extension's data is removed. Preferences include the optional interface language (`en` or `ru`); it is read from the browser's language setting only when no choice is saved and is never sent anywhere.
 - **Recent save feedback:** session storage, targeting 20 recent operations and a 24-hour retention window for finished operations. Active operations are retained while pending and can exceed that count. Browser session storage clears when the browser session ends.
 - **Optional history:** off by default. When enabled, retains up to 50 finished saves for seven days on this device. Records contain bounded metadata such as site/host, output type/size, timestamps, state, filename basename and a validated owning-post link where supported (currently X). This is not general browsing history.
 - **Active work:** memory and session bookkeeping can hold job/download IDs and local blob handles for lifecycle recovery. Media source URLs and binary data are processed as needed for an active save; the browser's own downloads system also maintains its normal download records.

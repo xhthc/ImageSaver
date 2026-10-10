@@ -2,7 +2,7 @@
 // - the gear opens the Saving settings of the full page in a new tab (explicit action, no extra permission) and closes
 //   the popup only after the tab was created;
 // - the recent-results list is shown only while history recording is enabled (`historyEnabled === true`); while it is off
-//   a small invitation offers "Включить историю" (explicit click, success only after the write) or a dismissal remembered
+//   a small invitation offers "Enable history" (explicit click, success only after the write) or a dismissal remembered
 //   in `historyInviteDismissed`. Dismissing changes nothing else;
 // - changes of either preference elsewhere apply while the popup is open (storage.onChanged);
 // - nothing is shown until the preferences were read (no flash of the wrong view); a slower, older storage.get() response
@@ -57,7 +57,7 @@ export function createQuick(deps) {
     try {
       await chromeApi.storage.local.set({ [ENABLED_KEY]: true });
     } catch (_) {
-      store.setState({ inviteError: 'Не удалось включить историю: настройка не сохранена.' });
+      store.setState({ inviteError: 'quick.error.enable' }); // a catalogue key (lib/i18n.js)
       return; // history stays disabled
     }
     touched[ENABLED_KEY] = true;
@@ -69,7 +69,7 @@ export function createQuick(deps) {
     try {
       await chromeApi.storage.local.set({ [DISMISSED_KEY]: true });
     } catch (_) {
-      store.setState({ inviteError: 'Не удалось запомнить выбор: настройка не сохранена.' });
+      store.setState({ inviteError: 'quick.error.dismiss' });
       return; // the invitation stays visible; nothing else is touched
     }
     touched[DISMISSED_KEY] = true;

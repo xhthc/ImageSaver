@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PENDING_STATES, formatDateTime, formatTime, rowParts } from "@/core/present.js"
+import { useI18n } from "@/hooks/use-i18n"
 import { cn } from "@/lib/utils"
 import { ResultDetails, type DetailsEnv } from "@/components/app/result-details"
 
@@ -49,9 +50,11 @@ export function ResultRow({
 }) {
   const [open, setOpen] = useState(defaultOpen)
   const item = useRef<HTMLLIElement>(null)
-  const parts = rowParts(env.FB, record)
-  const summary = env.FB.summarize(record)
-  const time = dateTime ? formatDateTime(record.updatedAt) : formatTime(record.updatedAt)
+  const { t, lang, locale } = useI18n()
+  // the record keeps structured fields only, so an older record is shown in the language selected now
+  const parts = rowParts(env.FB, record, lang)
+  const summary = env.FB.summarize(record, lang)
+  const time = dateTime ? formatDateTime(record.updatedAt, locale) : formatTime(record.updatedAt, locale)
 
   // A deep link (?op=<id>) opens this row and brings it into view.
   useEffect(() => {
@@ -102,7 +105,7 @@ export function ResultRow({
               </span>
               {unread ? (
                 <Badge variant="destructive" className="shrink-0 px-1.5 py-0 text-[10px]">
-                  новое
+                  {t("row.new")}
                 </Badge>
               ) : null}
               <span className="shrink-0 text-xs tabular-nums text-muted-foreground" data-slot="time">

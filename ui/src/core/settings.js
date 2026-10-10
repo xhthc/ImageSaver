@@ -1,11 +1,14 @@
 // Settings of the full page as a controller. Remaining keys and defaults follow the former popup/popup.js and
 // popup/app.js:
-// - "Сохранение" (subfolder, folder organization) and "Embed" (four share hosts) are saved together by the
-//   explicit "Сохранить настройки" action; nothing is written before it. Input is validated and normalized by the shared
+// - "Saving" (subfolder, folder organization) and "Embed" (four share hosts) are saved together by the
+//   explicit "Save settings" action; nothing is written before it. Input is validated and normalized by the shared
 //   folder rules (lib/folder_path.js, the same code the background uses); an over-long or too deep path is rejected, never
 //   silently shortened. A share host outside its allow-list falls back to the original service.
 // - The success-notification preference (`notifySuccess`, default on) is saved immediately; a failed write reverts it.
+// - Messages are stored as catalogue keys (lib/i18n.js: '' | key | { key, vars }) and translated when rendered, so a language
+//   change also re-renders a message that is already shown.
 import { createStore } from './store.js';
+import { translator } from './i18n.js';
 
 export const ALLOWED_HOSTS = Object.freeze({
   xShareHost: Object.freeze(['x.com', 'fixupx.com', 'cunnyx.com']),
@@ -41,31 +44,34 @@ export function createSettings(deps) {
     loaded: false,
     ...DEFAULTS,
     saving: false,
-    status: { text: '', type: '' }, // type: 'success' | 'error' | ''
-    notify: { checked: true, error: '' },
+    status: { message: '', type: '' }, // message: catalogue key or { key, vars }; type: 'success' | 'error' | ''
+    notify: { checked: true, error: '' }, // error: catalogue key
   });
   let statusTimer = null;
   let disposed = false;
 
-  function showMessage(text, type = 'success') {
+  function showMessage(message, type = 'success') {
     if (statusTimer) clearT(statusTimer);
-    store.setState({ status: { text, type } });
-    statusTimer = setT(() => { statusTimer = null; if (!disposed) store.setState({ status: { text: '', type: '' } }); }, STATUS_MS);
+    store.setState({ status: { message, type } });
+    statusTimer = setT(() => { statusTimer = null; if (!disposed) store.setState({ status: { message: '', type: '' } }); }, STATUS_MS);
   }
 
+  /** The validation message of a rejected folder input, as a catalogue message. */
   function describeRootError(error) {
     return error === 'too_deep'
-      ? `Слишком много вложенных папок (максимум ${FolderPath.LIMITS.rootDepth})`
-      : `Слишком длинный путь подпапки (максимум ${FolderPath.LIMITS.rootLength} символов)`;
+      ? { key: 'settings.error.tooDeep', vars: { max: FolderPath.LIMITS.rootDepth } }
+      : { key: 'settings.error.tooLong', vars: { max: FolderPath.LIMITS.rootLength } };
   }
 
-  /** The example path under the folder field, or the validation message of the current input. */
-  function preview() {
+  /** The example path under the folder field, or the validation message of the current input, in `lang` (Russian by default). */
+  function preview(lang = 'ru') {
+    const tr = translator(lang);
     const s = store.getState();
     const { root: cleanFolder, error } = FolderPath.normalizeRoot(s.subfolder);
-    if (error) return { text: describeRootError(error), error: true };
+    if (error) return { text: tr.msg(describeRootError(error)), error: true };
     const rootPart = cleanFolder ? `${cleanFolder}/` : '';
-    return { text: s.folderOrganizationMode === 'by_site_and_type' ? `Загрузки/${rootPart}x/pic/photo.jpg` : `Загрузки/${rootPart}photo.jpg`, error: false };
+    const downloads = tr.t('saving.downloads');
+    return { text: s.folderOrganizationMode === 'by_site_and_type' ? `${downloads}/${rootPart}x/pic/photo.jpg` : `${downloads}/${rootPart}photo.jpg`, error: false };
   }
 
   async function load() {
@@ -80,18 +86,18 @@ export function createSettings(deps) {
         ttShareHost: cleanHost('ttShareHost', data.ttShareHost),
         youtubeShareHost: cleanHost('youtubeShareHost', data.youtubeShareHost),
         loaded: true,
-        status: { text: '', type: '' },
+        status: { message: '', type: '' },
       });
     } catch (error) {
-      console.error('[Image Saver Popup] Ошибка загрузки настроек:', error);
-      store.setState({ status: { text: 'Ошибка загрузки настроек. Перезагрузите страницу, чтобы повторить чтение.', type: 'error' } });
+      console.error('[Image Saver Popup] Settings could not be loaded:', error);
+      store.setState({ status: { message: 'settings.error.load', type: 'error' } });
     }
     // The notification preference: unreadable storage keeps the documented default (on) and says so.
     try {
       const prefs = await chromeApi.storage.local.get({ notifySuccess: true });
       store.setState({ notify: { checked: prefs.notifySuccess !== false, error: '' } });
     } catch (_) {
-      store.setState({ notify: { checked: true, error: 'Не удалось прочитать настройку уведомлений: показано значение по умолчанию (включено).' } });
+      store.setState({ notify: { checked: true, error: 'notify.error.read' } });
     }
   }
 
@@ -121,12 +127,14 @@ export function createSettings(deps) {
     store.setState({ ...values, saving: true }); // the fields show the sanitized values
     try {
       await chromeApi.storage.local.set(values);
-      console.log('[Image Saver Popup] Настройки сохранены:', values);
-      showMessage(folderChanged ? `✓ Сохранено. Папка исправлена: ${cleanFolder || 'Загрузки'}` : '✓ Настройки успешно сохранены!', 'success');
+      console.log('[Image Saver Popup] Settings saved:', values);
+      showMessage(folderChanged
+        ? (cleanFolder ? { key: 'settings.savedCorrected', vars: { folder: cleanFolder } } : 'settings.savedCorrectedRoot')
+        : 'settings.saved', 'success');
       return true;
     } catch (saveError) {
-      console.error('[Image Saver Popup] Ошибка сохранения:', saveError);
-      showMessage('Не удалось сохранить настройки', 'error');
+      console.error('[Image Saver Popup] Settings could not be saved:', saveError);
+      showMessage('settings.saveFailed', 'error');
       return false;
     } finally {
       store.setState({ saving: false });
@@ -140,7 +148,7 @@ export function createSettings(deps) {
       await chromeApi.storage.local.set({ notifySuccess: wanted });
       store.setState({ notify: { checked: wanted, error: '' } });
     } catch (_) {
-      store.setState({ notify: { checked: !wanted, error: 'Не удалось сохранить настройку уведомлений.' } });
+      store.setState({ notify: { checked: !wanted, error: 'notify.error.save' } });
     }
   }
 

@@ -6,6 +6,14 @@
 
 (function () {
   'use strict';
+  const isI18n = globalThis.ImageSaverI18n;
+  const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
+  const isLabel = (element, field, key, fallback, vars) => {
+    if (isLabels) isLabels.label(element, field, key, vars, fallback);
+    else if (field === 'textContent') element.textContent = fallback;
+    else if (fallback === null) element.removeAttribute(field);
+    else element.setAttribute(field, fallback);
+  };
 
   const TT_BUTTON_STYLES = `
 .image-saver-tt-copy-wrap {
@@ -558,8 +566,8 @@
     wrap.className = 'image-saver-tt-copy-wrap';
     wrap.setAttribute('role', 'button');
     wrap.setAttribute('tabindex', '0');
-    wrap.setAttribute('title', 'Image Saver: Скопировать ссылку на видео');
-    wrap.setAttribute('aria-label', 'Copy video link');
+    isLabel(wrap, 'title', 'inline.copyVideo', 'Image Saver: Скопировать ссылку на видео');
+    isLabel(wrap, 'aria-label', 'inline.copyVideoAria', 'Copy video link');
 
     const btn = document.createElement('div');
     btn.className = 'image-saver-tt-copy-btn';
@@ -596,7 +604,7 @@
         wrap.classList.add('is-unavailable');
         wrap.classList.add('is-error');
         btn.innerHTML = SVG_UNAVAILABLE_ICON;
-        wrap.setAttribute('title', 'Image Saver: Ссылка на видео недоступна');
+        isLabel(wrap, 'title', 'inline.videoUnavailable', 'Image Saver: Ссылка на видео недоступна');
 
         if (typeof console !== 'undefined' && typeof console.debug === 'function') {
           console.debug('[Image Saver TikTok] Video URL unavailable on card:', {
@@ -612,7 +620,7 @@
           wrap.classList.remove('is-unavailable');
           wrap.classList.remove('is-error');
           btn.innerHTML = SVG_LINK_ICON;
-          wrap.setAttribute('title', 'Image Saver: Скопировать ссылку на видео');
+          isLabel(wrap, 'title', 'inline.copyVideo', 'Image Saver: Скопировать ссылку на видео');
         }, 2000);
         return;
       }
@@ -627,7 +635,7 @@
         wrap.classList.remove('is-error');
         wrap.classList.add('is-success');
         btn.innerHTML = SVG_CHECK_ICON;
-        wrap.setAttribute('title', '✓ Ссылка скопирована!');
+        isLabel(wrap, 'title', 'inline.copied', '✓ Ссылка скопирована!');
 
         if (typeof console !== 'undefined' && typeof console.debug === 'function') {
           console.debug('[Image Saver TikTok] Link copied successfully:', {
@@ -639,7 +647,7 @@
         setTimeout(() => {
           wrap.classList.remove('is-success');
           btn.innerHTML = SVG_LINK_ICON;
-          wrap.setAttribute('title', 'Image Saver: Скопировать ссылку на видео');
+          isLabel(wrap, 'title', 'inline.copyVideo', 'Image Saver: Скопировать ссылку на видео');
         }, 1800);
       } else {
         wrap.setAttribute('data-diagnostic-result', 'clipboard_error');
@@ -648,7 +656,7 @@
         wrap.classList.add('is-clipboard-error');
         wrap.classList.add('is-error');
         btn.innerHTML = SVG_ERROR_ICON;
-        wrap.setAttribute('title', 'Image Saver: Не удалось скопировать в буфер обмена');
+        isLabel(wrap, 'title', 'inline.clipboardFailed', 'Image Saver: Не удалось скопировать в буфер обмена');
 
         if (typeof console !== 'undefined' && typeof console.debug === 'function') {
           console.debug('[Image Saver TikTok] Clipboard write failed for URL:', {
@@ -660,7 +668,7 @@
           wrap.classList.remove('is-clipboard-error');
           wrap.classList.remove('is-error');
           btn.innerHTML = SVG_LINK_ICON;
-          wrap.setAttribute('title', 'Image Saver: Скопировать ссылку на видео');
+          isLabel(wrap, 'title', 'inline.copyVideo', 'Image Saver: Скопировать ссылку на видео');
         }, 2000);
       }
     });

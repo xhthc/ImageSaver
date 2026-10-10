@@ -6,6 +6,14 @@
 
 (function () {
   'use strict';
+  const isI18n = globalThis.ImageSaverI18n;
+  const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
+  const isLabel = (element, field, key, fallback, vars) => {
+    if (isLabels) isLabels.label(element, field, key, vars, fallback);
+    else if (field === 'textContent') element.textContent = fallback;
+    else if (fallback === null) element.removeAttribute(field);
+    else element.setAttribute(field, fallback);
+  };
 
   const IG_BUTTON_STYLES = `
 .image-saver-ig-copy-wrap {
@@ -1042,8 +1050,8 @@
     wrap.className = 'image-saver-ig-copy-wrap';
     wrap.setAttribute('role', 'button');
     wrap.setAttribute('tabindex', '0');
-    wrap.setAttribute('title', 'Image Saver: Скопировать ссылку на пост');
-    wrap.setAttribute('aria-label', 'Copy post link');
+    isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
+    isLabel(wrap, 'aria-label', 'inline.copyPostAria', 'Copy post link');
 
     // Layout detection: vertical Reel rail vs standard horizontal row
     // Determined strictly by the action rail's real layout, never from the page route or media type
@@ -1099,7 +1107,7 @@
         wrap.setAttribute('data-diagnostic-clipboard', 'failure');
         wrap.setAttribute('data-diagnostic-method', 'none');
         wrap.classList.add('is-error');
-        wrap.setAttribute('title', 'Image Saver: Не удалось определить ссылку на пост');
+        isLabel(wrap, 'title', 'inline.postUnknown', 'Image Saver: Не удалось определить ссылку на пост');
 
         const rejectionInfo = {
           hasCard: Boolean(liveCard),
@@ -1119,7 +1127,7 @@
 
         setTimeout(() => {
           wrap.classList.remove('is-error');
-          wrap.setAttribute('title', 'Image Saver: Скопировать ссылку на пост');
+          isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
         }, 2000);
         return;
       }
@@ -1183,11 +1191,11 @@
       if (copied) {
         wrap.classList.add('is-success');
         btn.innerHTML = SVG_CHECK_ICON;
-        wrap.setAttribute('title', '✓ Ссылка скопирована!');
+        isLabel(wrap, 'title', 'inline.copied', '✓ Ссылка скопирована!');
         setTimeout(() => {
           wrap.classList.remove('is-success');
           btn.innerHTML = SVG_LINK_ICON;
-          wrap.setAttribute('title', 'Image Saver: Скопировать ссылку на пост');
+          isLabel(wrap, 'title', 'inline.copyPost', 'Image Saver: Скопировать ссылку на пост');
         }, 1800);
       } else {
         wrap.classList.add('is-error');

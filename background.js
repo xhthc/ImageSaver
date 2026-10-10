@@ -4,6 +4,8 @@
 // Shared download-folder rules (also used by popup/popup.js so preview == runtime).
 if (typeof importScripts === 'function') importScripts('lib/folder_path.js');
 const FolderPath = globalThis.ImageSaverFolderPath;
+// English / Russian interface text (UI-LOCALIZATION-01): notifications follow the saved language preference.
+if (typeof importScripts === 'function') importScripts('lib/i18n.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback_tracker.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback_history.js');
@@ -5179,7 +5181,7 @@ async function resolveFrameLocalMedia(options = {}) {
       try {
         await chrome.scripting.executeScript({
           target: sendOptions.documentId ? { tabId, documentIds: [sendOptions.documentId] } : { tabId, frameIds: [targetFrameId] },
-          files: ['content_redgifs.js']
+          files: ['lib/i18n.js', 'content_redgifs.js'] // the label catalogue first (UI-LOCALIZATION-01)
         });
         response = await chrome.tabs.sendMessage(
           tabId,
@@ -5314,7 +5316,7 @@ async function resolveRedditFrameBlobMedia({ tabId, frameId, clickedSrc, pageUrl
       try {
         await chrome.scripting.executeScript({
           target: { tabId, frameIds: [targetFrameId] },
-          files: ['content_reddit.js']
+          files: ['lib/i18n.js', 'content_reddit.js'] // the label catalogue first (UI-LOCALIZATION-01)
         });
         response = await chrome.tabs.sendMessage(
           tabId,
@@ -8656,6 +8658,8 @@ var feedbackNotifier = (typeof globalThis.ImageSaverFeedbackTracker?.createNotif
       iconUrl: 'icons/notification.png',
       autoClearMs: 8000,
       getPrefs: () => chrome.storage.local.get({ notifySuccess: true }),
+      // the saved interface language; an invalid or unreadable value leaves the notifier on the browser-language rule
+      getLang: async () => (await chrome.storage.local.get({ uiLanguage: null }))?.uiLanguage,
       log: (...args) => console.warn('[Image Saver] feedback:', ...args)
     })
   : async () => false;
@@ -11224,7 +11228,7 @@ async function onContextMenuClicked(info, tab) {
           if (chrome.scripting?.executeScript) {
             await chrome.scripting.executeScript({
               target: { tabId: tab.id },
-              files: ['content_x.js']
+              files: ['lib/i18n.js', 'content_x.js'] // the label catalogue first (UI-LOCALIZATION-01)
             });
             mediaResult = await chrome.tabs.sendMessage(tab.id, { action: 'GET_X_MEDIA_AT_CURSOR' });
           }

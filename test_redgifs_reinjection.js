@@ -253,6 +253,25 @@ function simulateRightClick(env, target) {
 // -----------------------------------------------------------------------------
 // Proof 1: Repeated evaluation in one context does not add listeners again.
 // -----------------------------------------------------------------------------
+runTest('Language subscriptions remain single after catalogue and script reinjection', () => {
+  const env = createMockEnvironment();
+  const listeners = [];
+  env.mockChrome.storage = {
+    local: { get: async () => ({ uiLanguage: 'en' }) },
+    onChanged: { addListener: (cb) => listeners.push(cb) }
+  };
+  const catalogue = fs.readFileSync(path.join(__dirname, 'lib/i18n.js'), 'utf8');
+  vm.runInContext(catalogue, env.sandbox);
+  vm.runInContext(REDGIFS_CODE, env.sandbox);
+  const initialCount = listeners.length;
+  assert(initialCount > 0, 'The real language subscriber is loaded');
+  for (let i = 0; i < 5; i++) {
+    vm.runInContext(catalogue, env.sandbox);
+    vm.runInContext(REDGIFS_CODE, env.sandbox);
+  }
+  assert.equal(listeners.length, initialCount, 'Reinjection must not add discarded language subscribers');
+});
+
 runTest('Proof 1: Repeated evaluation in one context does not add duplicate DOM or runtime listeners', () => {
   const env = createMockEnvironment();
 

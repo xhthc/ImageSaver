@@ -3,6 +3,7 @@ import { BarChart3 } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useI18n } from "@/hooks/use-i18n"
 import { cn } from "@/lib/utils"
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -13,12 +14,14 @@ const TILE_TONE: Record<string, string> = {
 
 /** Statistics over the retained history. The view model is built by statsView(); unknown stays unknown. */
 export function StatsCard({ view }: { view: any }) {
+  const { t, locale } = useI18n()
+  const count = (n: number) => (Number.isFinite(n) ? n.toLocaleString(locale) : String(n))
   return (
     <Card data-slot="stats" aria-live="polite">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <BarChart3 className="size-4 text-muted-foreground" aria-hidden="true" />
-          Статистика
+          {t("stats.title")}
         </CardTitle>
         <CardDescription className="text-xs" data-slot="scope-note">
           {view.note}
@@ -55,24 +58,24 @@ export function StatsCard({ view }: { view: any }) {
         {view.state === "ok" ? (
           <>
             <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3" data-slot="stat-tiles">
-              {view.tiles.map((t: any) => (
-                <li key={t.key} className={cn("rounded-lg border bg-background/40 px-3 py-2", t.key === "unknown" && "col-span-2 sm:col-span-1")} data-stat={t.key}>
-                  <p className={cn("text-xl font-semibold tabular-nums", TILE_TONE[t.key])} data-slot="value">
-                    {t.value}
+              {view.tiles.map((tile: any) => (
+                <li key={tile.key} className={cn("rounded-lg border bg-background/40 px-3 py-2", tile.key === "unknown" && "col-span-2 sm:col-span-1")} data-stat={tile.key}>
+                  <p className={cn("text-xl font-semibold tabular-nums", TILE_TONE[tile.key])} data-slot="value">
+                    {count(tile.value)}
                   </p>
                   <p className="text-xs text-muted-foreground" data-slot="label">
-                    {t.label}
+                    {tile.label}
                   </p>
                 </li>
               ))}
             </ul>
             <ul className="divide-y rounded-lg border text-sm" data-slot="type-rows">
-              {view.types.map((t: any) => (
-                <li key={t.key} className="flex flex-wrap items-baseline justify-between gap-x-3 px-3 py-1.5" data-type={t.key}>
-                  <span>{t.label}</span>
+              {view.types.map((row: any) => (
+                <li key={row.key} className="flex flex-wrap items-baseline justify-between gap-x-3 px-3 py-1.5" data-type={row.key}>
+                  <span>{row.label}</span>
                   <span className="text-right">
-                    <span className="font-semibold tabular-nums">{t.value}</span>
-                    {t.detail ? <span className="block text-xs text-muted-foreground">{t.detail}</span> : null}
+                    <span className="font-semibold tabular-nums">{count(row.value)}</span>
+                    {row.detail ? <span className="block text-xs text-muted-foreground">{row.detail}</span> : null}
                   </span>
                 </li>
               ))}

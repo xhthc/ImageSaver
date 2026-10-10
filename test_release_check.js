@@ -5,6 +5,9 @@ const { pathToFileURL } = require('node:url');
 
 (async () => {
   const { createUpdates, isNewer, versionParts, selectRelease, RELEASES_API, RELEASES_URL, CHECK_INTERVAL_MS } = await import(pathToFileURL(path.join(__dirname, 'ui/src/core/updates.js')));
+  // the controller stores catalogue keys (UI-LOCALIZATION-01); the Russian text is what a Russian interface shows
+  require('./lib/i18n.js'); // the shared catalogue (sets globalThis.ImageSaverI18n)
+  const ru = (m) => globalThis.ImageSaverI18n.message('ru', m);
   let passed = 0;
   const test = async (name, fn) => { await fn(); passed++; console.log(`[PASS] ${name}`); };
   const release = (tag, prerelease = false, extra = {}) => ({ tag_name: tag, draft: false, prerelease, ...extra });
@@ -39,8 +42,8 @@ const { pathToFileURL } = require('node:url');
     assert.throws(() => selectRelease({}, 'stable'), /invalid/);
   });
   await test('Response URLs/HTML never navigate or persist; anonymous request uses fixed repository', async () => {
-    assert.equal(RELEASES_API, 'https://api.github.com/repos/xhthc/ImageSaver/releases?per_page=100');
-    assert.equal(RELEASES_URL, 'https://github.com/xhthc/ImageSaver/releases');
+    assert.equal(RELEASES_API, 'https://api.github.com/repos/xhthc/MediaLatch/releases?per_page=100');
+    assert.equal(RELEASES_URL, 'https://github.com/xhthc/MediaLatch/releases');
     const h = harness({ releases: [release('v2.0.0.21', false, { html_url: 'https://evil.test', body: '<script>evil()</script>', assets: [{ browser_download_url: 'https://evil.test' }] })] });
     const u = h.make(); await u.check();
     assert.equal(h.requests[0].url, RELEASES_API);
@@ -54,6 +57,18 @@ const { pathToFileURL } = require('node:url');
     const h = harness(); await h.make().check(); await h.make().check(); assert.equal(h.requests.length, 1);
     await h.make().check(true); assert.equal(h.requests.length, 2);
     h.advance(CHECK_INTERVAL_MS); await h.make().check(); assert.equal(h.requests.length, 3);
+  });
+  await test('Repository rename discards cached failures from the old endpoint and preserves the selected channel', async () => {
+    const h = harness({ local: {
+      imageSaverReleaseChannel: 'beta',
+      imageSaverReleaseCheckV2: { channel: 'beta', attemptedAt: 1700000000000, checkedAt: 0, release: null, error: 'network' }
+    }, releases: [release('v2.0.0.25', true)] });
+    const u = h.make(); await u.check();
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].url, 'https://api.github.com/repos/xhthc/MediaLatch/releases?per_page=100');
+    assert.equal(u.store.getState().channel, 'beta');
+    assert.equal(u.store.getState().release.url, 'https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.25');
+    assert.equal(u.store.getState().error, '');
   });
   await test('Empty successful list is cached as no releases, not an API error', async () => {
     const u = harness().make(); await u.check();
@@ -69,7 +84,7 @@ const { pathToFileURL } = require('node:url');
   });
   await test('Failed preference write keeps old channel and does not fetch', async () => {
     const h = harness({ failSet: true }); const u = h.make(); await u.load(); await u.setChannel('beta');
-    assert.equal(u.store.getState().channel, 'stable'); assert.match(u.store.getState().notice, /Не удалось сохранить канал/);
+    assert.equal(u.store.getState().channel, 'stable'); assert.match(ru(u.store.getState().notice), /Не удалось сохранить канал/);
     assert.equal(h.requests.length, 0);
   });
   await test('Offline/API/malformed responses retain previous successful result and show failure', async () => {
@@ -91,7 +106,7 @@ const { pathToFileURL } = require('node:url');
     let timeout; const h = harness({ deps: { setTimeout: (fn, ms) => { assert.equal(ms, 10000); timeout = fn; return 1; }, clearTimeout: () => {} },
       fetch: (_, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(Error('aborted')))) });
     const u = h.make(); const p = u.check(); await new Promise(setImmediate); timeout(); await p;
-    assert.match(u.store.getState().error, /10 секунд/); assert.equal(u.store.getState().checking, false);
+    assert.match(ru(u.store.getState().error), /10 секунд/); assert.equal(u.store.getState().checking, false);
   });
   await test('Closing page aborts in-flight request without persisting a false failure', async () => {
     const h = harness({ fetch: (_, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(Error('aborted')))) });
@@ -101,17 +116,17 @@ const { pathToFileURL } = require('node:url');
   await test('Unreadable storage requires manual check; failed cache write remains visible', async () => {
     const h = harness({ failGet: true, failSet: true }); const u = h.make(); await u.check(); assert.equal(h.requests.length, 0);
     await u.check(true); assert.equal(h.requests.length, 1); assert.ok(u.store.getState().checkedAt);
-    assert.match(u.store.getState().notice, /Не удалось сохранить результат/);
+    assert.match(ru(u.store.getState().notice), /Не удалось сохранить результат/);
   });
   await test('Future cache timestamp never suppresses checking after clock rollback', async () => {
-    const h = harness({ local: { imageSaverReleaseCheckV2: { channel: 'stable', attemptedAt: Number.MAX_SAFE_INTEGER, checkedAt: Number.MAX_SAFE_INTEGER, release: null } } });
+    const h = harness({ local: { imageSaverReleaseCheckV3: { channel: 'stable', attemptedAt: Number.MAX_SAFE_INTEGER, checkedAt: Number.MAX_SAFE_INTEGER, release: null } } });
     await h.make().check(); assert.equal(h.requests.length, 1);
   });
   await test('Cached releases from the previous repository are ignored', async () => {
     const h = harness({ local: { imageSaverReleaseCheckV1: { channel: 'stable', attemptedAt: 1700000000000, checkedAt: 1700000000000, release: release('v9') } } });
     const u = h.make(); await u.check();
     assert.equal(h.requests.length, 1); assert.equal(u.store.getState().release, null);
-    assert.ok(h.local.imageSaverReleaseCheckV2);
+    assert.ok(h.local.imageSaverReleaseCheckV3);
   });
   console.log(`Release checks: ${passed}/${passed} passed.`);
 })().catch((error) => { console.error(error); process.exitCode = 1; });
