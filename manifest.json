@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MediaLatch",
-  "version": "2.0.0.27",
+  "version": "2.0.0.28",
   "description": "Save available original images, videos and GIFs from the context menu, with selected site support and local save history.",
   "homepage_url": "https://github.com/xhthc/MediaLatch",
   "minimum_chrome_version": "120",

@@ -4,7 +4,7 @@
 
 MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**. Source discovery starts after you choose Save; the menu title stays fixed.
 
-> **Current preview: [v2.0.0.27](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.27).** Includes fixes for selected X media and Reddit/RedGIFs feed controls, optional Debug logging and source MP4 saving when GIF size limits are exceeded. Existing preferences and save folders stay compatible with Image Saver.
+> **Current preview: [v2.0.0.28](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.28).** Sankaku previews now save the selected post's declared original instead of the AVIF thumbnail. Slow post responses have a bounded 20-second deadline and explicit network diagnostics. Includes the earlier X/Reddit fixes, optional Debug journal and source MP4 fallback for oversized GIF conversions.
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
@@ -29,13 +29,14 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 | Reddit | Originals, animations, inline saving; selected finite, unencrypted H.264/AAC Reddit HLS streams assembled into MP4 |
 | RedGIFs | Selected clip and same-clip video renditions; inline saving; provider audio recovery where available |
 | Pawchive | Declared post originals from previews or individual attachments; batches capped at 20, with spaced starts and a rate-limit stop |
+| Sankaku | Selected preview/sample to declared same-post original via the context menu in feeds/opened posts; image/video smoke tests reported working in Helium, native GIF test pending |
 | Other sites | Generic discovery plus existing rules, including Pixiv and selected booru paths; coverage varies |
 
-Kemono, Sankaku and broader booru compatibility need further integration and live validation. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused.
+Kemono is deferred while the site is unavailable. Broader booru compatibility needs separate integration and live validation. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.27-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.28-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -73,14 +74,31 @@ There is no telemetry or extension backend. History and Debug recording are off 
 
 ## Roadmap
 
-These capabilities are planned and are **not in the published preview**:
+Plans below are **not implemented in this preview**. They describe direction, not promised dates or support for every layout. Reliability comes first; each capability needs a separate implementation and browser check.
 
-- Integrate Kemono originals; expand Sankaku, booru and generic resolver coverage.
-- Tiny universal inline controls and optional post/media multi-selection.
-- A download manager with queue, progress, pause/resume and pacing; stage complete files before handing them to the PC where supported.
-- Selected-post/page batches, investigating ZIP first and 7z later if practical.
-- Folder selection and author-based organization, starting with X.
-- Firefox portability, other-browser validation and store distribution.
+| Area | Planned result | Status |
+|---|---|---|
+| Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Next compatibility work |
+| VK groups | Save selected photos, albums and accessible videos from group posts; verify ownership, sessions and rate limits | Planned; examples and feasibility first |
+| Telegram channels | Save accessible channel media/albums from Telegram Web or public post pages; verify player/blob and session boundaries | Planned; examples and feasibility first |
+| Controls and selection | Small universal inline controls and optional post/media multi-selection | Planned |
+| Download manager | Persisted queue, truthful file/batch progress, cancellation, supported pause/resume, paced requests and 429 cooldowns | Planned |
+| Complete-file staging | Disk-backed acquisition/validation before export, bounded memory and restart cleanup; no second remote download at export | Feasibility before implementation |
+| Batch archives | Selected-post/page batches, ZIP first; 7z only if a practical bounded implementation is justified | Planned |
+| Destination and naming | Proven-author folders starting with X, validated layout presets and an authorized directory picker where supported | Planned; arbitrary drive paths need feasibility checks |
+| Kemono | Declared same-post originals and scoped feed behavior | Deferred until the site is usable |
+| Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
+| Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Planned; security/privacy gates first |
+
+The older Telegram/VK ideas concerned **publishing**, not downloading. Both directions are listed separately. Hosting remains deferred; this preview does not require or install a bot, backend or native helper.
+
+## Security before store submission
+
+RCE (remote code execution) is a vulnerability to prevent. Executable extension code is bundled locally; release checks read metadata and never install or run downloaded code. Manifest V3's default extension-page CSP applies.
+
+Priorities before Chrome Web Store submission: packaged-code/CSP checks, complete sender/action/frame validation, URL and redirect restrictions including private-network targets, a minimum-permission review, and dependency/release integrity. Keep page/API data out of executable code and unsafe HTML rendering; test malformed media and resource exhaustion. These are planned gates, **not a completed security audit or store approval**. Current broad HTTP/HTTPS access needs particular review.
+
+See [Security and store readiness](docs/SECURITY.md), [Privacy](docs/PRIVACY.md) and [Release preparation](docs/RELEASE.md).
 
 ## Development
 
