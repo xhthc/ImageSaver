@@ -329,6 +329,40 @@ function env(stored={jobs:[],paused:false}) {
     assert.equal(await sandbox.feedbackTracker.get(failed),null);
     assert(!persisted[ImageSaverFeedbackTracker.STORAGE_KEY].ops.some(r=>r.id===failed),'removal persisted');
     assert.deepEqual(commands,[],'feedback dismissal never invokes managed transport');
+
+    let closed=0;
+    chrome.runtime.getContexts=async()=>[{contextType:'OFFSCREEN_DOCUMENT'}];
+    chrome.offscreen.closeDocument=async()=>{closed++;};
+    vm.runInContext('offscreenOwnershipKnown=true',sandbox);
+    capturedAdapter.activity(true);
+    await sandbox.closeOffscreenDocument();assert.equal(closed,0,'busy manager owns the document');
+    capturedAdapter.activity(false);await wait();assert.equal(closed,1,'manager idle closes unused document');
+    const owner=sandbox.acquireOffscreenTask('fixture-conversion');
+    capturedAdapter.activity(false);await wait();assert.equal(closed,1,'active conversion survives idle callback');
+    await sandbox.releaseOffscreenTask(owner);assert.equal(closed,2,'last conversion release closes document');
+    vm.runInContext("activeProtectedBlobsByDownloadId.set(123,'blob:fixture')",sandbox);
+    capturedAdapter.activity(false);await wait();assert.equal(closed,2,'protected download survives idle callback');
+    vm.runInContext('activeProtectedBlobsByDownloadId.clear()',sandbox);
+    let finishLookup;
+    chrome.runtime.getContexts=()=>new Promise(resolve=>{finishLookup=resolve;});
+    capturedAdapter.activity(false);await until(()=>Boolean(finishLookup));
+    capturedAdapter.activity(true);finishLookup([{}]);await wait();
+    assert.equal(closed,2,'new manager work during context lookup prevents closure');
+    chrome.runtime.getContexts=async()=>[{}];
+    for(const action of ['STAGING_VERIFY','STAGING_REMOVE']) {
+      let finishRequest;
+      sandbox.offscreenRequest=message=>{assert.equal(message.action,action);return new Promise(resolve=>{finishRequest=resolve;});};
+      const work=action==='STAGING_VERIFY'?capturedAdapter.verify({id:'fixture-prepared',total:png.length,mime:'image/png'}):capturedAdapter.remove('fixture-prepared');
+      await until(()=>Boolean(finishRequest));
+      const beforeClose=closed;
+      capturedAdapter.activity(false);await wait();
+      assert.equal(closed,beforeClose,'pending '+action+' owns offscreen across pump idle');
+      finishRequest({success:true,valid:true});
+      const result=await work;
+      if(action==='STAGING_VERIFY')assert.equal(result,true);
+      assert.equal(closed,beforeClose+1,'completed '+action+' releases its last owner');
+      assert.equal(vm.runInContext('activeOffscreenTasks',sandbox),0);
+    }
   }
   console.log('PASS: production stream validation, byte identity, queue/export boundary, local retry, cancellation, journal failure, recovery and statistics');
 })().catch(e=>{console.error(e);process.exitCode=1;});

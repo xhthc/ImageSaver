@@ -9381,7 +9381,7 @@ let downloadManagerRecovering = Boolean(globalThis.MediaLatchDownloads && typeof
 const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== 'undefined'
   ? MediaLatchDownloads.createManager({
     store:MediaLatchDownloads.database(indexedDB), id:()=>crypto.randomUUID(), sleep:ms=>new Promise(r=>setTimeout(r,ms)),
-    activity:on=>{downloadManagerBusy=on;},
+    activity:on=>{downloadManagerBusy=on;if(!on)void closeOffscreenDocument().catch(()=>{});},
     changed:()=>{try{chrome.runtime.sendMessage({action:'DOWNLOADS_CHANGED'}).catch(()=>{});}catch(_){}},
     stage:async (job,signal)=>{
       await ensureOffscreenDocument();
@@ -9397,15 +9397,19 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
     },
     stop:async id=>{await ensureOffscreenDocument();await offscreenRequest({action:'STAGING_ABORT',id});},
     verify:async j=>{
-      await ensureOffscreenDocument();const res=await offscreenRequest({action:'STAGING_VERIFY',id:j.id,size:j.total,mime:j.mime});return res?.success && res.valid===true;
+      const owner=acquireOffscreenTask();
+      try{await ensureOffscreenDocument();const res=await offscreenRequest({action:'STAGING_VERIFY',id:j.id,size:j.total,mime:j.mime});return res?.success && res.valid===true;}
+      finally{await releaseOffscreenTask(owner);}
     },
     fileUrl:async (id,mime)=>{
       await ensureOffscreenDocument();const res=await offscreenRequest({action:'STAGING_URL',id,mime});
       if(!res?.success)throw Error(res?.error || 'STAGING_FAILED');return res.url;
     },
     remove:async id=>{
-      await ensureOffscreenDocument();const res=await offscreenRequest({action:'STAGING_REMOVE',id});
-      if(!res?.success)throw Error(res?.error || 'STAGING_FAILED');
+      const owner=acquireOffscreenTask();
+      try{await ensureOffscreenDocument();const res=await offscreenRequest({action:'STAGING_REMOVE',id});
+        if(!res?.success)throw Error(res?.error || 'STAGING_FAILED');}
+      finally{await releaseOffscreenTask(owner);}
     },
     abort:async id=>{await offscreenRequest({action:'STAGING_ABORT',id});},
     export:(url,filename)=>chrome.downloads.download({url,filename,saveAs:false}),
@@ -9428,7 +9432,7 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
     failed:async j=>j.state==='cancelled'?fbCancel(j.op):fbFail(j.op,{stage:j.prepared?'save':'download',code:j.error}),
     error:()=>dbg('manager','queue','failed','STORAGE_FAILED')
   }) : null;
-downloadManager?.ready.then(()=>{downloadManagerRecovering=false;},()=>dbg('manager','load','failed','STORAGE_FAILED'));
+downloadManager?.ready.then(()=>{downloadManagerRecovering=false;void closeOffscreenDocument().catch(()=>{});},()=>dbg('manager','load','failed','STORAGE_FAILED'));
 
 function managedDownload(options, feedbackOp=null, mime='') {
   // Offline legacy harnesses omit IndexedDB; the installed extension always uses the durable queue.
@@ -10927,7 +10931,7 @@ async function closeOffscreenDocument() {
         });
         if (existing.length === 0) return;
       }
-      if (activeOffscreenTasks > 0 || hasActiveProtectedDownloads()) return;
+      if (downloadManagerBusy || downloadManagerRecovering || activeOffscreenTasks > 0 || hasActiveProtectedDownloads()) return;
       await chrome.offscreen.closeDocument();
     } catch (err) {
       console.warn('[MediaLatch] Не удалось закрыть offscreen document:', err);
