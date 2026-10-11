@@ -455,6 +455,18 @@ const mockDocument = {
   createElement: (tag) => ({ tagName: tag.toUpperCase(), preload: '', addEventListener: () => {}, removeAttribute: () => {}, load: () => {} })
 };
 
+// Legacy provider fixtures expose a real readable body while retaining their old APIs.
+function streamedMetadata(response) {
+  response.body = new ReadableStream({
+    async start(controller) {
+      const value = response.json ? JSON.stringify(await response.json()) : await response.text();
+      controller.enqueue(new TextEncoder().encode(value));
+      controller.close();
+    }
+  });
+  return response;
+}
+
 // Создаем песочницу
 const sandbox = {
   chrome: mockChrome,
@@ -474,7 +486,7 @@ const sandbox = {
     const urlStr = url.toString();
     // Мок Pixiv Ajax API
     if (urlStr.includes('/ajax/illust/149989236/pages')) {
-      return {
+      return streamedMetadata({
         ok: true,
         status: 200,
         json: async () => ({
@@ -487,7 +499,7 @@ const sandbox = {
             }
           ]
         })
-      };
+      });
     }
     if (urlStr === 'https://i.redd.it/only_jpeg_photo.jpg') {
       return { ok: false, status: 404, headers: { get: () => '' } };
@@ -3102,7 +3114,7 @@ async function runTests() {
     sandbox.fetch = async (url, opts) => {
       const u = url.toString();
       if (u.includes('yande.re/post.json')) {
-        return {
+        return streamedMetadata({
           ok: true, status: 200,
           json: async () => [{
             id: 1269108,
@@ -3110,7 +3122,7 @@ async function runTests() {
             file_url: expectedOriginal,
             jpeg_url: expectedOriginal
           }]
-        };
+        });
       }
       if (u === expectedOriginal) {
         return {
@@ -3142,14 +3154,14 @@ async function runTests() {
     sandbox.fetch = async (url, opts) => {
       const u = url.toString();
       if (u.includes('yande.re/post.json')) {
-        return {
+        return streamedMetadata({
           ok: true, status: 200,
           json: async () => [{
             id: 1269193,
             md5: '46cc49d85886fd5de9b91eaff6786c65',
             file_url: expectedOriginal
           }]
-        };
+        });
       }
       if (u === expectedOriginal) {
         return {
@@ -3180,7 +3192,7 @@ async function runTests() {
     sandbox.fetch = async (url, opts) => {
       const u = url.toString();
       if (u.includes('yande.re/post.json')) {
-        return {
+        return streamedMetadata({
           ok: true, status: 200,
           json: async () => [{
             id: 500000,
@@ -3188,7 +3200,7 @@ async function runTests() {
             file_ext: 'png',
             file_url: expectedOriginalPng
           }]
-        };
+        });
       }
       if (u === expectedOriginalPng) {
         return {
@@ -3266,10 +3278,10 @@ async function runTests() {
     sandbox.fetch = async (url, opts) => {
       const u = url.toString();
       if (u.includes('yande.re/post.json')) {
-        return {
+        return streamedMetadata({
           ok: true, status: 200,
           json: async () => [{ id: 1269108, file_url: expectedOriginal }]
-        };
+        });
       }
       if (u === expectedOriginal) {
         return {
@@ -3348,10 +3360,10 @@ async function runTests() {
     sandbox.fetch = async (url, opts) => {
       const u = url.toString();
       if (u.includes('page=post') && u.includes('s=view') && u.includes('id=14953496')) {
-        return {
+        return streamedMetadata({
           ok: true, status: 200,
           text: async () => postPageHtml
-        };
+        });
       }
       if (u === expectedOriginal) {
         return {
@@ -3494,7 +3506,7 @@ async function runTests() {
     sandbox.fetch = async (url, opts) => {
       const u = url.toString();
       if (u.includes('e-shuushuu.net/api/v1/images/1119530')) {
-        return {
+        return streamedMetadata({
           ok: true, status: 200,
           json: async () => ({
             id: 1119530,
@@ -3502,7 +3514,7 @@ async function runTests() {
             medium_url: 'https://cdn.e-shuushuu.net/medium/2026-09-23-1119530.jpg',
             thumbnail_url: 'https://cdn.e-shuushuu.net/thumbs/2026-09-23-1119530.webp'
           })
-        };
+        });
       }
       if (u === expectedOriginal) {
         return {
@@ -3537,7 +3549,7 @@ async function runTests() {
     sandbox.fetch = async (url, opts) => {
       const u = url.toString();
       if (u.includes('e-shuushuu.net/api/v1/images/1119525')) {
-        return {
+        return streamedMetadata({
           ok: true, status: 200,
           json: async () => ({
             id: 1119525,
@@ -3545,7 +3557,7 @@ async function runTests() {
             medium_url: 'https://cdn.e-shuushuu.net/medium/2026-09-23-1119525.png',
             thumbnail_url: 'https://cdn.e-shuushuu.net/thumbs/2026-09-23-1119525.webp'
           })
-        };
+        });
       }
       if (u === expectedOriginalPng) {
         return {
@@ -3626,14 +3638,14 @@ async function runTests() {
     sandbox.fetch = async (url, opts) => {
       const u = url.toString();
       if (u.includes('e-shuushuu.net/api/v1/images/1119530')) {
-        return {
+        return streamedMetadata({
           ok: true, status: 200,
           json: async () => ({
             id: 1119530,
             url: expectedOriginal,
             medium_url: 'https://cdn.e-shuushuu.net/medium/2026-09-23-1119530.jpg'
           })
-        };
+        });
       }
       if (u === expectedOriginal) {
         return {
@@ -7180,7 +7192,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -7189,7 +7201,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/19/81/19810abcdef19810abcdef19810abcde.jpg',
               file_ext: 'jpg'
             }]
-          };
+          });
         }
         if (urlStr.includes('.jpg')) {
           return {
@@ -7225,7 +7237,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -7234,7 +7246,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/19/82/19820abcdef19820abcdef19820abcde.mp4',
               file_ext: 'mp4'
             }]
-          };
+          });
         }
         if (urlStr.includes('.mp4')) {
           return {
@@ -7277,7 +7289,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -7286,7 +7298,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/19/83/19830abcdef19830abcdef19830abcde.webm',
               file_ext: 'webm'
             }]
-          };
+          });
         }
         if (urlStr.includes('.webm')) {
           return {
@@ -7564,7 +7576,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -7573,7 +7585,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/19/89/19890.mp4',
               file_ext: 'mp4'
             }]
-          };
+          });
         }
         if (urlStr.includes('.mp4')) {
           return { ok: false, status: 403, headers: { get: () => null } };
@@ -7602,7 +7614,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -7611,7 +7623,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/19/10/198100.mp4',
               file_ext: 'mp4'
             }]
-          };
+          });
         }
         if (urlStr.includes('.mp4')) {
           return { ok: false, status: 404, headers: { get: () => null } };
@@ -10758,7 +10770,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -10767,7 +10779,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/12/34/1234567890abcdef1234567890abcdef.mp4',
               file_ext: 'mp4'
             }]
-          };
+          });
         }
         if (urlStr.includes('.mp4')) {
           return {
@@ -10853,7 +10865,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -10862,7 +10874,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/aa/bb/aabbccddeeff00112233445566778899.jpg',
               file_ext: 'jpg'
             }]
-          };
+          });
         }
         if (urlStr.includes('.jpg')) {
           return {
@@ -10929,11 +10941,11 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('gelbooru.com/index.php')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             text: async () => '<video id="gelcomVideoPlayer"><source src="https://video-cdn01.gelbooru.com/images/ab/cd/abcdef1234567890abcdef1234567890.mp4" type="video/mp4"></video>'
-          };
+          });
         }
         if (urlStr.includes('.mp4')) {
           return {
@@ -10987,11 +10999,11 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('gelbooru.com/index.php')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             text: async () => '<video id="gelcomVideoPlayer"><source src="https://attacker.com/malicious.mp4" type="video/mp4"></video>'
-          };
+          });
         }
         return { ok: false, status: 404 };
       };
@@ -11017,7 +11029,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -11026,7 +11038,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/42/42/42942942942942942942942942942942.mp4',
               file_ext: 'mp4'
             }]
-          };
+          });
         }
         if (urlStr.includes('.mp4')) {
           return {
@@ -11053,7 +11065,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -11062,7 +11074,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/40/30/40340340340340340340340340340340.mp4',
               file_ext: 'mp4'
             }]
-          };
+          });
         }
         if (urlStr.includes('.mp4')) {
           return {
@@ -11126,7 +11138,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/post.json?tags=md5:')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -11134,7 +11146,7 @@ async function runTests() {
               file_url: 'https://sakugabooru.com/data/1234567890abcdef1234567890abcdef.mp4',
               file_ext: 'mp4'
             }]
-          };
+          });
         }
         return { ok: false, status: 404 };
       };
@@ -11485,7 +11497,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -11494,7 +11506,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/ab/cd/abcdef0123456789abcdef0123456789.webm',
               file_ext: 'webm'
             }]
-          };
+          });
         }
         if (urlStr.includes('.webm')) {
           return {
@@ -11567,7 +11579,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/post.json?tags=md5:')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -11575,7 +11587,7 @@ async function runTests() {
               file_url: 'https://sakugabooru.com/data/1234567890abcdef1234567890abcdef.webm?download=1',
               file_ext: 'webm'
             }]
-          };
+          });
         }
         return { ok: false, status: 404 };
       };
@@ -11609,7 +11621,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json?tags=md5:')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => ({
@@ -11621,7 +11633,7 @@ async function runTests() {
                 }
               }]
             })
-          };
+          });
         }
         return { ok: false, status: 404 };
       };
@@ -11653,7 +11665,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -11662,7 +11674,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/40/30/40301403014030140301403014030140.webm',
               file_ext: 'webm'
             }]
-          };
+          });
         }
         if (urlStr.includes('.webm')) {
           return { ok: false, status: 403, headers: { get: () => null } };
@@ -11694,7 +11706,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -11703,7 +11715,7 @@ async function runTests() {
               file_url: 'https://cdn.donmai.us/original/42/90/42901429014290142901429014290142.mp4',
               file_ext: 'mp4'
             }]
-          };
+          });
         }
         if (urlStr.includes('.mp4')) {
           return { ok: false, status: 429, headers: { get: () => null } };
@@ -11929,7 +11941,7 @@ async function runTests() {
         sandbox.fetch = async (url) => {
           const urlStr = typeof url === 'string' ? url : url.url;
           if (urlStr.includes('/posts.json')) {
-            return {
+            return streamedMetadata({
               ok: true,
               status: 200,
               json: async () => [{
@@ -11938,7 +11950,7 @@ async function runTests() {
                 file_url: 'https://cdn.donmai.us/original/ab/cd/abcdefabcdefabcdefabcdefabcdefab.webm',
                 file_ext: 'webm'
               }]
-            };
+            });
           }
           if (urlStr.includes('.webm')) {
             return { ok: false, status: statusCode, headers: { get: () => null } };
@@ -12021,7 +12033,7 @@ async function runTests() {
       const thumbUrl = new URL(`https://static1.e621.net/data/preview/ab/cd/${expectedMd5}.jpg`);
 
       // Mock API returning foreign host
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         status: 200,
         json: async () => ({
@@ -12034,12 +12046,12 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const foreignCands = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/1001', null);
       const poisonedOriginal = foreignCands.find(c => c.tier === 'original' && c.url.includes('unrelated.example.net'));
 
       // Mock API returning mismatched MD5
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         status: 200,
         json: async () => ({
@@ -12052,12 +12064,12 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const mismatchedCands = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/1002', null);
       const mismatchedOriginal = mismatchedCands.find(c => c.tier === 'original' && c.url.includes('99999999999999999999999999999999'));
 
       // Mock API returning valid signed asset URL
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         status: 200,
         json: async () => ({
@@ -12070,7 +12082,7 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const validCands = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/1003', null);
       const validOrig = validCands.find(c => c.tier === 'original' && c.score === 90);
 
@@ -12153,12 +12165,12 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('page=post') && urlStr.includes('id=12345')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             text: async () => `<html><body><div id="content"><video id="gelcomVideoPlayer" src="${webmUrl}"></video></div></body></html>`,
             headers: { get: (h) => h.toLowerCase() === 'content-type' ? 'text/html' : null }
-          };
+          });
         }
         if (urlStr.includes(testMd5) && urlStr.endsWith('.webm')) {
           return { ok: false, status: 403, headers: { get: () => null } };
@@ -12217,12 +12229,12 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('page=post')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             text: async () => `<html><body><video id="gelcomVideoPlayer" src="${webmUrl}"></video></body></html>`,
             headers: { get: () => null }
-          };
+          });
         }
         if (urlStr.includes('.webm')) return { ok: false, status: 401, headers: { get: () => null } };
         if (urlStr.includes('.jpg')) return { ok: true, status: 200, headers: { get: (h) => h.toLowerCase() === 'content-type' ? 'image/jpeg' : null } };
@@ -12239,12 +12251,12 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('page=post')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             text: async () => `<html><body><video id="gelcomVideoPlayer" src="${webmUrl}"></video></body></html>`,
             headers: { get: () => null }
-          };
+          });
         }
         if (urlStr.includes('.webm')) return { ok: false, status: 429, headers: { get: () => null } };
         if (urlStr.includes('.jpg')) return { ok: true, status: 200, headers: { get: (h) => h.toLowerCase() === 'content-type' ? 'image/jpeg' : null } };
@@ -12261,12 +12273,12 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : url.url;
         if (urlStr.includes('page=post')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             text: async () => `<html><body><video id="gelcomVideoPlayer" src="${webmUrl}"></video></body></html>`,
             headers: { get: () => null }
-          };
+          });
         }
         if (urlStr.includes('.webm')) return { ok: false, status: 404, headers: { get: () => null } };
         if (urlStr.includes('.mp4')) {
@@ -12302,7 +12314,7 @@ async function runTests() {
       const e621Engine = sandbox.BOORU_ENGINE_RESOLVERS.find(e => e.name === 'E621Engine');
 
       // Case 1: Reproduction - Response has allowed domain but NO MD5 in object and NO MD5 in URL path
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         json: async () => ({
           posts: [{
@@ -12313,12 +12325,12 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const candsNoEvidence = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/1001', null);
       const origNoEvidence = candsNoEvidence.find(c => c.tier === 'original' && c.score === 90);
 
       // Case 2: Positive match from response object MD5 (URL has no MD5 in path)
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         json: async () => ({
           posts: [{
@@ -12330,12 +12342,12 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const candsRespMatch = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/1002', null);
       const origRespMatch = candsRespMatch.find(c => c.tier === 'original' && c.score === 90);
 
       // Case 3: Positive match from URL path (response object has no MD5)
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         json: async () => ({
           posts: [{
@@ -12346,12 +12358,12 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const candsUrlMatch = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/1003', null);
       const origUrlMatch = candsUrlMatch.find(c => c.tier === 'original' && c.score === 90);
 
       // Case 4: Explicit conflict in response MD5
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         json: async () => ({
           posts: [{
@@ -12363,12 +12375,12 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const candsConflict = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/1004', null);
       const origConflict = candsConflict.find(c => c.tier === 'original' && c.score === 90);
 
       // Case 5: Post ID mismatch on post page
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         json: async () => ({
           posts: [{
@@ -12380,7 +12392,7 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const candsPostMismatch = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/1005', null);
       const origPostMismatch = candsPostMismatch.find(c => c.tier === 'original' && c.score === 90);
 
@@ -12727,14 +12739,14 @@ async function runTests() {
       cs.triggerContextMenu(mockEl);
 
       sandbox.fetch = async (url) => {
-        return {
+        return streamedMetadata({
           ok: true,
           status: 200,
           text: async () => '<html><body>Error: login required</body></html>',
           headers: {
             get: (h) => h.toLowerCase() === 'content-type' ? 'text/html' : null
           }
-        };
+        });
       };
 
       await mockChrome.contextMenus._handler({
@@ -12994,7 +13006,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : (url.url || '');
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -13002,7 +13014,7 @@ async function runTests() {
               large_file_url: origJpgUrl,
               file_ext: 'webm'
             }]
-          };
+          });
         }
         if (urlStr.endsWith('.webm')) return { ok: false, status: 401, headers: { get: () => null } };
         if (urlStr.endsWith('.jpg')) return {
@@ -13027,7 +13039,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : (url.url || '');
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -13035,7 +13047,7 @@ async function runTests() {
               large_file_url: origJpgUrl,
               file_ext: 'webm'
             }]
-          };
+          });
         }
         if (urlStr.endsWith('.webm')) return { ok: false, status: 403, headers: { get: () => null } };
         if (urlStr.endsWith('.jpg')) return {
@@ -13060,7 +13072,7 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const urlStr = typeof url === 'string' ? url : (url.url || '');
         if (urlStr.includes('/posts.json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => [{
@@ -13068,7 +13080,7 @@ async function runTests() {
               large_file_url: origJpgUrl,
               file_ext: 'webm'
             }]
-          };
+          });
         }
         if (urlStr.endsWith('.webm')) return { ok: false, status: 429, headers: { get: () => null } };
         if (urlStr.endsWith('.jpg')) return {
@@ -13106,7 +13118,7 @@ async function runTests() {
       const e621Engine = sandbox.BOORU_ENGINE_RESOLVERS.find(e => e.name === 'E621Engine');
 
       // Case 1: Post page (/posts/7001) with matching post ID
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         json: async () => ({
           posts: [{
@@ -13118,12 +13130,12 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const candsValid = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/7001', null);
       const origValid = candsValid.find(c => c.tier === 'original' && c.score === 90);
 
       // Case 2: Post page (/posts/7001) with ABSENT post ID (p.id is undefined)
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         json: async () => ({
           posts: [{
@@ -13134,12 +13146,12 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const candsAbsent = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/7001', null);
       const origAbsent = candsAbsent.find(c => c.tier === 'original' && c.score === 90);
 
       // Case 3: Post page (/posts/7001) with MISMATCHED post ID (p.id is 8888)
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         json: async () => ({
           posts: [{
@@ -13151,12 +13163,12 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const candsMismatch = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/7001', null);
       const origMismatch = candsMismatch.find(c => c.tier === 'original' && c.score === 90);
 
       // Case 3b: Reproduction - Post page (/posts/7001) with missing top-level p.id but nested p.post.id equal to page ID
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         json: async () => ({
           posts: [{
@@ -13168,12 +13180,12 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const candsNestedOnly = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts/7001', null);
       const origNestedOnly = candsNestedOnly.find(c => c.tier === 'original' && c.score === 90);
 
       // Case 4: Search/list page without post ID (e.g. /posts?tags=dragon) with positive MD5
-      sandbox.fetch = async () => ({
+      sandbox.fetch = async () => (streamedMetadata({
         ok: true,
         json: async () => ({
           posts: [{
@@ -13184,7 +13196,7 @@ async function runTests() {
             }
           }]
         })
-      });
+      }));
       const candsSearch = await e621Engine.resolve(thumbUrl, 'https://e621.net/posts?tags=dragon', null);
       const origSearch = candsSearch.find(c => c.tier === 'original' && c.score === 90);
 
@@ -13618,11 +13630,11 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const u = typeof url === 'string' ? url : url.url;
         if (u.includes('page=post')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             text: async () => `<video id="gelcomVideoPlayer"><source src="${gelbooruVideoUrl}"></video>`
-          };
+          });
         }
         return { ok: false, status: 403 };
       };
@@ -13675,11 +13687,11 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const u = typeof url === 'string' ? url : url.url;
         if (u.includes('page=post')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             text: async () => `<video id="gelcomVideoPlayer"><source src="https://video-cdn2.gelbooru.com/images/11/22/${testMd5}.mp4"></video>`
-          };
+          });
         }
         if (u.includes('.mp4')) {
           return {
@@ -13739,11 +13751,11 @@ async function runTests() {
       sandbox.fetch = async (url) => {
         const u = typeof url === 'string' ? url : url.url;
         if (u.includes('page=post')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             text: async () => `<video id="gelcomVideoPlayer"><source src="${gelbooruVideoUrl}"></video>`
-          };
+          });
         }
         return { ok: false, status: 404 };
       };

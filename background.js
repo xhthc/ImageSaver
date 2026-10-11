@@ -2667,16 +2667,9 @@ async function resolvePixivUrl(urlObj, pageUrl, linkUrl) {
   if (illustId) {
     try {
       const apiUrl = `https://www.pixiv.net/ajax/illust/${illustId}/pages`;
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 4000);
-      const res = await fetch(apiUrl, {
-        signal: ctrl.signal,
-        credentials: 'include'
-      });
-      clearTimeout(tid);
+      const data = await fetchResolverMetadata(apiUrl, { timeoutMs: 4000, credentials: 'include' });
 
-      if (res.ok) {
-        const data = await res.json();
+      if (data) {
         if (data && !data.error) {
           if (Array.isArray(data.body) && data.body.length > 0) {
             const pageData = data.body[pageIndex] || data.body[0];
@@ -3045,13 +3038,9 @@ async function resolveYandereUrl(urlObj, pageUrl, linkUrl) {
 
   for (const apiUrl of apiQueries) {
     try {
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 3500);
-      const res = await fetch(apiUrl, { signal: ctrl.signal });
-      clearTimeout(tid);
+      const posts = await fetchResolverMetadata(apiUrl);
 
-      if (res.ok) {
-        const posts = await res.json();
+      if (posts) {
         if (Array.isArray(posts) && posts[0]) {
           const p = posts[0];
           if (p.file_url && !candidates.includes(p.file_url)) {
@@ -3163,13 +3152,9 @@ async function resolveEshuushuuUrl(urlObj, pageUrl, linkUrl) {
   if (imageId) {
     try {
       const apiUrl = `https://e-shuushuu.net/api/v1/images/${imageId}`;
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 3500);
-      const res = await fetch(apiUrl, { signal: ctrl.signal });
-      clearTimeout(tid);
+      const data = await fetchResolverMetadata(apiUrl);
 
-      if (res.ok) {
-        const data = await res.json();
+      if (data) {
         if (data && data.url) {
           if (!candidates.includes(data.url) && await verifyImageUrl(data.url)) {
             candidates.push(data.url);
@@ -3877,13 +3862,9 @@ const BOORU_ENGINE_RESOLVERS = [
             } catch (_) {}
           }
           const apiUrl = `${apiDomain}/posts.json?tags=md5:${md5}`;
-          const ctrl = new AbortController();
-          const tid = setTimeout(() => ctrl.abort(), 3500);
-          const res = await fetch(apiUrl, { signal: ctrl.signal });
-          clearTimeout(tid);
+          const posts = await fetchResolverMetadata(apiUrl);
 
-          if (res.ok) {
-            const posts = await res.json();
+          if (posts) {
             if (Array.isArray(posts) && posts[0]) {
               const p = posts[0];
               apiKnownExt = (p.file_ext || '').toLowerCase();
@@ -3977,13 +3958,9 @@ const BOORU_ENGINE_RESOLVERS = [
 
       if (postUrlCandidate) {
         try {
-          const ctrl = new AbortController();
-          const tid = setTimeout(() => ctrl.abort(), 3500);
-          // Reject redirects outside trusted host by using redirect: 'error'
-          const res = await fetch(postUrlCandidate, { signal: ctrl.signal, redirect: 'error' });
-          clearTimeout(tid);
-          if (res.ok) {
-            const html = await res.text();
+          const html = await fetchResolverMetadata(postUrlCandidate, { redirect: 'error', text: true });
+
+          if (html) {
 
             // A. Video player element extraction (<video id="gelcomVideoPlayer"> or <source>)
             const videoMatch = html.match(/<video[^>]+id=["']gelcomVideoPlayer["'][^>]*\bsrc=["']([^"']+)["']/i) ||
@@ -4135,13 +4112,9 @@ const BOORU_ENGINE_RESOLVERS = [
               apiDomain = 'https://yande.re';
             }
             const apiUrl = `${apiDomain}/post.json?tags=md5:${md5}`;
-            const ctrl = new AbortController();
-            const tid = setTimeout(() => ctrl.abort(), 3500);
-            const res = await fetch(apiUrl, { signal: ctrl.signal });
-            clearTimeout(tid);
+            const posts = await fetchResolverMetadata(apiUrl);
 
-            if (res.ok) {
-              const posts = await res.json();
+            if (posts) {
               if (Array.isArray(posts) && posts[0]?.file_url) {
                 const fileUrl = posts[0].file_url;
                 const fileExt = (posts[0].file_ext || '').toLowerCase();
@@ -4218,13 +4191,9 @@ const BOORU_ENGINE_RESOLVERS = [
         try {
           const apiHost = urlObj.hostname.includes('derpicdn.net') ? 'https://derpibooru.org' : urlObj.origin;
           const apiUrl = `${apiHost}/api/v1/json/images/${imageId}`;
-          const ctrl = new AbortController();
-          const tid = setTimeout(() => ctrl.abort(), 3500);
-          const res = await fetch(apiUrl, { signal: ctrl.signal });
-          clearTimeout(tid);
+          const data = await fetchResolverMetadata(apiUrl);
 
-          if (res.ok) {
-            const data = await res.json();
+          if (data) {
             if (data.image?.representations?.full) {
               candidates.unshift(data.image.representations.full);
             } else if (data.image?.view_url) {
@@ -4281,13 +4250,9 @@ const BOORU_ENGINE_RESOLVERS = [
             } catch (_) {}
           }
           const apiUrl = `${apiDomain}/posts.json?tags=md5:${md5}`;
-          const ctrl = new AbortController();
-          const tid = setTimeout(() => ctrl.abort(), 3500);
-          const res = await fetch(apiUrl, { signal: ctrl.signal });
-          clearTimeout(tid);
+          const data = await fetchResolverMetadata(apiUrl);
 
-          if (res.ok) {
-            const data = await res.json();
+          if (data) {
             const posts = Array.isArray(data) ? data : (data.posts || data.post);
             if (Array.isArray(posts) && posts[0]) {
               const p = posts[0];
@@ -5781,6 +5746,47 @@ async function cancelResponseBody(res) {
       await reader.cancel();
     }
   } catch (_) {}
+}
+
+async function fetchResolverMetadata(url, { timeoutMs = 3500, text = false, ...init } = {}) {
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), timeoutMs);
+  const limit = (text ? 8 : 2) * 1024 * 1024;
+  let response, reader;
+  try {
+    response = await fetch(url, { ...init, signal: controller.signal });
+    if (!response.ok || Number(response.headers?.get('content-length')) > limit ||
+        typeof response.body?.getReader !== 'function') return null;
+    reader = response.body.getReader();
+    const chunks = [];
+    let size = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (controller.signal.aborted) return null;
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) return null;
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const body = new TextDecoder().decode(bytes);
+    return text ? body : JSON.parse(body);
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(deadline);
+    controller.abort();
+    if (reader) {
+      try { await reader.cancel(); } catch (_) {}
+    } else {
+      await cancelResponseBody(response);
+    }
+  }
 }
 
 /**
