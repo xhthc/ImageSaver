@@ -7689,6 +7689,108 @@ async function resolveMediaTargetImpl(options = {}) {
   };
 }
 
+// Sankaku cards expose only signed previews. Read the selected post's own #highres in its authenticated document; never derive a signed original URL.
+async function readSankakuOriginal(srcUrl, pageUrl, linkUrl) {
+  let route = 'post_dom';
+  const refuse = error => ({ error, route });
+  const parseMedia = (raw) => {
+    try {
+      if (typeof raw !== 'string' || raw.length > 4096) return null;
+      const u = new URL(raw, location.href);
+      if (u.protocol !== 'https:' || !/^[sv]\.sankakucomplex\.com$/.test(u.hostname) || u.username || u.password || u.port || u.hash) return null;
+      const m = /^\/data\/(preview\/|sample\/)?([a-f0-9]{2})\/([a-f0-9]{2})\/(sample-)?([a-f0-9]{32})\.(jpe?g|png|gif|webp|avif|mp4|webm)$/.exec(u.pathname);
+      if (!m || m[5].slice(0, 4) !== m[2] + m[3]) return null;
+      return { url: u.href, hash: m[5], preview: Boolean(m[1] || m[4]), video: /^(mp4|webm)$/.test(m[6]) };
+    } catch (_) { return null; }
+  };
+  const parsePost = (raw) => {
+    try {
+      if (typeof raw !== 'string' || !raw || raw.length > 4096) return null;
+      const u = new URL(raw, location.href);
+      if (u.protocol !== 'https:' || u.origin !== location.origin || u.hostname !== 'chan.sankakucomplex.com' || u.username || u.password || u.port) return null;
+      const m = /^\/(?:[a-z]{2}\/)?posts\/([A-Za-z0-9]{1,32})\/?$/.exec(u.pathname);
+      return m ? { id: m[1], url: u.href } : null;
+    } catch (_) { return null; }
+  };
+  const clicked = parseMedia(srcUrl);
+  if (!clicked?.preview || location.href !== pageUrl) return refuse('TARGET_CHANGED');
+  const images = Array.from(document.querySelectorAll('img')).filter(el => (el.currentSrc || el.src) === clicked.url);
+  if (images.length !== 1) return refuse('AMBIGUOUS_TARGET');
+  const selected = images[0];
+  const ownPost = () => parsePost(selected.closest('a[href]')?.href) || (selected.closest('#post-content') ? parsePost(location.href) : null);
+  const post = ownPost();
+  const linkedPost = linkUrl ? parsePost(linkUrl) : null;
+  if (!post || (linkedPost && linkedPost.id !== post.id)) return refuse('POST_MISMATCH');
+  const documentUrl = location.href;
+  const unchanged = () => location.href === documentUrl && selected.isConnected && (selected.currentSrc || selected.src) === clicked.url && ownPost()?.id === post.id;
+  let doc = document;
+  if (parsePost(location.href)?.id !== post.id) {
+    route = 'post_html';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    let response, reader;
+    try {
+      response = await fetch(post.url, { credentials: 'same-origin', redirect: 'manual', headers: { Accept: 'text/html' }, signal: controller.signal });
+      if (response.type === 'opaqueredirect' || response.redirected || (response.status >= 300 && response.status < 400)) return refuse('AUTH_REQUIRED');
+      if (!response.ok) return { status: response.status, route };
+      if (parsePost(response.url)?.id !== post.id || !/^text\/html\b/i.test(response.headers.get('content-type') || '') || !response.body?.getReader) return refuse('INVALID_POST_RESPONSE');
+      if (Number(response.headers.get('content-length')) > 1024 * 1024) return refuse('BODY_TOO_LARGE');
+      reader = response.body.getReader();
+      const chunks = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > 1024 * 1024) return refuse('BODY_TOO_LARGE');
+        chunks.push(value);
+      }
+      const bytes = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+      doc = new DOMParser().parseFromString(new TextDecoder().decode(bytes), 'text/html');
+    } catch (_) { return refuse(controller.signal.aborted ? 'NETWORK_TIMEOUT' : 'NETWORK_ERROR'); }
+    finally {
+      clearTimeout(timeout);
+      controller.abort();
+      try { if (reader) await reader.cancel(); else if (response?.body) await response.body.cancel(); } catch (_) {}
+    }
+  }
+  if (!unchanged()) return refuse('TARGET_CHANGED');
+  const identities = Array.from(doc.querySelectorAll('#page-title a[href]')).map(a => parsePost(a.getAttribute('href'))).filter(Boolean);
+  const originals = Array.from(doc.querySelectorAll('#post-view #highres[itemprop="contentUrl"]'));
+  if (identities.length !== 1 || identities[0].id !== post.id || originals.length !== 1) return refuse('ORIGINAL_NOT_DECLARED');
+  const original = parseMedia(originals[0].getAttribute('href'));
+  return original && !original.preview && original.hash === clicked.hash ? { ...original, route } : refuse('ORIGINAL_MISMATCH');
+}
+
+async function resolveSankakuOriginalPlan({ srcUrl, pageUrl, linkUrl, tabId, frameId }) {
+  let source;
+  try { source = new URL(srcUrl, pageUrl); } catch (_) { return undefined; }
+  if (!/^[sv]\.sankakucomplex\.com$/.test(source.hostname) || !/^\/data\/(?:preview\/|sample\/|[a-f0-9]{2}\/[a-f0-9]{2}\/sample-)/.test(source.pathname)) return undefined;
+  const failure = (status, error) => adaptCandidateToGroup({ url: srcUrl, source: 'specialized_provider', provider: 'sankaku', tier: 'original', score: 96,
+    _verificationStatus: status, _rateLimited: status === 429, error: error || (status === 429 ? 'RATE_LIMIT' : status === 401 || status === 403 ? 'AUTH_REQUIRED' : status === 404 || status === 410 ? 'NOT_FOUND' : '') });
+  if (!tabId) return null;
+  const started = Date.now();
+  let original;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: Number.isInteger(frameId) && frameId >= 0 ? { tabId, frameIds: [frameId] } : { tabId },
+      injectImmediately: true, func: readSankakuOriginal, args: [srcUrl, pageUrl, linkUrl]
+    });
+    original = results?.[0]?.result;
+  } catch (_) { original = { error: 'INJECT_FAILED' }; }
+  dbg('sankaku', 'original', original?.url ? 'ok' : 'failed', original?.error || (original?.status ? 'HTTP_ERROR' : original?.url ? undefined : 'NO_DECLARATION'),
+    { route: original?.route, ms: Date.now() - started, http: original?.status }, { tab: tabId, frame: frameId });
+  if (['AUTH_REQUIRED', 'NETWORK_TIMEOUT', 'NETWORK_ERROR'].includes(original?.error)) return failure(0, original.error);
+  if ([401, 403, 404, 410, 429].includes(original?.status)) return failure(original.status);
+  if (!original?.url) return null;
+  const probe = { url: original.url, source: 'specialized_provider', finalScore: 96, allowVideo: original.video, isBooruCandidate: original.video };
+  if (!await probeCandidate(probe)) return [401, 403, 404, 410, 429].includes(probe.status) ? failure(probe.status) : null;
+  if (!(original.video ? /^video\/(mp4|webm)$/.test(probe.contentType) : probe.contentType?.startsWith('image/'))) return null;
+  return adaptCandidateToGroup({ ...probe, provider: 'sankaku', tier: 'original' });
+}
+
 // ---- SITE-PAWCHIVE-01: originals from Pawchive previews ----------------------------------------------------------------------------------------------
 // A creator-feed card shows img.pawchive.pw/thumbnail/data/aa/bb/<sha256>.<ext>; the post page (https://pawchive.pw/<service>/user/<id>/post/<id>) declares
 // the originals on file.pawchive.pw (or a data node nN.pawchive.pw)/data/aa/bb/<sha256>.<ext>?f=<name>: a video in .post__videos and .post__attachments, the cover in a.fileThumb. The
@@ -8250,6 +8352,9 @@ async function resolveOriginalMediaPlanImpl(firstArg, secondArg, thirdArg, fourt
   // SITE-PAWCHIVE-01: a Pawchive thumbnail or original is resolved by the post that declares it (no speculative probes, no thumbnail fallback)
   const pawchivePlan = await resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPostMedia });
   if (pawchivePlan !== undefined) return pawchivePlan;
+
+  const sankakuPlan = await resolveSankakuOriginalPlan({ srcUrl, pageUrl, linkUrl, tabId, frameId });
+  if (sankakuPlan !== undefined) return sankakuPlan;
 
   // 1. Initial source URL
   if (srcUrl) {
@@ -11586,6 +11691,12 @@ async function onContextMenuClicked(info, tab) {
       if (mediaPlan?.error === 'NOT_ARCHIVED') {
         // BUGFIX-MULTISITE-01: the site states this post's originals are not imported: its own failure (with the stated counts), not an unresolved click
         await fbFail(op, { stage: 'resolve', code: /^NOT_ARCHIVED(?:_P\d{1,3}_V\d{1,3})?$/.test(mediaPlan.failureCode || '') ? mediaPlan.failureCode : 'NOT_ARCHIVED' });
+        await flashBadge('ERR', '#ef4444');
+        return;
+      }
+
+      if (mediaPlan?.provider === 'sankaku' && ['NETWORK_TIMEOUT', 'NETWORK_ERROR'].includes(mediaPlan.error)) {
+        await fbFail(op, { stage: 'resolve', code: mediaPlan.error });
         await flashBadge('ERR', '#ef4444');
         return;
       }

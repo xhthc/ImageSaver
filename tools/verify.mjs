@@ -50,6 +50,7 @@ for (const file of tests.filter(file => !only || file === only)) {
 }
 if (withUi) {
   const ui = path.join(root, 'ui');
+  run('sankaku-original', ['test_sankaku_original.js']);
   run('ui-typecheck', ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.json'], { cwd: ui });
   run('ui-render', ['test_ui_render.js'], { timeout: 120000 });
   run('ui-built', ['scripts/check-built.mjs'], { cwd: ui, timeout: 120000 });
