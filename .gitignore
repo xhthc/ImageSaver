@@ -15,6 +15,7 @@
 node_modules/
 ui/.test-dist/
 ui/dist/
+.vite/
 .idea/
 .vscode/
 *.log

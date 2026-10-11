@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121315">
+  <meta name="description" content="MediaLatch — расширение для сохранения доступных оригинальных изображений, видео и GIF. Открытый код, локальная история и установка из GitHub.">
+  <title>MediaLatch — понравилось. Сохранилось.</title>
+  <link rel="icon" type="image/svg+xml" href="assets/brand.svg">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">К содержимому</a>
+  <svg class="symbol-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="external" viewBox="0 0 24 24"><path d="M13 5h6v6m0-6L9 15m-1-10H5v14h14v-3"/></symbol>
+    <symbol id="github" viewBox="0 0 24 24"><path d="M9 20c-5 1-5-2-7-2m14 4v-4c0-1-.4-2-1-2.5 4-.5 6-2 6-5.5 0-1.5-.5-2.5-1.5-3.5.5-1 .5-2.5 0-3.5-1.5 0-3 1-4 1.5a13 13 0 0 0-7 0C7.5 4 6 3 4.5 3c-.5 1-.5 2.5 0 3.5C3.5 7.5 3 8.5 3 10c0 3.5 2 5 6 5.5-.6.5-1 1.5-1 2.5v4"/></symbol>
+    <symbol id="chrome" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 8h8M8.5 14 4 6m10 10-4 5"/></symbol>
+    <symbol id="firefox" viewBox="0 0 24 24"><path d="M19 4c1 3 3 4 3 8a10 10 0 0 1-20 0c0-3 1-5 3-7l1 3 4-2-1 5c-2 0-3 2-2 4 1 3 6 3 8 0 1-2 0-4-2-5l2-5 2 2Z"/></symbol>
+    <symbol id="image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/></symbol>
+    <symbol id="play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z"/></symbol>
+    <symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M15 8V3H3v12h5"/></symbol>
+  </svg>
+
+  <header class="header shell">
+    <a class="wordmark" href="#" aria-label="MediaLatch — на главную"><img src="assets/brand.svg" width="38" height="38" alt=""><span>MediaLatch</span></a>
+    <nav aria-label="Основная навигация"><a href="#features">Возможности</a><a href="#sites">Сайты</a><a href="#install">Установка</a></nav>
+    <a class="header-github" aria-label="GitHub — исходный код MediaLatch" href="https://github.com/xhthc/MediaLatch"><svg class="icon"><use href="#github"/></svg><span>GitHub</span><svg class="icon small"><use href="#external"/></svg></a>
+  </header>
+
+  <main id="main">
+    <section class="hero shell" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <a class="release-pill" href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.26"><span class="status-dot"></span>v2.0.0.26 <span class="pill-divider">/</span> Открытое превью<svg class="icon small"><use href="#arrow"/></svg></a>
+        <h1 id="hero-title">Понравилось.<br><span>Сохранилось.</span></h1>
+        <p class="hero-description">Кадр, к которому хочется вернуться.<br>Видео, которое стоит оставить.<br>Сохраняйте доступные оригиналы прямо из браузера.</p>
+        <div class="hero-actions"><a class="button primary" href="#install">Установить MediaLatch<svg class="icon"><use href="#download"/></svg></a><a class="text-link" href="#demo">Посмотреть, как работает<svg class="icon small"><use href="#arrow"/></svg></a></div>
+        <div class="hero-meta"><span>Бесплатно</span><span>Открытый код</span><span>Chromium</span></div>
+      </div>
+      <div class="hero-art" aria-label="Иллюстрация сохранения фотографии через меню MediaLatch">
+        <div class="back-card"><span class="file-label">MOTION / MP4</span><div class="orbit-art"><i></i><i></i><i></i></div><svg class="icon"><use href="#play"/></svg></div>
+        <figure class="photo-card">
+          <div class="photo-top"><span class="file-label">A MOMENT WORTH KEEPING</span><span class="photo-counter">01 / 03</span></div>
+          <img class="landscape" src="assets/alpine.png" alt="Заснеженные горы и бирюзовое озеро в вечернем свете" width="1536" height="1024" fetchpriority="high">
+          <figcaption><span>После клика — поиск оригинала</span><svg class="icon small"><use href="#external"/></svg></figcaption>
+        </figure>
+        <div class="context-card"><div class="context-muted">Открыть изображение</div><div class="context-muted">Копировать адрес</div><div class="context-save"><img src="assets/brand.svg" width="24" height="24" alt=""><span>MediaLatch: Save media</span><svg class="icon small"><use href="#download"/></svg></div></div>
+        <div class="saved-chip"><span class="success-icon"><svg class="icon small"><use href="#check"/></svg></span><div><strong>У вас. В оригинале.</strong><span>Изображения · видео · GIF</span></div></div>
+        <span class="art-caption">Иллюстрация интерфейса</span>
+      </div>
+    </section>
+
+    <div class="format-strip shell"><span>Меньше действий.<br>Больше сохранённого.</span><div><span>JPG / PNG</span><span>MP4 / WEBM</span><span>GIF</span><span class="strip-tail">В вашей папке загрузок<svg class="icon small"><use href="#arrow"/></svg></span></div></div>
+
+    <section id="demo" class="demo-section shell section" aria-labelledby="demo-title">
+      <div class="section-heading"><div><span class="eyebrow">ПРОСТОЙ ЖЕСТ</span><h2 id="demo-title">Нашли. Кликнули.<br>Забрали с собой.</h2></div><p>Правый клик по медиа → <strong>Save media.</strong><br>MediaLatch ищет доступный оригинал<br>и передаёт загрузку браузеру.</p></div>
+      <div class="demo-board">
+        <div class="demo-preview"><div class="demo-browser"><div class="traffic-lights"><i></i><i></i><i></i></div><span>Ваша следующая находка</span><svg class="icon small"><use href="#external"/></svg></div><img src="assets/alpine.png" alt="Демонстрационная фотография альпийского озера" width="1536" height="1024" loading="lazy"><span class="demo-watermark">Пример медиа</span><button type="button" class="demo-save" id="demo-save"><img src="assets/brand.svg" width="28" height="28" alt=""><span id="demo-action">MediaLatch: Save media</span><svg class="icon small"><use href="#download"/></svg></button></div>
+        <div class="demo-explanation"><span class="eyebrow">ПОПРОБУЙТЕ ЗДЕСЬ</span><h3>Один пункт меню.<br>Три вида медиа.</h3><p>Нажмите Save media на фотографии. Так выглядит действие в расширении — без поиска ссылки вручную.</p><div class="demo-result" id="demo-result" role="status" aria-live="polite"><span class="result-symbol"><svg class="icon"><use href="#image"/></svg></span><div><strong id="demo-result-title">Готово к сохранению</strong><span id="demo-result-detail">Фотография · демонстрация</span></div></div><p class="demo-disclaimer">Это интерактивный пример. Файл не скачивается, расширение не требуется.</p></div>
+      </div>
+    </section>
+
+    <section id="features" class="features-section shell section" aria-labelledby="features-title">
+      <div class="section-heading"><div><span class="eyebrow">НА ВАШЕЙ СТОРОНЕ</span><h2 id="features-title">Хорошие находки<br>заслуживают оригинала.</h2></div><p>Всё нужное для сохранения.<br>И контроль над тем, что остаётся<br>в вашем браузере.</p></div>
+      <div class="feature-layout">
+        <article class="feature-main"><div class="original-art" aria-hidden="true"><div class="mini-photo"><img src="assets/alpine.png" alt="" width="1536" height="1024" loading="lazy"><span>превью</span></div><svg class="icon"><use href="#arrow"/></svg><div class="original-photo"><img src="assets/alpine.png" alt="" width="1536" height="1024" loading="lazy"><span>доступный оригинал<svg class="icon small"><use href="#check"/></svg></span></div></div><div class="feature-text"><span class="eyebrow">КАЧЕСТВО ИСТОЧНИКА</span><h3>Оригинал, когда он доступен.</h3><p>Расширение проверяет ссылки и данные медиа на странице. Если источник недоступен или выбор неоднозначен, вы получите понятный результат.</p></div></article>
+        <div class="feature-side"><article class="feature-row"><span class="feature-number">01</span><div><h3>Кнопка рядом с находкой</h3><p>Inline-сохранение на X, Reddit и RedGIFs. На X и Reddit — также пакеты медиа поста.</p></div><svg class="icon"><use href="#download"/></svg></article><article class="feature-row"><span class="feature-number">02</span><div><h3>Порядок в загрузках</h3><p>Своя подпапка, организация по сайту и типу файла. Результаты сохранений — в окне расширения.</p></div><svg class="icon"><use href="#arrow"/></svg></article><article class="feature-row"><span class="feature-number">03</span><div><h3>История — по желанию</h3><p>До 50 завершённых сохранений за 7 дней, только на вашем устройстве. Изначально выключена.</p></div><svg class="icon"><use href="#check"/></svg></article></div>
+      </div>
+    </section>
+
+    <section id="sites" class="sites-section shell section" aria-labelledby="sites-title">
+      <div class="section-heading"><div><span class="eyebrow">ЗНАКОМЫЕ МЕСТА</span><h2 id="sites-title">Лента меняется.<br>Находки остаются.</h2></div><p>Адаптеры для отдельных сайтов<br>и универсальный поиск медиа.<br>Возможности зависят от источника.</p></div>
+      <div class="site-list"><div class="site-row"><span class="site-symbol x-symbol">𝕏</span><h3>X / Twitter</h3><p>Изображения, видео, MP4-анимации и пакеты поста</p><span class="site-type">Медиа + inline</span></div><div class="site-row"><span class="site-symbol reddit-symbol">r/</span><h3>Reddit</h3><p>Оригиналы, GIF и отдельные поддерживаемые HLS-потоки</p><span class="site-type">Медиа + inline</span></div><div class="site-row"><span class="site-symbol redgifs-symbol">RG</span><h3>RedGIFs</h3><p>Выбранный ролик; вариант со звуком, когда доступен</p><span class="site-type">Видео + inline</span></div><div class="site-row"><span class="site-symbol other-symbol"><svg class="icon"><use href="#image"/></svg></span><h3>Другие сайты</h3><p>Поиск через ссылки, srcset и атрибуты медиа</p><span class="site-type">Зависит от сайта</span></div></div>
+      <div class="site-note"><span class="status-dot"></span><p>Основные проверки — Helium на Windows. DRM, обход доступа и универсальная загрузка HLS/DASH не поддерживаются. <a href="https://github.com/xhthc/MediaLatch#site-coverage">Полная матрица поддержки<svg class="icon small"><use href="#external"/></svg></a></p></div>
+    </section>
+
+    <section class="privacy-section shell" aria-labelledby="privacy-title"><span class="privacy-icon" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="m24 5 15 6v11c0 10-8 17-15 21-7-4-15-11-15-21V11Z"/><path d="m16 23 6 6 11-12"/></svg></span><div><span class="eyebrow">ЛОКАЛЬНО. ПОД ВАШИМ КОНТРОЛЕМ.</span><h2 id="privacy-title">Ваши файлы. Ваш браузер.</h2><p>Без телеметрии и сервера расширения. Сохранение обращается к сайту и его CDN, проверка релизов — к GitHub. История хранится локально; отчёты копируются только по вашему запросу.</p><a class="text-link" href="https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md">Как устроена приватность<svg class="icon small"><use href="#arrow"/></svg></a></div><div class="privacy-stamp">OPEN<br>SOURCE<span>GPL-3.0-only</span></div></section>
+
+    <section id="install" class="install-section shell section" aria-labelledby="install-title">
+      <div class="install-intro"><span class="eyebrow">ЗАБЕРИТЕ С СОБОЙ</span><h2 id="install-title">Ваша следующая<br>находка уже близко.</h2><p>MediaLatch бесплатно. Сейчас — открытое превью<br>для ручной установки в Chromium.</p><a class="button primary" href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.26">Скачать с GitHub<svg class="icon"><use href="#download"/></svg></a><span class="download-note">v2.0.0.26 · Готовый ZIP в разделе Assets</span>
+        <div class="store-buttons"><button class="store-button" type="button" disabled aria-describedby="store-note"><svg class="icon store-icon"><use href="#chrome"/></svg><span><small>Скоро в</small><strong>Chrome Web Store</strong></span><span class="soon">Скоро</span></button><button class="store-button" type="button" disabled aria-describedby="store-note"><svg class="icon store-icon"><use href="#firefox"/></svg><span><small>Скоро в</small><strong>Firefox Add-ons</strong></span><span class="soon">Скоро</span></button></div><p class="store-note" id="store-note">Выпуск в магазинах и поддержка Firefox запланированы. Кнопки станут активными после публикации.</p>
+      </div>
+      <div class="install-guide"><span class="eyebrow">УСТАНОВКА ИЗ ZIP</span><ol><li><span class="step-number">1</span><div><h3>Скачайте и распакуйте</h3><p>В релизе выберите <code>MediaLatch-2.0.0.26-*.zip</code>.<br>Нужен готовый архив расширения, а не Source code.</p></div></li><li><span class="step-number">2</span><div><h3>Откройте страницу расширений</h3><p>Скопируйте адрес в новую вкладку браузера.</p><button type="button" class="copy-address" id="copy-address"><code>chrome://extensions</code><svg class="icon small"><use href="#copy"/></svg><span class="sr-only">Скопировать адрес страницы расширений</span></button><span class="copy-status" id="copy-status" role="status" aria-live="polite"></span></div></li><li><span class="step-number">3</span><div><h3>Загрузите расширение</h3><p>Включите «Режим разработчика» → «Загрузить распакованное расширение». Выберите папку с <code>manifest.json</code>.</p></div></li></ol><div class="update-note"><svg class="icon"><use href="#check"/></svg><p>После установки обновите вкладки сайтов. При обновлении сборки сохраняйте прежнюю папку, перезагружайте расширение и вкладки.</p></div></div>
+    </section>
+
+    <section class="faq-section shell section" aria-labelledby="faq-title"><div><span class="eyebrow">ПАРА ДЕТАЛЕЙ</span><h2 id="faq-title">До первого<br> сохранения.</h2></div><div class="faq-list"><details><summary><span class="faq-question">MediaLatch скачает любое видео?</span><span aria-hidden="true">+</span></summary><p>Нет. Расширение сохраняет доступные медиа в поддерживаемых сценариях. DRM, обход авторизации, произвольные blob/MSE-плееры и универсальные HLS/DASH-загрузки не поддерживаются. Разметка и ограничения сайтов могут меняться.</p></details><details><summary><span class="faq-question">Куда сохраняются файлы?</span><span aria-hidden="true">+</span></summary><p>По умолчанию — в Downloads/SavedImages/. В настройках можно выбрать подпапку внутри загрузок браузера и включить организацию по сайту и типу медиа. Произвольные пути на диске пока не поддерживаются.</p></details><details><summary><span class="faq-question">Как обновлять расширение?</span><span aria-hidden="true">+</span></summary><p>Скачайте новый готовый ZIP из GitHub Releases, замените файлы в прежней папке, нажмите «Перезагрузить» на странице расширений и обновите вкладки. Распакованная установка обновляется вручную.</p></details><details><summary><span class="faq-question">Это тот же Image Saver?</span><span aria-hidden="true">+</span></summary><p>Да. MediaLatch — новое имя Image Saver. Существующие настройки и папки сохранения совместимы. В расширении доступны русский и английский языки.</p></details></div></section>
+  </main>
+  <footer class="footer shell"><div><a class="wordmark" href="#"><img src="assets/brand.svg" width="32" height="32" alt=""><span>MediaLatch</span></a><p>Понравилось. Сохранилось.</p></div><nav aria-label="Ссылки проекта"><a href="https://github.com/xhthc/MediaLatch">Исходный код<svg class="icon small"><use href="#external"/></svg></a><a href="https://github.com/xhthc/MediaLatch/issues">Сообщить об ошибке<svg class="icon small"><use href="#external"/></svg></a><a href="https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md">Приватность</a></nav><span class="footer-license">xhthc · GPL-3.0-only</span></footer>
+</body>
+</html>
