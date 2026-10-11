@@ -188,6 +188,18 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
 }
 
 (async () => {
+  // The real page components apply themes to both documents and expose one labelled choice in settings.
+  {
+    for (const theme of ['blue', 'dark', 'light']) {
+      const full = await page('full', { session: [], history: [], local: { historyEnabled: true, uiTheme: theme, uiLanguage: 'en' } });
+      const quick = await page('quick', { session: [], history: [], local: { historyEnabled: true, uiTheme: theme, uiLanguage: 'en' } });
+      assert(full.doc.documentElement.dataset.theme === theme && quick.doc.documentElement.dataset.theme === theme,
+        `theme-render-${theme}: full and compact pages apply the saved palette`);
+      assert(full.q('#themeSelect')?.getAttribute('role') === 'combobox' && full.q('label[for="themeSelect"]').textContent === 'Theme',
+        `theme-control-${theme}: settings expose an accessible theme combobox`);
+      await full.unmount(); await quick.unmount();
+    }
+  }
   const sessionRecords = (n = 7) => Array.from({ length: n }, (_, i) => rec({ filename: `file-number-${i + 1}.jpg` }));
 
   // =================================================================================================
@@ -546,7 +558,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const p = await page('quick', state);
     const rows = () => p.rows().map((r) => ({ name: (r.querySelector('[data-slot="name"]') || r.querySelector('[data-slot="legacy"]')).textContent, kind: r.getAttribute('data-state-kind'), unread: r.getAttribute('data-unread') }));
     assert(rows().length === 1 && rows()[0].name === 'first.jpg', 'R10a: the popup opens with one result');
-    assert((state.changeListeners || []).length === 3, 'R10b: the popup holds three subscriptions: the preferences, the interface language and the results list');
+    assert((state.changeListeners || []).length === 4, 'R10b: the popup holds preferences, language, theme and results subscriptions');
 
     state.session.push(rec({ state: 'saving', filename: 'moving.jpg', filenameKind: 'intended', output: {} }));
     emit(state);

@@ -8,12 +8,14 @@ import { ResultsList } from "@/components/app/results-list"
 import { createQuick } from "@/core/quick.js"
 import { useI18n } from "@/hooks/use-i18n"
 import { useStore } from "@/hooks/use-store"
+import { useTheme } from "@/hooks/use-theme"
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export type QuickController = ReturnType<typeof createQuick>
 
 /** The compact toolbar popup: recent results while history is enabled, otherwise a small invitation to enable it. */
 export function QuickApp({ quick }: { quick: QuickController }) {
+  useTheme()
   const s: any = useStore(quick.store)
   const { t, msg } = useI18n()
   const showList = s.ready && s.enabled

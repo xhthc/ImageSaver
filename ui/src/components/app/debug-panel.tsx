@@ -19,7 +19,7 @@ import { getEnv } from "@/lib/env"
 type Controller = ReturnType<typeof createDebug>
 
 const MAX_ROWS = 500
-const LEVEL_TONE: Record<string, string> = { debug: "text-muted-foreground", info: "", warn: "text-amber-500", error: "text-destructive" }
+const LEVEL_TONE: Record<string, string> = { debug: "text-muted-foreground", info: "", warn: "text-warning", error: "text-danger" }
 
 function EventRow({ ev }: { ev: any }) {
   const { t } = useI18n()
@@ -33,7 +33,7 @@ function EventRow({ ev }: { ev: any }) {
           <span className={`font-semibold uppercase ${LEVEL_TONE[ev.lvl] || ""}`}>{t(`debug.level.${ev.lvl}`)}</span>
           <span className="text-muted-foreground">{t(`debug.source.${ev.src}`)}</span>
           <span className="font-mono">{ev.comp}.{ev.act}</span>
-          <span className={ev.out === "failed" || ev.out === "refused" ? "font-semibold text-destructive" : ev.out === "ok" ? "text-emerald-500" : ""}>{ev.out}</span>
+          <span className={ev.out === "failed" || ev.out === "refused" ? "font-semibold text-danger" : ev.out === "ok" ? "text-success" : ""}>{ev.out}</span>
           {ev.why ? <span className="font-mono">{ev.why}</span> : null}
         </summary>
         <dl className="mt-1.5 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 font-mono" aria-label={t("debug.details")}>
@@ -115,7 +115,7 @@ function DebugBody({ controller }: { controller: Controller }) {
           <Button type="button" variant="outline" size="sm" disabled={!shown.length} onClick={() => { controller.downloadJson() }}><Download />{t("debug.export")}</Button>
           <Button type="button" variant="outline" size="sm" disabled={s.clearing} onClick={() => { void controller.clear() }}><Trash2 />{t("debug.clear")}</Button>
         </div>
-        <p role="status" aria-live="polite" data-slot="debug-notice" className={`min-h-4 text-xs ${s.noticeType === "error" ? "text-destructive" : "text-muted-foreground"}`}>{msg(s.notice)}</p>
+        <p role="status" aria-live="polite" data-slot="debug-notice" className={`min-h-4 text-xs ${s.noticeType === "error" ? "text-danger" : "text-muted-foreground"}`}>{msg(s.notice)}</p>
         {s.error ? (
           <Alert variant="destructive" role="alert"><AlertDescription>{msg(s.error)}</AlertDescription></Alert>
         ) : null}

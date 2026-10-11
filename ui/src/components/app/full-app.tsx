@@ -8,6 +8,7 @@ import { BrandMark } from "@/components/app/brand"
 import { DebugPanel } from "@/components/app/debug-panel"
 import { HistoryPanel } from "@/components/app/history-panel"
 import { LanguageSelect } from "@/components/app/language-select"
+import { ThemeSelect } from "@/components/app/theme-select"
 import { ResultsList } from "@/components/app/results-list"
 import {
   EmbedPanel,
@@ -21,6 +22,7 @@ import { I18n } from "@/core/i18n.js"
 import { DEFAULT_SECTION, SECTIONS, SETTINGS_SECTIONS, focusIdFromLocation, sectionFromLocation } from "@/core/nav.js"
 import { uiLog } from "@/core/debuglog.js"
 import { useI18n } from "@/hooks/use-i18n"
+import { useTheme } from "@/hooks/use-theme"
 import { getEnv } from "@/lib/env"
 
 const TAB_ICONS: Record<string, typeof History> = { history: History, saving: FolderOpen, notifications: Bell, embed: Share2, updates: RefreshCw, debug: Bug }
@@ -33,6 +35,7 @@ const TAB_ICONS: Record<string, typeof History> = { history: History, saving: Fo
  */
 export function FullApp({ settings }: { settings: SettingsController }) {
   const env = getEnv()
+  const theme = useTheme()
   const { t } = useI18n()
   const [section, setSection] = useState<string>(() => sectionFromLocation(env.location))
   const focusId = focusIdFromLocation(env.location)
@@ -68,7 +71,10 @@ export function FullApp({ settings }: { settings: SettingsController }) {
             <h1 className="text-lg font-bold tracking-tight">MediaLatch</h1>
             <p className="text-xs text-muted-foreground">{t("app.subtitle")}</p>
           </div>
-          <LanguageSelect />
+          <div className="flex flex-wrap items-start justify-end gap-3">
+            {theme ? <ThemeSelect theme={theme} /> : null}
+            <LanguageSelect />
+          </div>
         </header>
 
         <Tabs value={section} onValueChange={select} className="flex-1 gap-4">

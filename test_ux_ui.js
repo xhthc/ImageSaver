@@ -105,6 +105,47 @@ function makeChrome(state) {
 }
 
 (async () => {
+  // Theme preferences use the production controller, including failed writes and cross-page read races.
+  {
+    const { createTheme, THEME_KEY } = await core('theme.js');
+    const doc = () => ({ documentElement: { dataset: {}, classList: { toggle(name, value) { this[name] = value; } } } });
+    const state = { session: [], history: [], local: { [THEME_KEY]: 'light' } };
+    const made = makeChrome(state);
+    const document = doc();
+    const theme = createTheme({ chrome: made.chrome, document });
+    await theme.ready;
+    assert(theme.store.getState().theme === 'light' && document.documentElement.dataset.theme === 'light' && !document.documentElement.classList.dark,
+      'theme1: saved Light applies to the document and disables dark variants');
+    assert(await theme.setTheme('dark') && document.documentElement.dataset.theme === 'dark' && document.documentElement.classList.dark,
+      'theme2: a successful Dark choice persists and applies');
+    state.failSet = true;
+    assert(!(await theme.setTheme('blue')) && theme.store.getState().theme === 'dark' && theme.store.getState().error === 'theme.saveFailed',
+      'theme3: a failed write preserves the saved theme and reports failure');
+    assert(!(await theme.setTheme('other')), 'theme4: unsupported preferences are refused');
+    theme.dispose();
+    state.failSet = false;
+    await made.chrome.storage.local.set({ [THEME_KEY]: 'blue' });
+    assert(document.documentElement.dataset.theme === 'dark', 'theme5: disposed pages stop reacting to changes');
+    const invalid = makeChrome({ session: [], history: [], local: { [THEME_KEY]: 'unsupported' } });
+    const fallback = createTheme({ chrome: invalid.chrome, document: doc() });
+    await fallback.ready;
+    assert(fallback.store.getState().theme === 'blue' && invalid.calls.localSets.length === 0, 'theme6: invalid saved values use Blue without rewriting storage');
+    fallback.dispose();
+    const unreadable = makeChrome({ session: [], history: [], local: {}, failGet: true });
+    const failedRead = createTheme({ chrome: unreadable.chrome, document: doc() });
+    await failedRead.ready;
+    assert(failedRead.store.getState().error === 'theme.readFailed' && unreadable.calls.localSets.length === 0, 'theme7: read failure never writes defaults');
+    failedRead.dispose();
+    const gate = deferred();
+    const slowState = { session: [], history: [], local: { [THEME_KEY]: 'blue' }, getGate: gate.promise };
+    const slowMade = makeChrome(slowState);
+    const slow = createTheme({ chrome: slowMade.chrome, document: doc() });
+    await slowMade.chrome.storage.local.set({ [THEME_KEY]: 'light' });
+    gate.resolve();
+    await slow.ready;
+    assert(slow.store.getState().theme === 'light', 'theme8: a newer cross-page change wins over an older initial read');
+    slow.dispose();
+  }
   const { createStore } = await core('store.js');
   const nav = await core('nav.js');
   const { createFeedbackList, browserLabel } = await core('feedbackList.js');
@@ -708,7 +749,17 @@ function makeChrome(state) {
     assert(status.every((s) => surfaces.every((b) => C(s, b) >= 4.5)), '30d: status text and link colours (danger, success, warning, link) have contrast >= 4.5:1 on every surface');
     assert(contrast([255, 255, 255], over(rgb(tok.destructive), 0.6, rgb(tok.card))) >= 4.5 && C('primary-foreground', 'destructive') >= 4.5, '30e: white text on the destructive badge/button (also at 60% opacity over a card) has contrast >= 4.5:1');
     assert(C('border', 'background') >= 1.3 && C('ring', 'background') >= 3, `30f: borders are visible and the focus ring has contrast >= 3:1 against the page (${C('ring', 'background').toFixed(2)})`);
-    assert(/--danger/.test(css) && !/text-red-|text-destructive/.test(['quick-app', 'full-app', 'result-row', 'result-details', 'stats-card', 'settings-panels', 'history-panel', 'results-list'].map((n) => read(`ui/src/components/app/${n}.tsx`)).join('\n') + read('ui/src/components/ui/alert.tsx')), '30g: error text uses the checked danger colour, not the darker destructive fill');
+    for (const theme of ['dark', 'light']) {
+      const palette = { ...tok };
+      const block = new RegExp(':root\\[data-theme="' + theme + '"\\]\\s*\\{([^}]*)\\}').exec(css)[1];
+      for (const m of block.matchAll(/--([a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) palette[m[1]] = m[2];
+      const ratio = (a, b) => contrast(rgb(palette[a]), rgb(palette[b]));
+      assert(body.every(([a,b]) => ratio(a,b) >= 7) && secondary.every(([a,b]) => ratio(a,b) >= 4.5), `theme9-${theme}: body and secondary text retain accessible contrast on every surface`);
+      assert(status.every(s => surfaces.every(b => ratio(s,b) >= 4.5)) && ratio('primary-foreground','primary') >= 4.5 && ratio('ring','background') >= 3,
+        `theme10-${theme}: status text, links, primary buttons and keyboard focus retain contrast`);
+    }
+    assert(/--danger/.test(css) && !/text-red-|text-destructive/.test(['quick-app', 'full-app', 'result-row', 'result-details', 'stats-card', 'settings-panels', 'history-panel', 'results-list', 'debug-panel'].map((n) => read(`ui/src/components/app/${n}.tsx`)).join('\n') + read('ui/src/components/ui/alert.tsx')), '30g: error text uses the checked danger colour, not the darker destructive fill');
+    assert(!/text-(?:amber|emerald)-/.test(read('ui/src/components/app/debug-panel.tsx')) && !/text-foreground\/60/.test(read('ui/src/components/ui/tabs.tsx')), 'theme11: Debug status and inactive tab text use checked semantic theme colours');
     assert(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*0\.01ms !important[\s\S]*transition-duration:\s*0\.01ms !important/.test(css) && /motion-reduce:animate-none/.test(read('ui/src/components/app/result-row.tsx')) && !/animate-|transition-/.test(read('ui/src/components/ui/tooltip.tsx')), '30h: reduced-motion rules cover animated controls; the tooltip has no motion');
     assert(/color-scheme:\s*dark/.test(css) && /@custom-variant dark/.test(css) && /<html lang="en" class="dark">/.test(read('ui/popup.html')) && /<html lang="en" class="dark">/.test(read('ui/quick.html')) && /documentElement\.lang = value\.lang/.test(read('ui/src/hooks/use-i18n.tsx')), '30i: both pages are explicitly dark; the static lang is replaced at runtime by the interface language');
   }

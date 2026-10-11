@@ -3,7 +3,7 @@
 @source "./";
 @import "tw-animate-css";
 
-/* The pages are always dark (<html class="dark">): the dark: variants of the shadcn components follow that class, not the OS. */
+/* The saved theme sets the dark class; the operating-system preference does not override it. */
 @custom-variant dark (&:is(.dark *));
 
 /* Image Saver keeps its dark slate identity (#0f172a surface, blue accent). The shadcn tokens below are the standard
@@ -32,6 +32,47 @@
   --border: #334155;
   --input: #334155;
   --ring: #60a5fa;
+}
+
+:root[data-theme="dark"] {
+  --background: #111113;
+  --foreground: #f4f4f5;
+  --card: #1b1b1f;
+  --card-foreground: #f4f4f5;
+  --popover: #25252b;
+  --popover-foreground: #f4f4f5;
+  --secondary: #27272a;
+  --secondary-foreground: #e4e4e7;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #303036;
+  --accent-foreground: #f4f4f5;
+  --border: #414149;
+  --input: #414149;
+  --ring: #93c5fd;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #172033;
+  --card: #f8fafc;
+  --card-foreground: #172033;
+  --popover: #ffffff;
+  --popover-foreground: #172033;
+  --primary: #1d4ed8;
+  --secondary: #e8edf3;
+  --secondary-foreground: #172033;
+  --muted: #e8edf3;
+  --muted-foreground: #475569;
+  --accent: #e1e8f0;
+  --accent-foreground: #172033;
+  --danger: #b91c1c;
+  --success: #047857;
+  --warning: #854d0e;
+  --border: #b1bac7;
+  --input: #b1bac7;
+  --ring: #1d4ed8;
 }
 
 @theme inline {
