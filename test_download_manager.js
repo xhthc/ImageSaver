@@ -251,9 +251,12 @@ function env(stored={jobs:[],paused:false}) {
     const vm = require('node:vm');
     const bgCode = require('node:fs').readFileSync('background.js', 'utf8');
     let capturedAdapter = null;
+    const listeners=[], commands=[], persisted={};
+    let failSessionWrite=false;
+    const area={get:async()=>structuredClone(persisted),set:async value=>{if(failSessionWrite)throw Error('STORAGE_FAILED');Object.assign(persisted,structuredClone(value));},remove:async key=>{delete persisted[key];}};
     const chrome = {
-      runtime: { id: 'testid', lastError: null, getURL: p => 'chrome-extension://testid/' + p, getManifest: () => ({ version: '2.0.0' }), onInstalled: { addListener() {} }, onStartup: { addListener() {} }, onMessage: { addListener() {} }, getContexts: async () => [], sendMessage: async () => null },
-      storage: { local: { get: async () => ({}), set: async () => {}, remove: async () => {} }, session: { get: async () => ({}), set: async () => {}, remove: async () => {} } },
+      runtime: { id: 'testid', lastError: null, getURL: p => 'chrome-extension://testid/' + p, getManifest: () => ({ version: '2.0.0' }), onInstalled: { addListener() {} }, onStartup: { addListener() {} }, onMessage: { addListener(fn) { listeners.push(fn); } }, getContexts: async () => [], sendMessage: async () => null },
+      storage: { local: area, session: area },
       declarativeNetRequest: { getDynamicRules: async () => [], updateDynamicRules: async () => {} },
       contextMenus: { removeAll: cb => cb && cb(), create() {}, update: (id, p, cb) => cb && cb(), refresh() {}, onClicked: { addListener() {} }, onShown: { addListener() {} } },
       tabs: { onActivated: { addListener() {} }, onUpdated: { addListener() {} }, query: async () => [], sendMessage: async () => {} },
@@ -269,7 +272,7 @@ function env(stored={jobs:[],paused:false}) {
       ImageSaverFeedback: globalThis.ImageSaverFeedback,
       ImageSaverFeedbackTracker: globalThis.ImageSaverFeedbackTracker,
       MediaLatchDownloads: {
-        createManager: adapter => { capturedAdapter = adapter; return { ready: Promise.resolve(), drain: async () => {}, list: async () => ({ jobs: [], paused: false }) }; },
+        createManager: adapter => { capturedAdapter = adapter; return { ready: Promise.resolve(), drain: async () => {}, command:async(...args)=>commands.push(args), list: async () => ({ jobs: [], paused: false }) }; },
         database: () => ({ get: async () => ({ jobs: [], paused: false }), set: async () => {} })
       }
     };
@@ -304,6 +307,28 @@ function env(stored={jobs:[],paused:false}) {
     // 7e. recoverAttempt: missing operation triggers re-attempt preserving GIF classification
     const recGif = await capturedAdapter.recoverAttempt({ id: 'job-missing-gif', op: 'op-missing-404', source: 'https://media.test/anim2.gif', expectedMime: 'image/gif', mime: '' });
     assert.equal(beginCalls.at(-1).expectedType, 'gif');
+
+    // Feedback-only removal invokes the real authenticated worker handler and persisted tracker.
+    const handler=listeners.find(fn=>fn.toString().includes("m?.action!=='DOWNLOADS_LIST'"));
+    const sender={id:'testid',url:chrome.runtime.getURL('popup/popup.html')};
+    const command=(id,from=sender)=>new Promise(resolve=>handler({action:'DOWNLOADS_COMMAND',command:'remove',id},from,resolve));
+    const failed=await sandbox.feedbackTracker.begin({sourceUrl:'https://media.test/failure.png'});
+    await sandbox.feedbackTracker.fail(failed,{code:'NO_MEDIA'});await sandbox.feedbackTracker.flush();
+    assert((await sandbox.downloadManagerSnapshot()).jobs.some(j=>j.id===failed && j.managed===false));
+    const before=structuredClone(persisted);
+    assert.equal((await command(failed,{id:'testid',url:'https://media.test/'})).error,'FORBIDDEN');
+    assert.deepEqual(persisted,before,'untrusted sender does not mutate storage');
+    assert.equal((await command(recVid)).error,'INVALID_STATE','active feedback cannot be dismissed');
+    assert.equal((await command('missing-record')).error,'INVALID_STATE');
+    failSessionWrite=true;
+    assert.equal((await command(failed)).success,false,'failed removal remains visible');
+    assert(await sandbox.feedbackTracker.get(failed));
+    failSessionWrite=false;
+    const result=await command(failed);
+    assert.equal(result.success,true);assert(!result.jobs.some(j=>j.id===failed));
+    assert.equal(await sandbox.feedbackTracker.get(failed),null);
+    assert(!persisted[ImageSaverFeedbackTracker.STORAGE_KEY].ops.some(r=>r.id===failed),'removal persisted');
+    assert.deepEqual(commands,[],'feedback dismissal never invokes managed transport');
   }
   console.log('PASS: production stream validation, byte identity, queue/export boundary, local retry, cancellation, journal failure, recovery and statistics');
 })().catch(e=>{console.error(e);process.exitCode=1;});

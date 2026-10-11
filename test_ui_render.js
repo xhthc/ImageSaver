@@ -69,7 +69,7 @@ function makeChrome(state) {
         calls.messages.push(msg.action);
         if (state.failMessages) throw new Error('MESSAGING_DOWN');
         if(msg.action === 'DOWNLOADS_LIST' || msg.action === 'DOWNLOADS_COMMAND') {
-          if(msg.command==='remove' && state.jobs){const op=state.jobs.find(j=>j.id===msg.id)?.op;state.jobs=state.jobs.filter(j=>j.id!==msg.id);state.session=state.session.filter(r=>r.id!==op);}
+          if(msg.command==='remove'){if(state.failRemoval)return {success:false};const op=state.jobs?.find(j=>j.id===msg.id)?.op || msg.id;if(state.jobs)state.jobs=state.jobs.filter(j=>j.id!==msg.id);state.session=state.session.filter(r=>r.id!==op);}
           return {success:true,jobs:state.jobs || state.session.map(r=>({id:r.id,op:r.id,managed:false,filename:r.filename || 'media',state:r.state==='saving'?'receiving':r.state==='interrupted'?'failed':r.state,received:1024,total:r.state==='saving'?null:2048,speed:0,error:'',ready:false})).reverse(),paused:false};
         }
         if (msg.action === 'FEEDBACK_LIST') {
@@ -229,6 +229,19 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(preparation.text().includes('Обработка медиа') && preparation.text().includes('Выбранное медиа') && preparation.text().includes('после подготовки'),'manager-render-8: processing is visible without invented byte progress or controls');
     assert(!preparation.q('button[aria-label="Отменить загрузку"]') && !preparation.q('progress').hasAttribute('value'),'manager-render-9: preparation does not promise transport cancellation');await preparation.unmount();
   }
+
+
+    for(const lang of ['en','ru'])for(const theme of ['blue','dark','light'])for(const kind of ['quick','full']){
+      const failed=unnamedFailure(), state={session:[failed],history:[],local:{uiLanguage:lang,uiTheme:theme},failRemoval:true};
+      const p=await page(kind,state,{hash:'#downloads'});
+      const label=lang==='ru'?'Удалить запись':'Remove record';
+      const remove=p.q('button[aria-label="'+label+'"]');
+      assert(remove,'unmanaged-dismiss: terminal removal is labelled in '+kind+' '+lang+' '+theme);
+      assert(!p.q('button[aria-label="'+(lang==='ru'?'Повторить загрузку':'Retry download')+'"]'),'unmanaged-dismiss: no unproven retry');
+      if(remove){await p.click(remove);assert(p.qa('[data-job]').length===1 && p.q('[role="alert"]'),'unmanaged-dismiss: persistence failure retains card with error');state.failRemoval=false;await p.click(remove);assert(p.qa('[data-job]').length===0,'unmanaged-dismiss: selected terminal card removed');}
+      await p.unmount();
+      const reopened=await page(kind,state,{hash:'#downloads'});assert(reopened.qa('[data-job]').length===0,'unmanaged-dismiss: no card on reopen');await reopened.unmount();
+    }
 
   console.log('\n--- R3. Unread failures, acknowledgement and states ---');
   {

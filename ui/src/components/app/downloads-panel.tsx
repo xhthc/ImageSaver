@@ -17,7 +17,7 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
   const jobs=s.jobs.slice()
   // Keep old notification deep links inspectable even after their byte-queue record was removed.
   const focused=records.find(r=>r.id===focusId)
-  if(focused && !jobs.some((j:any)=>(j.op || j.id)===focusId))jobs.push({id:focused.id,op:focused.id,managed:false,state:focused.state,received:0})
+  if(focused && !jobs.some((j:any)=>(j.op || j.id)===focusId))jobs.push({id:focused.id,op:focused.id,managed:false,state:focused.state==='interrupted'?'failed':focused.state,received:0})
   return <section aria-label={t('downloads.heading')} className="space-y-3" data-slot={full?'results-section':undefined}>
     <div className="flex items-center justify-between gap-2">
       <h2 className="text-sm font-semibold">{t('downloads.heading')}</h2>
@@ -35,7 +35,7 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
       const actions=<>
         {active && j.managed!==false?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t('downloads.cancel')} onClick={()=>void controller.command('cancel',j.id)}><X/></Button>:null}
         {j.state==='failed' && j.managed!==false?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t(j.ready?'downloads.exportAgain':'downloads.retry')} onClick={()=>void controller.command('retry',j.id)}><RotateCcw/></Button>:null}
-        {!active && j.managed!==false?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t('downloads.remove')} onClick={()=>void controller.command('remove',j.id)}><Trash2/></Button>:null}
+        {!active?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t(j.managed===false?'downloads.removeRecord':'downloads.remove')} onClick={()=>void controller.command('remove',j.id)}><Trash2/></Button>:null}
       </>
       const progress=<div className="space-y-2">
         {active?<progress className="h-1.5 w-full accent-primary" aria-label={t('downloads.progress')} max={j.total||1} value={j.total?j.received:undefined}/>:null}

@@ -9453,7 +9453,13 @@ if(chrome.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListener(
     if(m.action==='DOWNLOADS_COMMAND') {
       if(m.command==='remove') {
         const job=(await downloadManager.list()).jobs.find(j=>j.id===m.id);
-        if(!job || !['complete','failed','cancelled'].includes(job.state))throw Error('INVALID_STATE');
+        if(!job) {
+          const record=await feedbackTracker.get(m.id);
+          if(!record || !FeedbackLib.isTerminal(record.state))throw Error('INVALID_STATE');
+          await feedbackTracker.clearFinished(m.id);
+          return {success:true,...await downloadManagerSnapshot()};
+        }
+        if(!['complete','failed','cancelled'].includes(job.state))throw Error('INVALID_STATE');
         // Clear the fallback durably first; a crash must leave the queue card, never resurrect a removed one.
         if(job.op)await feedbackTracker.clearFinished(job.op);
       }
