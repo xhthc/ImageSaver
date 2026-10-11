@@ -1080,6 +1080,44 @@ async function runAllSuites() {
     );
   });
 
+  await test('convertMp4VideoToGif: oversized input cancellation or truncated MP4 never authorizes a direct save', async () => {
+    for (const cancel of [true, false]) {
+      const controller = new AbortController();
+      let reads = 0;
+      let cancels = 0;
+      const { sandbox, createdBlobs, createdVideos, createdCanvases } = createTestSandbox({
+        fetch: async () => ({
+          ok: true, status: 200,
+          headers: { get: () => String(50 * 1024 * 1024 + 1) },
+          body: { getReader: () => ({
+            read: async () => {
+              if (reads++) return { done: true };
+              if (cancel) controller.abort();
+              return { done: false, value: FIXTURE_BYTES.mp4.slice(0, 12) };
+            },
+            cancel: async () => { cancels++; }
+          }) }
+        })
+      });
+      await assert.rejects(() => sandbox.convertRedditVideoToGif('https://preview.redd.it/animation.gif?format=mp4&s=exact', { signal: controller.signal }), cancel ? /CONVERSION_CANCELLED/ : /Invalid MP4/);
+      assert.strictEqual(cancels, 1);
+      assert.strictEqual(createdBlobs.size, 0);
+      assert.strictEqual(createdVideos.length, 0);
+      assert.strictEqual(createdCanvases.length, 0);
+    }
+  });
+
+  await test('convertMp4VideoToGif: oversized corrupt encoder output stays a conversion error', async () => {
+    const bytes = new Uint8Array(15 * 1024 * 1024 + 1);
+    const { sandbox, createdBlobs } = createTestSandbox({
+      gifenc: { ...gifenc, GIFEncoder: () => ({ writeFrame() {}, finish() {}, bytes: () => bytes }) }
+    });
+    await assert.rejects(() => sandbox.convertXTweetVideoToGif('https://video.twimg.com/tweet_video/test.mp4', {
+      frames: [new Uint8Array(400), new Uint8Array(400)], width: 10, height: 10, duration: 0.1
+    }), /CORRUPTED_OUTPUT/);
+    assert.strictEqual(createdBlobs.size, 0);
+  });
+
   await test('convertMp4VideoToGif: total operational budget timeout (45s) aborts conversion and cleans up resources', async () => {
     const { sandbox, createdVideos, createdCanvases } = createTestSandbox({
       fetch: async () => ({

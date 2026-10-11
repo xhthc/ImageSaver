@@ -123,14 +123,26 @@ async function pixivRefusal(name, config, error) {
   await pixivRefusal('Pixiv body keeps the20s deadline', { stalled: true }, /Aborted|abort|TIMEOUT/i);
 
   for (const [name, config, error] of [
-    ['GIF declared input ceiling', { declared: CAP + 1 }, /SIZE|budget|limit/i],
+    ['GIF declared input ceiling selects source MP4', { declared: CAP + 1 }, null],
     ['GIF chunked input ceiling', { overflow: true }, /SIZE|budget|limit/i],
     ['GIF streamless input refusal', { stream: false }, /ReadableStream|stream/i]
   ]) await test(name, async () => {
     const fixture = response({ ...config, type: 'video/mp4', bytes: MP4 }), env = environment(fixture);
     try {
-      await assert.rejects(env.sandbox.convertXTweetVideoToGif('https://video.twimg.com/tweet_video/clip.mp4?sig=EXACT'), error);
+      const conversion = env.sandbox.convertXTweetVideoToGif('https://video.twimg.com/tweet_video/clip.mp4?sig=EXACT');
+      if (error) await assert.rejects(conversion, error);
+      else {
+        const decision = await conversion;
+        assert.equal(decision.exceedsSize, true);
+        assert.equal(decision.action, 'SAVE_DIRECT_MP4');
+        assert.equal(decision.sizeKind, 'input');
+        assert.equal(decision.sizeBytes, CAP + 1);
+        assert.equal(decision.thresholdBytes, CAP);
+        assert.equal(decision.blobUrl, undefined);
+        assert.equal(fixture.state.reads, 2, 'Only the bounded container prefix and EOF are read');
+      }
       assert.equal(fixture.state.buffered, 0, 'No unbounded blob API');
+      assert.equal(fixture.state.cancels, config.stream === false ? 0 : 1, 'Reader released when present');
       assert.equal(env.requests[0].options.signal.aborted, true);
       assert.equal(env.timers.size, 0);
     } finally { env.close(); }

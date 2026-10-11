@@ -86,6 +86,9 @@ function createIntegratedEnvironment({
   converterReply = null,
   fetchStatus = 200,
   fetchBody = FAKE_MP4_BYTES,
+  encodedSize = null,
+  inputHeaderBytes = 10240,
+  inputChunks = null,
   invalidDuration = false,
   seekTimeout = false,
   notifySuccess = true,
@@ -105,7 +108,10 @@ function createIntegratedEnvironment({
     activeBlobs: new Map(),
     nextBlobId: 1,
     fetches: [],
-    converterCalls: []
+    converterCalls: [],
+    readerCancelled: 0,
+    reads: 0,
+    createdVideos: 0
   };
   ALL_ENVS.add(env);
 
@@ -262,6 +268,7 @@ function createIntegratedEnvironment({
   const mockOffscreenDocument = {
     createElement: (tag) => {
       if (tag === 'video') {
+        env.createdVideos++;
         const listeners = new Map();
         let _src = '';
         let _currentTime = 0;
@@ -333,7 +340,17 @@ function createIntegratedEnvironment({
     document: mockOffscreenDocument,
     URL: MockURL,
     Blob,
-    gifenc,
+    gifenc: encodedSize === null ? gifenc : {
+      ...gifenc,
+      GIFEncoder: () => {
+        const encoder = gifenc.GIFEncoder();
+        return { ...encoder, bytes: () => {
+          const bytes = new Uint8Array(encodedSize);
+          bytes.set(encoder.bytes());
+          return bytes;
+        } };
+      }
+    },
     setTimeout: trackedSetTimeout,
     clearTimeout: trackedClearTimeout,
     AbortController,
@@ -346,8 +363,18 @@ function createIntegratedEnvironment({
       return {
         ok: true,
         status: 200,
-        headers: { get: (h) => h.toLowerCase() === 'content-type' ? 'video/mp4' : '10240' },
-        body: new Blob([fetchBody], { type: 'video/mp4' }).stream()
+        headers: { get: (h) => h.toLowerCase() === 'content-type' ? 'video/mp4' : String(inputHeaderBytes) },
+        body: { getReader: () => {
+          const reader = new Blob([fetchBody], { type: 'video/mp4' }).stream().getReader();
+          let index = 0;
+          return {
+            read: async () => {
+              env.reads++;
+              return inputChunks ? index < inputChunks.length ? { value: inputChunks[index++], done: false } : { done: true } : reader.read();
+            },
+            cancel: async () => { env.readerCancelled++; await reader.cancel(); }
+          };
+        } }
       };
     }
   };
@@ -798,6 +825,68 @@ async function runSuite() {
     testAssert(res && res.success === true && res.frames === 150 && res.duration === 25, '7e: a 25 s run asked for 500 frames is clamped to 150 frames');
     const g = parseGif(new Uint8Array(await env.activeBlobs.get(res.blobUrl).arrayBuffer()));
     testAssert(g.frames === 150 && g.totalMs === 25000 && g.loop === 0, '7f: the clamped GIF has 150 blocks, 25000 ms and an infinite loop');
+  }
+
+  console.log('\n--- 8. Size policy: oversized conversion saves the exact source MP4 ---');
+  const GIF_LIMIT = 15 * 1024 * 1024;
+  const INPUT_LIMIT = 50 * 1024 * 1024;
+  const oversizedChunk = new Uint8Array(INPUT_LIMIT + 1);
+  oversizedChunk.set(FAKE_MP4_BYTES);
+  for (const prov of runners) {
+    for (const [name, fixture] of [
+      ['encoded GIF 15958300 bytes', { encodedSize: 15958300 }],
+      ['declared oversized input with split signature', { inputHeaderBytes: INPUT_LIMIT + 1, inputChunks: [FAKE_MP4_BYTES.slice(0, 4), FAKE_MP4_BYTES.slice(4)] }],
+      ['oversized stream without Content-Length', { inputHeaderBytes: 0, inputChunks: [oversizedChunk] }]
+    ]) {
+      const env = createIntegratedEnvironment(fixture);
+      const op = await env.bg.fbBegin({ menuItemId: 'save-image-item', srcUrl: prov.url, pageUrl: prov.page });
+      const res = await env.bg[prov.fn](prov.url, { folderOrganizationMode: 'by_site_and_type' }, { pageUrl: prov.page, feedbackOp: op });
+      testAssert(res.success === true && env.downloadCalls.length === 1 && env.downloadCalls[0].url === prov.url && /\/video\/[^/]+\.mp4$/i.test(env.downloadCalls[0].filename), `8a: ${prov.name} ${name}: one exact signed source MP4 in the video folder`);
+      testAssert(env.notifications.length === 0, `8b: ${prov.name} ${name}: no premature completion notice`);
+      if (res.success) await env.finishDownload(res.downloadId);
+      const record = (await env.tracker.list())[0];
+      testAssert(record.state === 'complete' && record.conversion === 'none' && record.reason === 'animation_size_limit' && record.output.type === 'video' && record.output.mime === 'video/mp4' && record.output.evidence === 'verified_mime' && record.fallback === false, `8c: ${prov.name} ${name}: complete, verified MP4 and size policy recorded`);
+      for (const lang of ['ru', 'en']) testAssert(/(?:size|размер).*MP4/i.test(env.bg.ImageSaverFeedback.summarize(record, lang).lines.join(' ')), `8d: ${prov.name} ${name}: ${lang} summary explains the size limit and MP4`);
+      testAssert(env.notifications.length === 1 && /MP4/i.test(env.notifications[0]?.opts.message || ''), `8e: ${prov.name} ${name}: one honest completion notice`);
+      testAssert(env.activeBlobs.size === 0 && env.offscreenTaskCount() === 0 && env.readerCancelled === 1, `8f: ${prov.name} ${name}: input reader, Blobs and offscreen task released`);
+      if (fixture.encodedSize === undefined) testAssert(env.createdVideos === 0, `8g: ${prov.name} ${name}: oversized input never decoded or encoded`);
+      await env.dispose();
+    }
+    for (const fixture of [{ encodedSize: GIF_LIMIT }, { inputHeaderBytes: INPUT_LIMIT }]) {
+      const env = createIntegratedEnvironment(fixture);
+      const res = await env.bg[prov.fn](prov.url, {}, { pageUrl: prov.page });
+      const blob = env.activeBlobs.get(env.downloadCalls[0]?.url);
+      const gif = blob ? parseGif(new Uint8Array(await blob.arrayBuffer())) : null;
+      testAssert(res.success === true && /\.gif$/i.test(env.downloadCalls[0]?.filename || '') && gif?.frames >= 2 && gif.loop === 0, `8h: ${prov.name} exactly at the size threshold still produces a genuine looping GIF`);
+      await env.dispose();
+    }
+    const valid = { success: true, exceedsSize: true, action: 'SAVE_DIRECT_MP4', sizeKind: 'gif', sizeBytes: GIF_LIMIT + 1, thresholdBytes: GIF_LIMIT };
+    for (const patch of [
+      { thresholdBytes: 1 }, { sizeBytes: GIF_LIMIT }, { sizeBytes: NaN }, { sizeBytes: String(GIF_LIMIT + 1) },
+      { exceedsSize: 'true' }, { sizeKind: 'other' }, { action: undefined },
+      { exceedsDuration: true, duration: 35, threshold: 30 }, { bytes: [] }, { blobUrl: 'blob:chrome-extension://test-ext/extra' }
+    ]) {
+      const env = createIntegratedEnvironment({ converterReply: () => ({ ...valid, ...patch }) });
+      const res = await env.bg[prov.fn](prov.url, {}, { pageUrl: prov.page });
+      testAssert(res.success === false && env.downloadCalls.length === 0 && env.fetches.length === 0 && env.offscreenTaskCount() === 0, `8i: ${prov.name} malformed size decision refused without any download or retained task (${Object.keys(patch).join(',')})`);
+      await env.dispose();
+    }
+    for (const fixture of [
+      { inputHeaderBytes: INPUT_LIMIT + 1, fetchBody: new Uint8Array(64).fill(60) },
+      { converterReply: () => ({ success: false, error: 'SIZE_EXCEEDED: decoder failure' }) }
+    ]) {
+      const env = createIntegratedEnvironment(fixture);
+      const res = await env.bg[prov.fn](prov.url, {}, { pageUrl: prov.page });
+      testAssert(res.success === false && env.downloadCalls.length === 0 && env.activeBlobs.size === 0 && env.offscreenTaskCount() === 0, `8j: ${prov.name} oversized non-media or generic error never authorizes an MP4`);
+      await env.dispose();
+    }
+  }
+  {
+    const env = createIntegratedEnvironment({ encodedSize: 15958300, notifySuccess: false, askEveryTime: true });
+    const res = await env.saveRedditGif(URL_R, 'https://www.reddit.com/r/test/', { askEveryTime: true });
+    if (res.success) await env.finishDownload(res.downloadId);
+    testAssert(res.success === true && env.notifications.length === 0 && env.downloadCalls[0]?.saveAs === false, '8k: size policy follows existing notification and direct-download preferences');
+    await env.dispose();
   }
 
   console.log(`\n========================================`);

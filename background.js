@@ -10313,10 +10313,16 @@ function hasActiveProtectedDownloads() {
 // genuine GIF; strictly above it the verified source MP4 is saved. Fixed: a caller option cannot move it.
 const ANIMATION_GIF_MAX_SECONDS = 30;
 
-// The offscreen converter's explicit decision to save the source MP4. Valid only as the full decision (action SAVE_DIRECT_MP4, a finite
-// measured duration strictly above the fixed threshold, the fixed threshold) and never together with a GIF Blob; anything else that claims
-// it is a protocol violation and throws, so no download is started. Returns null when the reply is an ordinary conversion result.
-function parseAnimationDurationDecision(res) {
+// Only a complete fixed-limit decision without output bytes or a Blob authorizes the exact source MP4.
+function parseAnimationLimitDecision(res) {
+  if (res && res.exceedsSize !== undefined && res.exceedsSize !== false) {
+    const threshold = res.sizeKind === 'input' ? 50 * 1024 * 1024 : res.sizeKind === 'gif' ? 15 * 1024 * 1024 : null;
+    if (res.exceedsSize !== true || res.exceedsDuration || res.action !== 'SAVE_DIRECT_MP4' || res.blobUrl || res.bytes !== undefined ||
+        threshold === null || res.thresholdBytes !== threshold || !Number.isSafeInteger(res.sizeBytes) || res.sizeBytes <= threshold) {
+      throw new Error('INVALID_SIZE_DECISION');
+    }
+    return { exceedsSize: true };
+  }
   if (!res || res.exceedsDuration === undefined || res.exceedsDuration === false) return null;
   const duration = res.duration;
   if (res.exceedsDuration !== true || res.action !== 'SAVE_DIRECT_MP4' || res.blobUrl || res.bytes !== undefined ||
@@ -10324,7 +10330,7 @@ function parseAnimationDurationDecision(res) {
       res.threshold !== ANIMATION_GIF_MAX_SECONDS) {
     throw new Error('INVALID_DURATION_DECISION');
   }
-  return { duration, threshold: ANIMATION_GIF_MAX_SECONDS };
+  return { exceedsDuration: true, duration, threshold: ANIMATION_GIF_MAX_SECONDS };
 }
 
 /**
@@ -10344,10 +10350,10 @@ async function convertXTweetVideoToGifBlob(videoUrl, options = {}) {
     if (!res || !res.success) {
       throw new Error(res?.error || 'CONVERSION_FAILED');
     }
-    const decision = parseAnimationDurationDecision(res);
+    const decision = parseAnimationLimitDecision(res);
     if (decision) {
       await releaseOffscreenTask(taskKey).catch(() => {});
-      return { success: true, exceedsDuration: true, duration: decision.duration, threshold: decision.threshold };
+      return { success: true, ...decision };
     }
     if (!res.blobUrl) {
       throw new Error(res?.error || 'CONVERSION_FAILED');
@@ -10382,12 +10388,13 @@ async function executeXTweetVideoGifDownload(videoUrl, settings = {}, options = 
     const { pageUrl, feedbackOp: _feedbackOp, ...conversionOptions } = options || {};
     await fbStage(feedbackOp, 'converting', { conversion: 'x_tweet_video_gif', expectedType: 'gif', sourceUrl: videoUrl, site: fbSiteOf(pageUrl, videoUrl) });
     convResult = await convertXTweetVideoToGifBlob(videoUrl, conversionOptions);
-    if (convResult?.exceedsDuration) {
+    if (convResult?.exceedsDuration || convResult?.exceedsSize) {
       const duration = convResult.duration;
-      const threshold = convResult.threshold || 30.0;
+      const threshold = convResult.threshold;
+      const reason = convResult.exceedsSize ? 'animation_size_limit' : 'animation_duration_limit';
       await fbStage(feedbackOp, 'saving', {
         conversion: 'none',
-        reason: 'animation_duration_limit',
+        reason,
         durationSec: duration,
         thresholdSec: threshold,
         output: {
@@ -10396,7 +10403,7 @@ async function executeXTweetVideoGifDownload(videoUrl, settings = {}, options = 
           evidence: 'verified_mime',
           mime: 'video/mp4',
           durationSec: duration,
-          reason: 'animation_duration_limit',
+          reason,
           thresholdSec: threshold
         }
       });
@@ -10411,7 +10418,7 @@ async function executeXTweetVideoGifDownload(videoUrl, settings = {}, options = 
         metadata: {
           durationSec: duration,
           thresholdSec: threshold,
-          reason: 'animation_duration_limit'
+          reason
         }
       });
       return await executeMediaDownload({
@@ -10484,10 +10491,10 @@ async function convertRedditVideoToGifBlob(videoUrl, options = {}) {
     if (!res || !res.success) {
       throw new Error(res?.error || 'CONVERSION_FAILED');
     }
-    const decision = parseAnimationDurationDecision(res);
+    const decision = parseAnimationLimitDecision(res);
     if (decision) {
       await releaseOffscreenTask(taskKey).catch(() => {});
-      return { success: true, exceedsDuration: true, duration: decision.duration, threshold: decision.threshold };
+      return { success: true, ...decision };
     }
     if (!res.blobUrl) {
       throw new Error(res?.error || 'CONVERSION_FAILED');
@@ -10522,12 +10529,13 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
     const { pageUrl, feedbackOp: _feedbackOp, ...conversionOptions } = options || {};
     await fbStage(feedbackOp, 'converting', { conversion: 'reddit_animation_gif', expectedType: 'gif', sourceUrl: videoUrl, site: fbSiteOf(pageUrl, videoUrl) });
     convResult = await convertRedditVideoToGifBlob(videoUrl, conversionOptions);
-    if (convResult?.exceedsDuration) {
+    if (convResult?.exceedsDuration || convResult?.exceedsSize) {
       const duration = convResult.duration;
-      const threshold = convResult.threshold || 30.0;
+      const threshold = convResult.threshold;
+      const reason = convResult.exceedsSize ? 'animation_size_limit' : 'animation_duration_limit';
       await fbStage(feedbackOp, 'saving', {
         conversion: 'none',
-        reason: 'animation_duration_limit',
+        reason,
         durationSec: duration,
         thresholdSec: threshold,
         output: {
@@ -10536,7 +10544,7 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
           evidence: 'verified_mime',
           mime: 'video/mp4',
           durationSec: duration,
-          reason: 'animation_duration_limit',
+          reason,
           thresholdSec: threshold
         }
       });
@@ -10551,7 +10559,7 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
         metadata: {
           durationSec: duration,
           thresholdSec: threshold,
-          reason: 'animation_duration_limit'
+          reason
         }
       });
       return await executeMediaDownload({

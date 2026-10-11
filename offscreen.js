@@ -58,6 +58,13 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
       height: message.height
     })
       .then(result => {
+        if (result && result.exceedsSize) {
+          sendResponse({
+            success: true, exceedsSize: true, action: 'SAVE_DIRECT_MP4',
+            sizeKind: result.sizeKind, sizeBytes: result.sizeBytes, thresholdBytes: result.thresholdBytes
+          });
+          return;
+        }
         if (result && result.exceedsDuration) {
           sendResponse({
             success: true,
@@ -1050,14 +1057,18 @@ async function convertMp4VideoToGif(mediaUrl, options = {}, providerName = 'x') 
       }
       encoder.finish();
       const bytes = encoder.bytes();
-      if (bytes.length > maxSizeBytes) {
-        throw new Error(`SIZE_EXCEEDED: Encoded GIF size (${bytes.length} bytes) exceeds limit of ${maxSizeBytes} bytes`);
-      }
       if (sniffMediaMagicBytes(bytes) !== 'image/gif') {
         throw new Error('CORRUPTED_OUTPUT: Encoded output does not match GIF magic bytes');
       }
       if (!isAnimatedGif(bytes)) {
         throw new Error('INVALID_ANIMATION: Encoded output does not contain multiple GIF frames');
+      }
+      if (bytes.length > GIF_CONVERSION_LIMITS.maxSizeBytes) {
+        return { success: true, exceedsSize: true, action: 'SAVE_DIRECT_MP4',
+          sizeKind: 'gif', sizeBytes: bytes.length, thresholdBytes: GIF_CONVERSION_LIMITS.maxSizeBytes };
+      }
+      if (bytes.length > maxSizeBytes) {
+        throw new Error(`SIZE_EXCEEDED: Encoded GIF size (${bytes.length} bytes) exceeds limit of ${maxSizeBytes} bytes`);
       }
       const blob = new Blob([bytes], { type: 'image/gif' });
       const blobUrl = URL.createObjectURL(blob);
@@ -1080,18 +1091,36 @@ async function convertMp4VideoToGif(mediaUrl, options = {}, providerName = 'x') 
       err.status = resp.status;
       throw err;
     }
-    if (Number(resp.headers.get('content-length')) > GIF_CONVERSION_LIMITS.maxInputBytes) throw new Error('SIZE_EXCEEDED: GIF input limit is50MiB');
+    const declaredSize = Number(resp.headers.get('content-length'));
+    const oversizedDeclaredSize = Number.isSafeInteger(declaredSize) && declaredSize > GIF_CONVERSION_LIMITS.maxInputBytes ? declaredSize : 0;
     if (!resp.body?.getReader) throw new Error('ReadableStream required for bounded GIF input');
     inputReader = resp.body.getReader();
     const chunks = [];
     let inputSize = 0;
+    const prefix = new Uint8Array(64);
+    let prefixSize = 0;
     while (true) {
       if (controller.signal.aborted) throw new Error('CONVERSION_CANCELLED');
       const { done, value } = await inputReader.read();
+      if (controller.signal.aborted) throw new Error('CONVERSION_CANCELLED');
+      if (!done) {
+        inputSize += value.byteLength;
+        const take = Math.min(value.byteLength, prefix.length - prefixSize);
+        prefix.set(value.subarray(0, take), prefixSize);
+        prefixSize += take;
+      }
+      const oversized = oversizedDeclaredSize || inputSize > GIF_CONVERSION_LIMITS.maxInputBytes;
+      // An untrusted length alone cannot authorize saving an MP4; inspect only the bounded container prefix.
+      if (oversized && (prefixSize === prefix.length || done)) {
+        const header = prefix.subarray(0, prefixSize);
+        if (sniffMediaMagicBytes(header) !== 'video/mp4' || isMalformedMediaContainer(header, done ? inputSize : undefined)) {
+          throw new Error('Invalid MP4 container bytes for oversized animation');
+        }
+        return { success: true, exceedsSize: true, action: 'SAVE_DIRECT_MP4',
+          sizeKind: 'input', sizeBytes: Math.max(oversizedDeclaredSize, inputSize), thresholdBytes: GIF_CONVERSION_LIMITS.maxInputBytes };
+      }
       if (done) break;
-      inputSize += value.byteLength;
-      if (inputSize > GIF_CONVERSION_LIMITS.maxInputBytes) throw new Error('SIZE_EXCEEDED: GIF input limit is50MiB');
-      chunks.push(value);
+      if (!oversized) chunks.push(value);
     }
     const blob = new Blob(chunks, { type: 'video/mp4' });
     if (!blob || blob.size <= 0) {
@@ -1284,15 +1313,18 @@ async function convertMp4VideoToGif(mediaUrl, options = {}, providerName = 'x') 
     encoder.finish();
     const gifBytes = encoder.bytes();
 
-    if (gifBytes.length > maxSizeBytes) {
-      throw new Error(`SIZE_EXCEEDED: Encoded GIF size (${gifBytes.length} bytes) exceeds limit of ${maxSizeBytes} bytes`);
-    }
-
     if (sniffMediaMagicBytes(gifBytes) !== 'image/gif') {
       throw new Error('CORRUPTED_OUTPUT: Encoded output does not match GIF magic bytes');
     }
     if (!isAnimatedGif(gifBytes)) {
       throw new Error('INVALID_ANIMATION: Encoded output does not contain multiple GIF frames');
+    }
+    if (gifBytes.length > GIF_CONVERSION_LIMITS.maxSizeBytes) {
+      return { success: true, exceedsSize: true, action: 'SAVE_DIRECT_MP4',
+        sizeKind: 'gif', sizeBytes: gifBytes.length, thresholdBytes: GIF_CONVERSION_LIMITS.maxSizeBytes };
+    }
+    if (gifBytes.length > maxSizeBytes) {
+      throw new Error(`SIZE_EXCEEDED: Encoded GIF size (${gifBytes.length} bytes) exceeds limit of ${maxSizeBytes} bytes`);
     }
 
     const gifBlob = new Blob([gifBytes], { type: 'image/gif' });
