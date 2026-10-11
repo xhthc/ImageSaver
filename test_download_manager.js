@@ -101,5 +101,209 @@ function env(stored={jobs:[],paused:false}) {
     native.native.get(321).state='complete';await rm.drain();await until(async()=> (await aggregate.list()).stats.success===1);
     assert.equal(native.exports,0);assert.equal((await rm.list()).jobs[0].state,'complete');assert.equal((await aggregate.list()).stats.success,1);
   }
+  // MANAGER-RECOVERY-01 regressions:
+  // 1. Interrupted reception: restart leaves op failed in hydrated tracker, 1 failed in statistics; explicit retry re-stages and succeeds (total 2).
+  {
+    const storage={}, native=env(); let n=0;
+    const stats=MediaLatchStatistics.createStatistics({indexedDB:require('./tests/helpers/idb.cjs')(),legacy:async()=>null,isEnabled:async()=>true});
+    const tracker1=ImageSaverFeedbackTracker.createTracker({storage:{get:async key=>storage[key],set:async(key,val)=>{storage[key]=structuredClone(val)}},genId:()=>'op-interrupt-' + (++n),getDownloadItem:async id=>native.native.get(id),onFinished:r=>stats.record(r)});
+    await tracker1.ready();
+    const initOp=await tracker1.begin({sourceUrl:'https://media.test/interrupted'});
+    const job={id:'job-interrupted',op:initOp,filename:'interrupted.png',source:'https://media.test/interrupted',state:'receiving',received:100,total:png.length,prepared:false,error:'',createdAt:Date.now()};
+    native.d.store.get=async()=>({jobs:[job],paused:false});
+
+    // Worker restarts: both feedbackTracker and downloadManager hydrate from durable storage
+    const tracker2=ImageSaverFeedbackTracker.createTracker({storage:{get:async key=>storage[key],set:async(key,val)=>{storage[key]=structuredClone(val)}},genId:()=>'op-interrupt-' + (++n),getDownloadItem:async id=>native.native.get(id),onFinished:r=>stats.record(r)});
+    await tracker2.ready();
+
+    native.d.newAttempt=j=>tracker2.begin({sourceUrl:j.source});
+    native.d.attach=(j,id)=>tracker2.attachDownload(j.op,id,{filename:j.filename,output:{type:'pic',mime:j.mime,evidence:'verified_mime',sizeBytes:j.total,sizeKind:'measured'}});
+    native.d.complete=j=>tracker2.downloadTerminal(j.downloadId,'complete');
+
+    const im=createManager(native.d);await im.ready;
+    assert.equal((await im.list()).jobs[0].state,'failed');
+    assert.equal((await im.list()).jobs[0].error,'WORKER_RESTARTED');
+    assert.deepEqual(native.removed,['job-interrupted']);
+    await until(async()=>(await stats.list()).stats.failed===1);
+    assert.equal((await stats.list()).stats.failed,1);
+    assert.equal((await stats.list()).stats.total,1);
+    await im.command('retry','job-interrupted');await im.drain();
+    assert.equal((await im.list()).jobs[0].state,'complete');
+    assert.equal(native.stages,1);assert.equal(native.exports,1);
+    await until(async()=>(await stats.list()).stats.success===1);
+    assert.equal((await stats.list()).stats.failed,1);
+    assert.equal((await stats.list()).stats.success,1);
+    assert.equal((await stats.list()).stats.total,2);
+  }
+  // 2. Restart after preparation before native export: retains validated bytes, retry exports without second GET.
+  {
+    const native=env();let stages=0;
+    const job={id:'job-prep-restart',filename:'prep.png',source:'https://media.test/prep',state:'ready',received:png.length,total:png.length,mime:'image/png',prepared:true,error:'',createdAt:Date.now()};
+    native.d.store.get=async()=>({jobs:[job],paused:false});
+    native.d.stage=async()=>{stages++;return {size:png.length,mime:'image/png'};};
+    const pm=createManager(native.d);await pm.ready;
+    assert.equal((await pm.list()).jobs[0].state,'failed');
+    assert.equal((await pm.list()).jobs[0].ready,true);
+    await pm.command('retry','job-prep-restart');await pm.drain();
+    assert.equal((await pm.list()).jobs[0].state,'complete');
+    assert.equal(stages,0);
+    assert.equal(native.exports,1);
+  }
+  // 3. Prepared bytes corrupted or truncated before export: refuses corrupt export at run-time wasPrepared check (download_manager.js:93), marks PREPARED_FILE_MISSING, retry re-fetches.
+  {
+    let valid=true, stages=0;
+    const native=env();
+    native.d.verify=async()=>valid;
+    native.d.stage=async()=>{stages++;valid=true;return {size:png.length,mime:'image/png'};};
+    // Start with paused manager and queued prepared job
+    const job={id:'job-trunc',filename:'trunc.png',source:'https://media.test/trunc',state:'queued',received:png.length,total:png.length,mime:'image/png',prepared:true,error:'',createdAt:Date.now()};
+    native.d.store.get=async()=>({jobs:[job],paused:true});
+    const tm=createManager(native.d);await tm.ready;
+    // Passes ready hydration because valid is true
+    assert.equal((await tm.list()).jobs[0].state,'queued');
+    assert.equal((await tm.list()).jobs[0].ready,true);
+    // Invalidate bytes on disk AFTER ready but BEFORE run(j) executes
+    valid=false;
+    // Unpause queue to trigger run(j)
+    await tm.command('pause');await tm.drain();
+    // On base 99e20412, run(j) lacked run-time verify check and exported corrupt file (native.exports === 1).
+    // On fixed download_manager.js:93, wasPrepared check catches invalid bytes, throws PREPARED_FILE_MISSING, refuses export (native.exports === 0).
+    assert.equal(native.exports,0);
+    assert.equal((await tm.list()).jobs[0].state,'failed');
+    assert.equal((await tm.list()).jobs[0].error,'PREPARED_FILE_MISSING');
+    assert.equal((await tm.list()).jobs[0].ready,false);
+    await tm.command('retry','job-trunc');await tm.drain();
+    assert.equal((await tm.list()).jobs[0].state,'complete');
+    assert.equal(stages,1);assert.equal(native.exports,1);
+  }
+  // 4. Injected storage-quota failure: partial bytes cleaned, no success increment, next job proceeds.
+  {
+    const storage={}, native=env(); let n=0;
+    const stats=MediaLatchStatistics.createStatistics({indexedDB:require('./tests/helpers/idb.cjs')(),legacy:async()=>null,isEnabled:async()=>true});
+    const tracker=ImageSaverFeedbackTracker.createTracker({storage:{get:async key=>storage[key],set:async(key,val)=>{storage[key]=structuredClone(val)}},genId:()=>'op-quota-' + (++n),getDownloadItem:async id=>native.native.get(id),onFinished:r=>stats.record(r)});
+    native.d.newAttempt=j=>tracker.begin({sourceUrl:j.source});
+    native.d.attach=(j,id)=>tracker.attachDownload(j.op,id,{filename:j.filename,output:{type:'pic',mime:j.mime,evidence:'verified_mime',sizeBytes:j.total,sizeKind:'measured'}});
+    native.d.complete=j=>tracker.downloadTerminal(j.downloadId,'complete');
+    native.d.failed=j=>tracker.fail(j.op,{stage:j.prepared?'save':'download',code:j.error});
+    let failQuota=true;
+    const oldStage=native.d.stage;
+    native.d.stage=async(j,signal,p)=>{if(failQuota && j.filename==='quota.png')throw Error('STORAGE_QUOTA');return oldStage(j,signal,p);};
+    const qm=createManager(native.d);await qm.ready;
+    const opA=await tracker.begin({sourceUrl:'https://media.test/quota'});
+    const opB=await tracker.begin({sourceUrl:'https://media.test/next'});
+    const qa=qm.enqueue({url:'https://media.test/quota',filename:'quota.png'},{op:opA});
+    const qb=qm.enqueue({url:'https://media.test/next',filename:'next.png'},{op:opB});
+    await assert.rejects(qa,/STORAGE_QUOTA/);
+    await qb;await qm.drain();
+    assert.equal((await qm.list()).jobs.find(j=>j.filename==='quota.png').state,'failed');
+    assert.equal((await qm.list()).jobs.find(j=>j.filename==='next.png').state,'complete');
+    assert(native.removed.some(id=>id==='job-1' || id.startsWith('job-')));
+    await until(async()=>(await stats.list()).stats.success===1);
+    assert.equal((await stats.list()).stats.failed,1);
+    assert.equal((await stats.list()).stats.success,1);
+    assert.equal((await stats.list()).stats.total,2);
+  }
+  // 5. Staging error preservation: secondary removeEntry rejection does not mask primary staging error (staging.js:79).
+  {
+    const s = createStaging({
+      directory: async () => ({
+        getDirectoryHandle: async () => ({
+          getFileHandle: async () => { throw Error('STORAGE_QUOTA'); },
+          removeEntry: async () => { throw Error('DISK_REMOVE_REJECTED'); }
+        })
+      }),
+      fetch: async () => ({
+        ok: true, status: 200, headers: new Map([['content-length', '100']]),
+        body: { getReader: () => ({ read: async () => ({ done: false, value: new Uint8Array(10) }), cancel: async () => {} }) }
+      }),
+      estimate: async () => ({ quota: 1000, usage: 0 }),
+      origin: 'chrome-extension://test',
+      sniff: () => 'image/png',
+      malformed: () => false
+    });
+    // On base staging.js, removeEntry rejection masked STORAGE_QUOTA with DISK_REMOVE_REJECTED.
+    // On fixed staging.js:79, primary STORAGE_QUOTA is preserved.
+    await assert.rejects(s.stage({ id: 'job-stage-err', source: 'https://media.test/pic.png' }), /STORAGE_QUOTA/);
+  }
+  // 6. Manager secondary remove rejection: does not strand enqueue promise, reports failure, unblocks queue (download_manager.js:125).
+  {
+    const native = env();
+    native.d.stage = async () => { throw Error('STORAGE_QUOTA'); };
+    native.d.remove = async () => { throw Error('DISK_REMOVE_REJECTED'); };
+    let failedReported = false;
+    native.d.failed = async j => { if (j.error === 'STORAGE_QUOTA') failedReported = true; };
+    const dm = createManager(native.d);
+    await dm.ready;
+    const p = dm.enqueue({ url: 'https://media.test/quota', filename: 'quota.png' });
+    const race = Promise.race([
+      p.then(() => 'resolved', err => err.message),
+      new Promise(r => setTimeout(() => r('TIMEOUT_STRANDED'), 1000))
+    ]);
+    const outcome = await race;
+    // On base download_manager.js, d.remove rejection bypassed settle(), stranding enqueue promise indefinitely (TIMEOUT_STRANDED).
+    // On fixed download_manager.js:125, enqueue rejects with STORAGE_QUOTA, d.failed is called, and promise settles.
+    assert.equal(outcome, 'STORAGE_QUOTA');
+    assert.equal(failedReported, true);
+    assert.equal((await dm.list()).jobs[0].state, 'failed');
+  }
+  // 7. Background adapter expectedMime fallback: executes actual background.js adapter for newAttempt AND recoverAttempt (background.js:9411-9419).
+  {
+    const vm = require('node:vm');
+    const bgCode = require('node:fs').readFileSync('background.js', 'utf8');
+    let capturedAdapter = null;
+    const chrome = {
+      runtime: { id: 'testid', lastError: null, getURL: p => 'chrome-extension://testid/' + p, getManifest: () => ({ version: '2.0.0' }), onInstalled: { addListener() {} }, onStartup: { addListener() {} }, onMessage: { addListener() {} }, getContexts: async () => [], sendMessage: async () => null },
+      storage: { local: { get: async () => ({}), set: async () => {}, remove: async () => {} }, session: { get: async () => ({}), set: async () => {}, remove: async () => {} } },
+      declarativeNetRequest: { getDynamicRules: async () => [], updateDynamicRules: async () => {} },
+      contextMenus: { removeAll: cb => cb && cb(), create() {}, update: (id, p, cb) => cb && cb(), refresh() {}, onClicked: { addListener() {} }, onShown: { addListener() {} } },
+      tabs: { onActivated: { addListener() {} }, onUpdated: { addListener() {} }, query: async () => [], sendMessage: async () => {} },
+      action: { setBadgeText() {}, setBadgeBackgroundColor() {} },
+      notifications: { create: async () => '1', clear: () => {}, onClicked: { addListener() {} } },
+      downloads: { search: async () => [], download: async () => 1, cancel: async () => {}, onChanged: { addListener() {} } },
+      commands: { onCommand: { addListener() {} } },
+      offscreen: { createDocument: async () => {}, closeDocument: async () => {} }
+    };
+    const sandbox = {
+      chrome, indexedDB: {}, crypto: { randomUUID: () => 'uuid' }, console: { log() {}, warn() {}, error() {} },
+      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: () => {},
+      ImageSaverFeedback: globalThis.ImageSaverFeedback,
+      ImageSaverFeedbackTracker: globalThis.ImageSaverFeedbackTracker,
+      MediaLatchDownloads: {
+        createManager: adapter => { capturedAdapter = adapter; return { ready: Promise.resolve(), drain: async () => {}, list: async () => ({ jobs: [], paused: false }) }; },
+        database: () => ({ get: async () => ({ jobs: [], paused: false }), set: async () => {} })
+      }
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(bgCode, sandbox);
+    assert(capturedAdapter && typeof capturedAdapter.newAttempt === 'function');
+    assert(capturedAdapter && typeof capturedAdapter.recoverAttempt === 'function');
+
+    const origBegin = sandbox.feedbackTracker.begin.bind(sandbox.feedbackTracker);
+    let beginCalls = [];
+    sandbox.feedbackTracker.begin = async opts => { beginCalls.push(opts); return origBegin(opts); };
+
+    // 7a. newAttempt: absent staged mime with expected video preserves video classification
+    const opVid = await capturedAdapter.newAttempt({ id: 'job-vid', source: 'https://media.test/vid.mp4', expectedMime: 'video/mp4', mime: '' });
+    assert.equal(beginCalls.at(-1).expectedType, 'video');
+
+    // 7b. newAttempt: absent staged mime with expected GIF preserves GIF classification
+    const opGif = await capturedAdapter.newAttempt({ id: 'job-gif', source: 'https://media.test/anim.gif', expectedMime: 'image/gif', mime: '' });
+    assert.equal(beginCalls.at(-1).expectedType, 'gif');
+
+    // 7c. recoverAttempt: retains existing active non-terminal operation
+    const opActive = await sandbox.feedbackTracker.begin({ sourceUrl: 'https://media.test/active.mp4', expectedType: 'video' });
+    const retained = await capturedAdapter.recoverAttempt({ id: 'job-active', op: opActive, source: 'https://media.test/active.mp4', expectedMime: 'video/mp4', mime: '' });
+    assert.equal(retained, opActive);
+
+    // 7d. recoverAttempt: terminal failed operation triggers re-attempt preserving video classification
+    await sandbox.feedbackTracker.fail(opActive, { stage: 'download', code: 'NET_ERROR' });
+    const recVid = await capturedAdapter.recoverAttempt({ id: 'job-failed-vid', op: opActive, source: 'https://media.test/active.mp4', expectedMime: 'video/mp4', mime: '' });
+    assert.notEqual(recVid, opActive);
+    assert.equal(beginCalls.at(-1).expectedType, 'video');
+
+    // 7e. recoverAttempt: missing operation triggers re-attempt preserving GIF classification
+    const recGif = await capturedAdapter.recoverAttempt({ id: 'job-missing-gif', op: 'op-missing-404', source: 'https://media.test/anim2.gif', expectedMime: 'image/gif', mime: '' });
+    assert.equal(beginCalls.at(-1).expectedType, 'gif');
+  }
   console.log('PASS: production stream validation, byte identity, queue/export boundary, local retry, cancellation, journal failure, recovery and statistics');
 })().catch(e=>{console.error(e);process.exitCode=1;});

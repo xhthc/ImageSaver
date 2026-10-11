@@ -9408,10 +9408,14 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
       return items.find(x=>x.byExtensionId===chrome.runtime.id && (Number.isInteger(id) || x.url===url)) || null;
     },
     cancelExport:id=>chrome.downloads.cancel(id),
-    newAttempt:j=>fbBegin({sourceUrl:j.source,expectedType:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'image'}),
+    newAttempt:j=>{
+      const m = j.mime || j.expectedMime || '';
+      return fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'});
+    },
     recoverAttempt:async j=>{
       const old=await feedbackTracker?.get(j.op);
-      return old && (!FeedbackLib.isTerminal(old.state) || old.state==='complete')?j.op:fbBegin({sourceUrl:j.source,expectedType:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'image'});
+      const m = j.mime || j.expectedMime || '';
+      return old && (!FeedbackLib.isTerminal(old.state) || old.state==='complete')?j.op:fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'});
     },
     attach:async(j,id)=>fbAttach(j.op,id,{filename:j.filename,output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}),
     complete:async(j)=>fbDownloadTerminal(j.downloadId,'complete'),
