@@ -8562,20 +8562,41 @@ async function resolveOriginalMediaPlanImpl(firstArg, secondArg, thirdArg, fourt
         `${origin}/index.php?page=dapi&s=post&q=index&json=1&tags=md5:${md5}`
       ];
       for (const apiUrl of apiEndpoints) {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 3000);
+        let res = null, reader = null;
         try {
-          const ctrl = new AbortController();
-          const tid = setTimeout(() => ctrl.abort(), 3000);
-          const res = await fetch(apiUrl, { signal: ctrl.signal });
-          clearTimeout(tid);
-          if (res.ok) {
-            const data = await res.json();
+          res = await fetch(apiUrl, { signal: ctrl.signal });
+          // Arbitrary-origin metadata must stay bounded through the response body, not only headers.
+          const maxBytes = 1024 * 1024;
+          if (res.ok && Number(res.headers.get('content-length')) <= maxBytes && res.body?.getReader) {
+            reader = res.body.getReader();
+            const chunks = [];
+            let total = 0;
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              total += value.byteLength;
+              if (total > maxBytes) throw new Error('Metadata size limit exceeded');
+              chunks.push(value);
+            }
+            const bytes = new Uint8Array(total);
+            let offset = 0;
+            for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+            const data = JSON.parse(new TextDecoder().decode(bytes));
             const posts = Array.isArray(data) ? data : (data.posts || data.post);
             if (Array.isArray(posts) && posts[0]) {
               const fileUrl = posts[0].file_url || posts[0].file?.url || posts[0].original_url;
               if (fileUrl) addCandidate(fileUrl, 'specialized_provider');
             }
           }
-        } catch (e) {}
+        } catch (e) {
+        } finally {
+          clearTimeout(tid);
+          ctrl.abort();
+          if (reader) { try { await reader.cancel(); } catch (_) {} }
+          else await cancelResponseBody(res);
+        }
       }
     }
   }

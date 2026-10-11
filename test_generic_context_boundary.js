@@ -56,6 +56,58 @@ async function save(env, f, page, frameId = 0, docs = { [frameId]: f.doc }, recs
 }
 
 async function main() {
+  for (const mode of ['valid', 'stalled', 'oversized', 'declared oversized', 'malformed', 'no stream', 'HTTP error']) {
+    await test(`generic MD5 metadata: ${mode} response stays bounded and cleans up`, async () => {
+      const env = createTestEnv();
+      const source = 'https://unlisted-cdn.example.test/1234567890abcdef1234567890abcdef.jpg';
+      const original = 'https://unlisted-cdn.example.test/data/original/1234567890abcdef1234567890abcdef.png?sig=EXACT%2Bsignature&order=2';
+      network(env, source, 'image/jpeg');
+      const fallbackFetch = env.bgSandbox.fetch;
+      const signals = [], timers = new Set();
+      let readCount = 0, cancellations = 0;
+      env.bgSandbox.TextDecoder = TextDecoder;
+      env.bgSandbox.setTimeout = (fn, ms) => { assert([3000, 3500].includes(ms)); const id = setTimeout(fn, ms === 3000 ? 10 : ms); timers.add(id); return id; };
+      env.bgSandbox.clearTimeout = id => { timers.delete(id); clearTimeout(id); };
+      env.bgSandbox.fetch = async (url, opts = {}) => {
+        if (!url.includes('tags=md5:')) {
+          if (url === original) return new Response(null, { headers: { 'Content-Type': 'image/png', 'Content-Length': '50000' } });
+          return fallbackFetch(url, opts);
+        }
+        signals.push(opts.signal);
+        let at = 0;
+        const chunks = mode === 'oversized'
+          ? [new Uint8Array(1024 * 1024).fill(32), new TextEncoder().encode(JSON.stringify([{ file_url: original }]))]
+          : [new TextEncoder().encode(mode === 'malformed' ? '{bad JSON' : JSON.stringify([{ file_url: original }]))];
+        const reader = {
+          read: async () => {
+            readCount++;
+            if (mode === 'stalled') return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
+            return at < chunks.length ? { done: false, value: chunks[at++] } : { done: true };
+          },
+          cancel: async () => { cancellations++; }
+        };
+        return {
+          ok: mode !== 'HTTP error', headers: new Headers({ ...(mode === 'declared oversized' ? { 'Content-Length': String(1024 * 1024 + 1) } : {}) }),
+          body: mode === 'no stream' ? null : { getReader: () => reader, cancel: reader.cancel },
+          json: async () => { if (mode === 'stalled') await reader.read(); return [{ file_url: original }]; }
+        };
+      };
+      let finished = false;
+      const plan = env.bgSandbox.resolveOriginalMediaPlan({ srcUrl: source, pageUrl: 'https://unfamiliar.example.test/feed', tabId: 1, frameId: 0 }).finally(() => { finished = true; });
+      try {
+        const result = await Promise.race([plan, new Promise((_, reject) => setTimeout(() => reject(new Error('metadata body did not settle')), 250))]);
+        assert.equal(result.primaryUrl, mode === 'valid' ? original : source);
+        assert.equal(signals.length, 3);
+        assert(signals.every(signal => signal.aborted), 'all transfers abort after reading/refusal');
+        assert.equal(timers.size, 0, 'all deadlines cleared');
+        assert.equal(cancellations, mode === 'no stream' ? 0 : 3, 'every response stream cancelled');
+        if (mode === 'declared oversized' || mode === 'no stream' || mode === 'HTTP error') assert.equal(readCount, 0);
+        if (mode === 'oversized') assert.equal(readCount, 6, 'stop as soon as the actual byte limit is crossed');
+      } finally {
+        if (!finished) { for (const id of timers) clearTimeout(id); }
+      }
+    });
+  }
   // Real worker callers keep their frame/document and execution-world bindings while dispatching before document_idle.
   const schedulingCases = [
     ['open-tab capture', b => b.injectContextTargetIntoOpenTabs(), { tabId: 1, allFrames: true }, ['lib/debug_journal.js', 'content_context_target.js']],
