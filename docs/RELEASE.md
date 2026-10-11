@@ -35,7 +35,7 @@ Privacy URL: https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md
 
 Support URL: https://github.com/xhthc/MediaLatch/issues
 
-The v2.0.0.26 preview includes MediaLatch branding and an English / Русский interface choice with persistent preferences, translated notifications and inline labels. It remains an early preview; store submission and the broader browser/site matrix are separate gates.
+The v2.0.0.27 preview includes MediaLatch branding and English / Русский, fixes for selected X media and Reddit/RedGIFs feed controls, an opt-in local Debug journal, and source MP4 saving when GIF size limits are exceeded. It remains an early preview; store submission and the broader browser/site matrix are separate gates.
 
 ## Permission and privacy disclosures
 

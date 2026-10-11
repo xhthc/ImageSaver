@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.0.27 — save fixes and optional debugging
+
+- Add an opt-in local Debug panel with correlated content/frame/worker/UI events, filters, copy/export and clear controls. Bound the journal to 2,000 events, 1 MiB and 24 hours; omit full URLs, tokens, page text and local paths.
+- Correct selected X quote owners, lazy media lookup before playback and multi-video Save all batches.
+- Restore inline controls and first-click saves after feed scrolling and frame changes, including Reddit/RedGIFs. Start runtime injections immediately in loading frames.
+- Preserve supported Reddit HLS audio and playback seeking; report Pawchive originals that the site has not imported.
+- Save the verified source MP4 when X/Reddit animation conversion exceeds input or encoded GIF size limits. Keep existing limits and unrelated error handling; describe the MP4 result in save feedback.
+- Preserve machine-readable conversion failure codes in Debug reports.
+
+Preview validation: 42/42 automated checks on the accepted implementation and user-confirmed reported X, Reddit and RedGIFs cases in Helium. Other layouts, browsers and oversized-input native behavior remain outside that acceptance.
+
 ## 2.0.0.26 — MediaLatch and English / Russian
 
 - Rename the product and repository to MediaLatch with a new M/download mark; keep existing preferences and save folders compatible. Runtime assets use the MediaLatch prefix.

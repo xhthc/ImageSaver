@@ -4,7 +4,7 @@
 
 MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**. Source discovery starts after you choose Save; the menu title stays fixed.
 
-> **Current preview: [v2.0.0.26](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.26).** Includes the MediaLatch name/logo and a persistent English / Русский interface choice. Existing preferences and save folders stay compatible with Image Saver.
+> **Current preview: [v2.0.0.27](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.27).** Includes fixes for selected X media and Reddit/RedGIFs feed controls, optional Debug logging and source MP4 saving when GIF size limits are exceeded. Existing preferences and save folders stay compatible with Image Saver.
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
@@ -12,11 +12,12 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 
 - Original discovery through site adapters, image links, `srcset`, media attributes and unambiguous CSS backgrounds or overlays.
 - Native images/GIFs and accessible MP4/WebM videos. Exact declared URLs, including signatures, are preserved.
-- Genuine looping GIFs from confirmed X and Reddit MP4 animations. Animations longer than 30 seconds remain MP4; failed conversions are reported.
+- Genuine looping GIFs from confirmed X and Reddit MP4 animations. Animations longer than 30 seconds or exceeding conversion size limits remain source MP4; other conversion failures are reported.
 - Compact inline save controls on X, Reddit and RedGIFs, with bounded post batches on X and Reddit.
 - All distinct declared original media from a Pawchive feed preview, including the original cover. Selecting an individual attachment saves that attachment.
 - A Downloads subfolder, optional site/type organization, save results and copyable redacted error reports.
 - Opt-in local history: up to 50 finished saves for seven days, with statistics for that retained history.
+- Opt-in local Debug journal with filters, copy/export and clear controls: up to 2,000 events, 1 MiB and 24 hours. Full URLs, tokens, page text and local paths are excluded.
 - Supported post-link copying on X, Instagram, TikTok and YouTube Shorts, with optional preview-link hosts.
 - GitHub release checks manually or on opening Updates, at most daily. Downloaded extension code is not installed automatically.
 
@@ -34,7 +35,7 @@ Kemono, Sankaku and broader booru compatibility need further integration and liv
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.26-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.27-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -58,6 +59,8 @@ Choose **Language** at the top of the full page to switch between English and Ru
 
 To discover this preview in **Updates**, set **Update channel** to **Regular and beta releases**, or download it directly from Releases. Unpacked installations update manually.
 
+For troubleshooting, enable recording in **Debug**, reproduce the problem, then copy or export the filtered events. Recording starts when enabled; turning it off preserves the journal until it is cleared or expires. Reports stay local unless you share them.
+
 Paths are relative to the browser's Downloads directory. Arbitrary drive paths and author folders are planned. The browser owns ordinary transfers; eligible `NETWORK_FAILED` downloads get one native resume attempt.
 
 ## Limits and privacy
@@ -66,7 +69,7 @@ DRM, access bypass, arbitrary blob/MSE players and general HLS/DASH downloads ar
 
 GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output, 15 MiB encoded output and 45 seconds of processing. Buffered Pixiv images have a 50 MiB ceiling. These are limits of specific processing paths, not every direct browser download.
 
-There is no telemetry or extension backend. History is off by default; reports are copied only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
+There is no telemetry or extension backend. History and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
 
 ## Roadmap
 

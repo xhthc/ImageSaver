@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective date: 2026-10-10. Product: MediaLatch. Maintainer: [xhthc/MediaLatch](https://github.com/xhthc/MediaLatch). Questions and issues: [GitHub Issues](https://github.com/xhthc/MediaLatch/issues).
+Effective date: 2026-10-11. Product: MediaLatch. Maintainer: [xhthc/MediaLatch](https://github.com/xhthc/MediaLatch). Questions and issues: [GitHub Issues](https://github.com/xhthc/MediaLatch/issues).
 
 ## Purpose and access
 
@@ -23,6 +23,7 @@ Copy-link settings may produce links to third-party preview services. Copying su
 - **Preferences and release-check cache:** local browser extension storage, until changed or the extension's data is removed. Preferences include the optional interface language (`en` or `ru`); it is read from the browser's language setting only when no choice is saved and is never sent anywhere.
 - **Recent save feedback:** session storage, targeting 20 recent operations and a 24-hour retention window for finished operations. Active operations are retained while pending and can exceed that count. Browser session storage clears when the browser session ends.
 - **Optional history:** off by default. When enabled, retains up to 50 finished saves for seven days on this device. Records contain bounded metadata such as site/host, output type/size, timestamps, state, filename basename and a validated owning-post link where supported (currently X). This is not general browsing history.
+- **Optional Debug journal:** recording is off by default. Local extension storage retains at most 2,000 events, 1 MiB and 24 hours. Events include allowlisted action/error codes, timestamps, numerical/boolean details, hosts and validated post/media/job identifiers for correlating extension actions. Full URLs, queries, tokens, cookies, headers, raw errors/stacks, page or React data, page text, filenames, folders, local paths and clipboard contents are excluded. Turning recording off preserves the existing journal; Clear removes it. Retention is enforced when the journal is accessed or updated.
 - **Active work:** memory and session bookkeeping can hold job/download IDs and local blob handles for lifecycle recovery. Media source URLs and binary data are processed as needed for an active save; the browser's own downloads system also maintains its normal download records.
 
 History has explicit off and Clear history controls. These controls do not delete downloaded files. Removing extension storage/uninstalling removes extension-local data; browser downloads and saved files are managed separately.
@@ -32,6 +33,8 @@ History has explicit off and Clear history controls. These controls do not delet
 Bug reports are created and copied only when requested. The report builder allows bounded fields and removes addresses, paths and token-bearing data from its structured output. Diagnostic log copies redact known signed query parameters; the exact request URL is preserved for the actual transfer.
 
 Review any text you choose to paste or share. Browser/developer logs and screenshots can contain context outside the generated report. The extension does not submit the report itself.
+
+Debug events can be filtered, copied or exported only by user action. Exports contain the selected sanitized events and extension/report metadata; hosts and post/media identifiers can still reveal which media was involved. The extension does not upload these exports or send Debug events to the developer.
 
 ## Permissions
 
