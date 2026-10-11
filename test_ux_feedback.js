@@ -778,7 +778,8 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       await env.click(imageClick('nf'));
       const rec = await env.last();
       const summary = FBLib.summarize(rec);
-      const report = FBLib.buildReport(rec, { env: { version: '2.0.0' } });
+      // Timestamp digits must not be mistaken for an HTTP-status claim.
+      const report = FBLib.buildReport(rec, { env: { version: '2.0.0' }, now: Date.UTC(2026, 0, 1, 0, 0, 0, 410) });
       const toast = env.notifications.length ? `${env.notifications[0].opts.title} ${env.notifications[0].opts.message}` : '';
       return { env, rec, summary, report, toast, all: `${summary.explanation} ${summary.lines.join(' ')} ${report} ${toast}` };
     };
@@ -796,7 +797,8 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
 
     const rNone = await run({ ...base });
     assert(rNone.rec.failure.category === 'not_found' && rNone.rec.failure.status === null, '16e: NOT_FOUND without any status stays not_found with status unknown');
-    assert(!/404|410/.test(rNone.all) && rNone.summary.lines.includes('HTTP-статус: не наблюдался') && /http_status: not observed/.test(rNone.report) && rNone.summary.explanation.includes('не наблюдался'), '16f: no HTTP claim in notification, details or report; status shown as "not observed"');
+    assert(!/(?:HTTP(?:-статус)?[: ]+|http_status: )(?:404|410)\b/.test(rNone.all) && rNone.summary.lines.includes('HTTP-статус: не наблюдался') && /http_status: not observed/.test(rNone.report) && rNone.summary.explanation.includes('не наблюдался'), '16f: no HTTP claim in notification, details or report; status shown as "not observed"');
+    assert(rNone.report.includes('timestamp: 2026-01-01T00:00:00.410Z'), '16f1: a valid timestamp containing status-like digits remains in the report');
 
     const rSyn = await run({ ...base, _verificationStatus: 404, _verificationStatusObserved: false });
     assert(rSyn.rec.failure.status === null && !/HTTP 404|HTTP-статус: 404|http_status: 404/.test(rSyn.all), '16g: a pipeline-default status (marked unobserved) is not reported as an observation');
