@@ -1,5 +1,8 @@
 // content_booru.js - Lightweight DOM metadata collector for Danbooru family
 (() => {
+  // DEBUG-MENU-01: the shared journal client (lib/debug_journal.js); a no-op when it is absent. Outcomes only: never the copied link.
+  const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {} };
+  DBG.log('booru', 'init', 'info');
   const DANBOORU_SUPPORTED_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'webm', 'mp4']);
   const CONTEXT_TTL_MS = 5000;
 
@@ -101,6 +104,7 @@
       lastBooruTimestamp = Date.now();
       lastBooruTargetUrl = (target && (target.currentSrc || target.src || (target.tagName === 'A' ? target.href : '') || (target.querySelector && (target.querySelector('img, video')?.src || target.querySelector('img, video')?.currentSrc)))) || '';
       notifyMenuKind(meta, lastBooruTargetUrl, event.timeStamp);
+      if (event.type === 'contextmenu') DBG.log('booru.menu', 'detected', 'info', undefined, () => ({ host: lastBooruTargetUrl, kind: meta && meta.fileExt ? String(meta.fileExt) : undefined }));
     } else {
       lastBooruMetadata = null;
       lastBooruTimestamp = 0;

@@ -5,6 +5,9 @@
  */
 
 (function () {
+  // DEBUG-MENU-01: the shared journal client (lib/debug_journal.js); a no-op when it is absent. Outcomes only: never the copied link.
+  const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {} };
+  DBG.log('instagram', 'init', 'info');
   'use strict';
   const isI18n = globalThis.ImageSaverI18n;
   const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
@@ -220,6 +223,7 @@
   }
 
   function logRejection(reason, details = null) {
+    DBG.log('instagram.copy', 'resolve', 'refused', String(reason).toUpperCase(), null, { lvl: 'debug' });
     if (typeof console !== 'undefined' && typeof console.warn === 'function') {
       try {
         const payload = { reason, ...(details || {}) };
@@ -1103,7 +1107,7 @@
       wrap.setAttribute('data-diagnostic-share-url', shareUrl ? 'resolved' : 'null');
 
       if (!shareUrl) {
-        wrap.setAttribute('data-diagnostic-fail-branch', 'no_share_url');
+        wrap.setAttribute('data-diagnostic-fail-branch', 'no_share_url'); DBG.log('instagram.copy', 'link', 'failed', 'NO_SHARE_URL');
         wrap.setAttribute('data-diagnostic-clipboard', 'failure');
         wrap.setAttribute('data-diagnostic-method', 'none');
         wrap.classList.add('is-error');
@@ -1184,6 +1188,7 @@
       wrap.setAttribute('data-diagnostic-fail-branch', copied ? 'none' : 'clipboard_failed');
       wrap.setAttribute('data-diagnostic-clipboard', copied ? 'success' : 'failure');
       wrap.setAttribute('data-diagnostic-method', usedMethod);
+      DBG.log('instagram.copy', 'link', copied ? 'ok' : 'failed', copied ? undefined : 'CLIPBOARD_FAILED', { method: usedMethod });
       try {
         console.debug('[MediaLatch Instagram]', { hasCard: Boolean(liveCard), hasRail: Boolean(liveRail), urlResolved: true, copied, method: usedMethod });
       } catch (_) {}

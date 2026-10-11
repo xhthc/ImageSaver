@@ -8,6 +8,9 @@
   if (targetScope) {
     targetScope[GUARD_KEY] = true;
   }
+  // DEBUG-MENU-01: the shared journal client (lib/debug_journal.js); a no-op when it is absent. Never an authority, never sees a token.
+  const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {}, cid() { return ''; }, enabled() { return false; } };
+  DBG.log('redgifs', 'init', 'info', undefined, () => ({ frame: typeof window !== 'undefined' && window !== window.top ? 1 : 0 }));
 
   const isI18n = globalThis.ImageSaverI18n;
   const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
@@ -1579,23 +1582,27 @@
       if (typeof e.preventDefault === 'function') e.preventDefault();
     }
     // only a genuine mouse or keyboard activation of the control; a click the page dispatches sends nothing
-    if (!e || e.isTrusted !== true) return;
+    if (!e || e.isTrusted !== true) { DBG.log('redgifs.inline', 'click', 'refused', 'NOT_TRUSTED'); return; }
+    const cid = DBG.cid();
     const s = item.shown;
-    if (!s || !inlineHolds(s)) { inlineConceal(item); return; }
+    if (!s || !inlineHolds(s)) { DBG.log('redgifs.inline', 'click', 'refused', s ? 'OWNER_NOT_HELD' : 'NO_CONTROL', null, { cid }); inlineConceal(item); return; }
     // a repeated activation of the SAME player inside the gap is one request; another player is a request of its own
     const now = Date.now();
-    if (now - item.busyAt < INLINE.CLICK_GAP) return;
+    if (now - item.busyAt < INLINE.CLICK_GAP) { DBG.log('redgifs.inline', 'click', 'skipped', 'BUSY', null, { cid }); return; }
     const token = inlineRandom(16);
-    if (!token) return;
+    if (!token) { DBG.log('redgifs.inline', 'click', 'failed', 'NO_RANDOM', null, { cid }); return; }
+    DBG.log('redgifs.inline', 'click', 'start', undefined, null, { cid });
     item.busyAt = now;
     for (const [k, v] of inl.pending) if (now - v.at > INLINE.TOKEN_TTL) inl.pending.delete(k);
     while (inl.pending.size >= INLINE.MAX_PENDING) inl.pending.delete(inl.pending.keys().next().value);
     inl.pending.set(token, { video: s.video, owner: s.owner, evidence: s.evidence, href: s.href, at: now });
     try {
-      const sent = chrome.runtime.sendMessage({ action: 'REDGIFS_INLINE_SAVE', token, player: item.id });
-      if (sent && typeof sent.catch === 'function') sent.catch(() => {});
+      const sent = chrome.runtime.sendMessage(cid ? { action: 'REDGIFS_INLINE_SAVE', token, player: item.id, dbg: cid } : { action: 'REDGIFS_INLINE_SAVE', token, player: item.id });
+      if (sent && typeof sent.catch === 'function') sent.catch(() => { DBG.log('redgifs.inline', 'dispatch', 'failed', 'MESSAGE_FAILED', null, { cid }); });
+      DBG.log('redgifs.inline', 'dispatch', 'start', undefined, { action: 'REDGIFS_INLINE_SAVE' }, { cid });
     } catch (_) {
       inl.pending.delete(token);
+      DBG.log('redgifs.inline', 'dispatch', 'failed', 'EXTENSION_CONTEXT_GONE', null, { cid });
     }
     item.btn.setAttribute('aria-busy', 'true');
     if (item.busyTimer) clearTimeout(item.busyTimer);
@@ -1620,6 +1627,17 @@
   if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message && message.action === 'RESOLVE_FRAME_MEDIA') {
+        // the frame's answer, as the journal sees it (codes only); the answer itself is unchanged
+        const reply = sendResponse;
+        sendResponse = (res) => {
+          const diag = res && res.diagnostics ? res.diagnostics : {};
+          const reasons = Array.isArray(diag.rejectionReasons) ? diag.rejectionReasons : [];
+          DBG.log('redgifs.frame', 'resolve', res && res.success ? 'ok' : 'failed', res && res.success ? undefined : (/^[A-Z][A-Z0-9_]{1,47}$/.test(String(reasons[0] || '')) ? reasons[0] : 'UNRESOLVED'), () => ({
+            host: res && res.targetUrl, clipId: typeof diag.videoId === 'string' ? diag.videoId : undefined, source: diag.videoIdSource, n: diag.candidateCount, count: diag.validCandidateCount,
+            audio: diag.providerAudio === 'present', inline: message.inlineToken !== undefined, gesture: message.requireGesture === true
+          }));
+          return reply(res);
+        };
         const failed = (e) => sendResponse({
           success: false,
           error: 'UNRESOLVED_BLOB_MEDIA',

@@ -244,7 +244,7 @@ class MockElement {
   }
 }
 
-function createMockEnvironment() {
+function createMockEnvironment(opts = {}) {
   const docListeners = new Map();
   const winListeners = new Map();
   const sentMessages = [];
@@ -337,6 +337,17 @@ function createMockEnvironment() {
     }
   };
 
+  // DEBUG-MENU-01: the page's view of the debug preference (chrome.storage.local, live through onChanged), when a suite asks for it
+  if (opts.debug) {
+    const debugListeners = [];
+    const debugState = { enabled: opts.debug.enabled === true };
+    chrome.storage = {
+      local: { get: async (key) => ({ [key]: debugState.enabled }) },
+      onChanged: { addListener: (fn) => { debugListeners.push(fn); } }
+    };
+    chrome.setDebug = (on) => { debugState.enabled = on === true; for (const fn of debugListeners) fn({ debugEnabled: { newValue: on === true } }, 'local'); };
+  }
+
   class MockMutationObserver {
     constructor(cb) {
       this.cb = cb;
@@ -373,6 +384,8 @@ function createMockEnvironment() {
   });
 
   const contentCode = fs.readFileSync(path.join(__dirname, 'content_reddit.js'), 'utf8');
+  // the manifest loads the journal client first (DEBUG-MENU-01); the suites without debug keep the content script alone
+  if (opts.debug) vm.runInContext(fs.readFileSync(path.join(__dirname, 'lib', 'debug_journal.js'), 'utf8'), context);
   vm.runInContext(contentCode, context);
 
   return {
@@ -4440,10 +4453,33 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     }
   });
 
-  await itAsync('11.7 the frame changes after the proof: another document, another clip, or a vanished frame ends the save with a visible failure and no download', async () => {
-    // a document replaced between the frame lookup and the frame message
+  await itAsync('11.7 the frame changes after the proof: another clip or a vanished frame ends the save with a visible failure and no download; a replaced document of the same clip is found again and saves once', async () => {
+    // BUGFIX-MULTISITE-01: a document of the SAME clip replaced between the frame lookup and the frame message is looked up again within the save
+    // (one direct child, same clip) and that current document resolves it: one download of the declared source, the frame asked in the new document only
+    {
+      const w = await world();
+      vm.runInContext('REDGIFS_EMBED_RETRY_MS = 5', w.bg.sandbox);
+      const frame = redgifsFrame(CLIP_A, { frameId: 11, declares: SILENT_A });
+      const log = wireTab(w, [frame]);
+      const base = w.bg.sandbox.chrome.scripting.executeScript;
+      w.bg.sandbox.chrome.scripting.executeScript = async (o) => { const res = await base(o); if (o && o.target && o.target.allFrames) frame.documentId = 'doc-F11-new'; return res; };
+      const g = embedPost(w.env, 'rg17r', CLIP_A);
+      await enter(w.env, g.iframe);
+      // the bounded pause before the second lookup is real time: wait for it instead of event-loop ticks
+      const before = w.bg.downloads.length;
+      const known = await w.bg.known();
+      click(w.state.btn);
+      for (let i = 0; i < 100 && w.bg.downloads.length < before + 1; i++) await sleep(10);
+      await quiesce(120);
+      await w.bg.complete(before);
+      const r = { d: w.bg.downloads.slice(before), ops: await w.bg.opsSince(known) };
+      assert.strictEqual(r.d.length, 1, 'document replaced: the same clip is saved once');
+      assert.strictEqual(r.d[0].url, SILENT_A, 'document replaced: the declared source of that clip');
+      assert.deepStrictEqual(log.frameAsks.map((a) => a.options.documentId), ['doc-F11-new'], 'document replaced: only the current document is asked');
+      assert.deepStrictEqual(failedCodes(r.ops), [], 'document replaced: no failure');
+    }
+    // a frame that is gone between the frame lookup and the frame message
     for (const [label, tweak] of [
-      ['document replaced', (f) => { f.documentId = 'doc-F11-new'; }],
       ['frame gone', (f) => { f.alive = false; }]
     ]) {
       const w = await world();
@@ -4453,7 +4489,10 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       w.bg.sandbox.chrome.scripting.executeScript = async (o) => { const res = await base(o); if (o && o.target && o.target.allFrames) tweak(frame); return res; };
       const g = embedPost(w.env, 'rg17', CLIP_A);
       await enter(w.env, g.iframe);
+      const known = await w.bg.known();
       const r = await saveThis(w, 0);
+      // the frame is looked up again after a bounded real-time pause (no current document of the clip): wait for the visible failure
+      for (let i = 0; i < 150 && failedCodes(r.ops).length === 0; i++) { await sleep(10); r.ops = await w.bg.opsSince(known); }
       assert.strictEqual(r.d.length, 0, label + ': no download');
       assert(failedCodes(r.ops).length === 1, label + ': a visible failure ' + JSON.stringify(failedCodes(r.ops)));
       assert.strictEqual(w.bg.fetched.length, 0, label + ': no request');
@@ -4836,6 +4875,224 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert.strictEqual(log.injections.length, 0);
     assert.strictEqual(w.state.rearmTimer, null, 'no re-arm timer is left running');
     assert(w.state.rearmN <= 12, 'bounded: ' + w.state.rearmN);
+  });
+
+
+  await itAsync('11.32 scroll/wheel/resize restore a fresh owned RedGIFs control without another pointer event or blank-page click; repeated motion gets a fresh bounded wait', async () => {
+    const w = await world();
+    const frame = redgifsFrame(CLIP_A, { frameId: 11, declares: SILENT_A });
+    const log = wireTab(w, [frame]);
+    const g = embedPost(w.env, 'rg32', CLIP_A);
+    await enter(w.env, g.iframe);
+    for (const type of ['scroll', 'wheel', 'resize']) {
+      assert(w.state.snap !== null);
+      for (let i = 0; i < 16; i++) w.env.fireWin(type);
+      assert.strictEqual(w.state.snap, null, 'motion hides immediately');
+      await sleep(250);
+      assert(w.state.snap !== null && w.state.snap.elRef.deref() === g.embed, type + ': fresh control returns from the saved pointer point');
+      assert.strictEqual(w.state.rearmTimer, null);
+      assert.strictEqual(w.state.rearmN, 0);
+    }
+    assert.strictEqual(inlineSends(w).length, 0, 'hover/recovery sent no save');
+    assert.strictEqual(w.bg.fetched.length, 0);
+    assert.strictEqual(log.injections.length, 0);
+    const saved = await saveThis(w);
+    assert.strictEqual(saved.d.length, 1);
+    assert.strictEqual(saved.d[0].url, SILENT_A, 'first trusted click saves only the owned clip');
+    w.env.context.__riTeardown();
+  });
+
+  await itAsync('11.33 viewport recovery selects only the fresh candidate under the pointer, refuses a foreign replacement and never reuses the old snapshot', async () => {
+    const w = await world();
+    const g = embedPost(w.env, 'rg33', CLIP_A);
+    await enter(w.env, g.iframe);
+    const old = w.state.snap.elRef.deref();
+    const replacement = reEmbed(w, g);
+    w.env.fireWin('scroll');
+    await sleep(250);
+    assert(w.state.snap !== null && w.state.snap.elRef.deref() === replacement.embed && w.state.snap.elRef.deref() !== old);
+    g.post.setAttribute('content-href', WATCH(CLIP_B));
+    w.env.fireWin('wheel');
+    await sleep(250);
+    assert.strictEqual(w.state.snap, null, 'another clip declaration cannot borrow this iframe');
+    assert.strictEqual(w.state.rearmTimer, null);
+    assert.strictEqual(inlineSends(w).length, 0);
+    assert.strictEqual(w.bg.fetched.length, 0);
+    w.env.context.__riTeardown();
+  });
+
+  await itAsync('11.34 page blur/navigation/hidden/teardown stop viewport recovery and a clipped embed is never offered', async () => {
+    const w = await world();
+    const g = embedPost(w.env, 'rg34', CLIP_A);
+    for (const stop of ['blur', 'popstate', 'hidden', 'pagehide']) {
+      w.env.document.hidden = false;
+      await enter(w.env, g.iframe);
+      assert(w.state.snap !== null);
+      w.env.fireWin('scroll');
+      if (stop === 'hidden') { w.env.document.hidden = true; w.env.fireDoc('visibilitychange'); }
+      else w.env.fireWin(stop, stop === 'blur' ? { target: w.env.window } : {});
+      await sleep(250);
+      assert.strictEqual(w.state.snap, null, stop + ': control stays hidden');
+      assert.strictEqual(w.state.rearmTimer, null, stop + ': bounded wait is cancelled');
+    }
+    w.env.document.hidden = false;
+    await enter(w.env, g.iframe);
+    g.post.setRect({ left: 100, top: 100, width: 250, height: 400 });
+    w.env.fireWin('scroll');
+    await sleep(250);
+    assert.strictEqual(w.state.snap, null, 'clipped media stays refused');
+    assert.strictEqual(inlineSends(w).length, 0);
+    assert.strictEqual(w.bg.fetched.length, 0);
+    w.env.context.__riTeardown();
+  });
+
+
+  await itAsync('11.35 failed layout recovery stops after twelve checks and a later viewport event starts a fresh bounded recovery', async () => {
+    const w = await world();
+    const g = embedPost(w.env, 'rg35', CLIP_A);
+    await enter(w.env, g.iframe);
+    g.post.setRect({ left: 100, top: 100, width: 250, height: 400 });
+    w.env.fireWin('scroll');
+    await sleep(1450);
+    assert.strictEqual(w.state.snap, null);
+    assert.strictEqual(w.state.rearmTimer, null, 'no perpetual poll');
+    assert.strictEqual(w.state.rearmN, 12, 'twelve failed fresh layout checks exhaust this recovery');
+    g.post.setRect({ left: 100, top: 100, width: 600, height: 400 });
+    w.env.fireWin('scroll');
+    await sleep(250);
+    assert(w.state.snap !== null, 'fresh viewport input can recover after the previous budget was exhausted');
+    assert.strictEqual(inlineSends(w).length, 0);
+    assert.strictEqual(w.bg.fetched.length, 0);
+    w.env.context.__riTeardown();
+  });
+
+  await itAsync('11.36 an unrelated loading feed iframe never delays finding the selected RedGIFs frame or makes the first save silently busy', async () => {
+    const w = await world();
+    const frame = redgifsFrame(CLIP_A, { frameId: 11, declares: SILENT_A });
+    const log = wireTab(w, [frame]);
+    const g = embedPost(w.env, 'rg36', CLIP_A);
+    const base = w.bg.sandbox.chrome.scripting.executeScript;
+    let release;
+    const unrelatedLoad = new Promise(resolve => { release = resolve; });
+    w.bg.sandbox.chrome.scripting.executeScript = async opts => {
+      if (opts.target?.allFrames && opts.injectImmediately !== true) await unrelatedLoad;
+      return base(opts);
+    };
+    await enter(w.env, g.iframe);
+    const saving = saveThis(w);
+    await sleep(250);
+    const savedBeforeUnrelatedLoad = w.bg.downloads.length === 1;
+    release();
+    const r = await saving;
+    assert(savedBeforeUnrelatedLoad, 'the unrelated frame must not hold the selected clip save');
+    assert.strictEqual(r.d.length, 1);
+    assert.strictEqual(r.d[0].url, SILENT_A);
+    assert.strictEqual(log.injections.filter(o => o.target?.allFrames).length, 1);
+    assert.strictEqual(log.injections.find(o => o.target?.allFrames).injectImmediately, true);
+    assert.strictEqual(log.frameAsks[0].options.documentId, frame.documentId);
+    w.env.context.__riTeardown();
+  });
+
+  // ===== D: the debug journal (DEBUG-MENU-01) on the production path: real content_reddit.js + lib/debug_journal.js + background.js =====
+  console.log('\n--- Suite D: debug journal of an inline Reddit click ---');
+  async function debugWorld(enabled = true) {
+    const env = createMockEnvironment({ debug: { enabled } });
+    const bg = createBackground(env, { subfolder: 'SavedImages', folderOrganizationMode: 'single', askEveryTime: false, debugEnabled: enabled });
+    bg.resetNet();
+    await quiesce(20); // both sides read the preference
+    return { env, bg, state: env.context.__riState };
+  }
+  const journal = async (w) => { await w.bg.sandbox.debugJournal.flush(); return (await w.bg.sandbox.debugJournal.list()).events; };
+  const debugSends = (w) => w.env.sentMessages.filter((m) => m && m.action === 'DEBUG_EVENT');
+
+  await itAsync('D.1 a click refused before any worker operation (the image changed after the control was shown) is recorded with its exact gate; nothing is sent, requested or saved', async () => {
+    const w = await debugWorld(true);
+    const g = imgPost(w.env, 'dbg1', 'https://i.redd.it/dbg_before.jpg');
+    await hover(w.env);
+    assert(w.state.btn !== null);
+    const known = await w.bg.known();
+    g.img.src = 'https://i.redd.it/dbg_after.jpg';
+    click(w.state.btn);
+    await quiesce(40);
+    assert.strictEqual(w.env.sentMessages.filter((m) => m && /^REDDIT_INLINE_SAVE/.test(m.action)).length, 0, 'no save message');
+    assert.strictEqual(w.bg.downloads.length, 0);
+    assert.strictEqual(w.bg.fetched.length, 0);
+    assert.strictEqual((await w.bg.opsSince(known)).length, 0, 'no feedback record exists for this click');
+    const ev = (await journal(w)).find((e) => e.comp === 'reddit.inline' && e.act === 'click' && e.out === 'refused');
+    assert(ev && ev.why === 'TARGET_CHANGED' && ev.src === 'content' && ev.tab === TAB && ev.frame === 0 && ev.page === 'www.reddit.com' && ev.d.which === 'this' && ev.d.ownerId === 't3_dbg1', JSON.stringify(ev));
+    assert(!JSON.stringify(await journal(w)).includes('dbg_before') && !JSON.stringify(await journal(w)).includes('dbg_after'), 'no media address in the journal');
+  });
+
+  await itAsync('D.2 an untrusted click (the page dispatched it) is recorded as NOT_TRUSTED and sends nothing', async () => {
+    const w = await debugWorld(true);
+    imgPost(w.env, 'dbg2', 'https://i.redd.it/dbg_two.jpg');
+    await hover(w.env);
+    w.state.btn.dispatchEvent({ type: 'click', isTrusted: false });
+    await quiesce(40);
+    assert.strictEqual(w.env.sentMessages.filter((m) => m && /^REDDIT_INLINE_SAVE/.test(m.action)).length, 0);
+    assert((await journal(w)).some((e) => e.comp === 'reddit.inline' && e.act === 'click' && e.why === 'NOT_TRUSTED'));
+  });
+
+  await itAsync('D.3 a saved click is one correlated story: content click -> worker save/owner -> operation -> download start and completion', async () => {
+    const w = await debugWorld(true);
+    imgPost(w.env, 'dbg3', 'https://i.redd.it/dbg_three.jpg');
+    await hover(w.env);
+    const r = await saveThis(w);
+    assert.strictEqual(r.d.length, 1, 'the save itself is unchanged');
+    const evs = await journal(w);
+    const click1 = evs.find((e) => e.comp === 'reddit.inline' && e.act === 'click' && e.out === 'start');
+    assert(click1 && /^[a-f0-9]{8}$/.test(click1.cid), 'the click has an attempt id');
+    const cid = click1.cid;
+    const chain = evs.filter((e) => e.cid === cid).map((e) => `${e.src}:${e.comp}.${e.act}:${e.out}`);
+    for (const step of ['content:reddit.inline.dispatch:start', 'worker:reddit.inline.save:start', 'content:reddit.inline.proof:ok', 'worker:reddit.inline.owner:ok', 'worker:reddit.inline.run:start', 'worker:menu.click:start', 'worker:op.begin:start']) {
+      assert(chain.includes(step), step + ' in ' + JSON.stringify(chain));
+    }
+    const op = evs.find((e) => e.cid === cid && e.comp === 'op' && e.act === 'begin').op;
+    assert(evs.some((e) => e.op === op && e.comp === 'download' && e.act === 'start') && evs.some((e) => e.comp === 'download' && e.act === 'complete' && e.out === 'ok'), 'download start (same operation) and completion are recorded');
+    const text = JSON.stringify(evs);
+    assert(!/dbg_three|SavedImages|[a-f0-9]{32}/.test(text), 'no address, folder, filename or one-shot token in the journal');
+  });
+
+  await itAsync('D.4 recording off: an open document sends no debug transport and the journal stays empty; turning it on later records the next click live', async () => {
+    const w = await debugWorld(false);
+    imgPost(w.env, 'dbg4', 'https://i.redd.it/dbg_four.jpg');
+    await hover(w.env);
+    w.state.btn.dispatchEvent({ type: 'click', isTrusted: false });
+    await quiesce(20);
+    assert.strictEqual(debugSends(w).length, 0, 'no DEBUG_EVENT while off');
+    assert.strictEqual(w.bg.sandbox.debugState, 'off');
+    w.env.chrome.setDebug(true);
+    w.state.btn.dispatchEvent({ type: 'click', isTrusted: false });
+    await quiesce(20);
+    assert(debugSends(w).length >= 1, 'the open document records again as soon as recording is turned on');
+    w.env.chrome.setDebug(false);
+    const n = debugSends(w).length;
+    w.state.btn.dispatchEvent({ type: 'click', isTrusted: false });
+    await quiesce(20);
+    assert.strictEqual(debugSends(w).length, n, 'turning it off stops the open document at once');
+  });
+
+  await itAsync('D.5 cancelled viewport timers never flood the journal; one settled recovery and the next refused click remain recorded', async () => {
+    const w = await debugWorld(true);
+    imgPost(w.env, 'dbg5', 'https://i.redd.it/dbg_five.jpg');
+    await hover(w.env);
+    const rearms = () => debugSends(w).filter(m => m.ev.comp === 'reddit.inline' && m.ev.act === 'rearm');
+    for (let i = 0; i < 250; i++) w.env.fireWin('scroll');
+    assert.strictEqual(rearms().length, 0, 'cancelled timers are not actual recovery attempts');
+    await sleep(250);
+    assert(w.state.snap !== null);
+    assert.strictEqual(rearms().length, 1);
+    assert.strictEqual(rearms()[0].ev.d.attempt, 1);
+    w.state.btn.dispatchEvent({ type: 'click', isTrusted: false });
+    await quiesce(30);
+    assert((await journal(w)).some(e => e.comp === 'reddit.inline' && e.act === 'click' && e.why === 'NOT_TRUSTED'));
+    w.env.fireWin('wheel');
+    w.env.fireWin('popstate');
+    await sleep(150);
+    assert.strictEqual(rearms().length, 1, 'cancelled recovery stays silent');
+    assert.strictEqual(w.env.sentMessages.filter(m => /^REDDIT_INLINE_SAVE/.test(m.action)).length, 0);
+    assert.strictEqual(w.bg.fetched.length, 0);
+    w.env.context.__riTeardown();
   });
 
 }

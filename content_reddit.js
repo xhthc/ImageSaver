@@ -1,5 +1,8 @@
 // content_reddit.js - Reddit DOM detection and post metadata extraction for MediaLatch
 (() => {
+  // DEBUG-MENU-01: the shared journal client (lib/debug_journal.js); a no-op when it is absent. Never an authority, never sees a token.
+  const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {}, cid() { return ''; }, enabled() { return false; } };
+  DBG.log('reddit', 'init', 'info', undefined, () => ({ frame: window !== window.top ? 1 : 0 }));
   const isI18n = globalThis.ImageSaverI18n;
   const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
   const isLabel = (element, field, key, fallback, vars) => {
@@ -1053,10 +1056,17 @@
       }
       if (message?.action === 'REDDIT_INLINE_OWNER' || message?.action === 'REDDIT_INLINE_BATCH' || message?.action === 'REDDIT_INLINE_OWNER_ITEM') {
         const action = message.action;
-        if (sender && (sender.tab || (chrome.runtime?.id && sender.id !== chrome.runtime.id))) return;
-        sendResponse(action === 'REDDIT_INLINE_OWNER' ? riAnswerOwner(message.token)
+        if (sender && (sender.tab || (chrome.runtime?.id && sender.id !== chrome.runtime.id))) { DBG.log('reddit.inline', 'proof', 'refused', 'FOREIGN_ASKER'); return; }
+        const cid = riCidOf(message.token);
+        const answer = action === 'REDDIT_INLINE_OWNER' ? riAnswerOwner(message.token)
           : action === 'REDDIT_INLINE_BATCH' ? riBatchOpen(message.token)
-            : riBatchItem(message.token, message.index));
+            : riBatchItem(message.token, message.index);
+        DBG.log('reddit.inline', action === 'REDDIT_INLINE_OWNER' ? 'proof' : (action === 'REDDIT_INLINE_BATCH' ? 'batch.proof' : 'item.proof'), answer && answer.ok ? 'ok' : 'refused',
+          answer && answer.ok ? undefined : (answer && answer.reason) || 'NO_ANSWER', () => ({
+            index: Number.isInteger(message.index) ? message.index : undefined, count: answer && answer.count, kind: answer && answer.media && answer.media.kind,
+            host: answer && answer.media && answer.media.url, hls: Boolean(answer && answer.media && answer.media.redditHls), ownerId: answer && (answer.ownerId || (answer.media && answer.media.ownerId))
+          }), { cid });
+        sendResponse(answer);
         return true;
       }
     });
@@ -1837,6 +1847,7 @@
   }
 
   function riHide() {
+    if (riState.snap) DBG.log('reddit.inline', 'hide', 'info', undefined, null, { lvl: 'debug' });
     if (riState.timer) { clearTimeout(riState.timer); riState.timer = null; }
     if (riState.settleTimer) { clearTimeout(riState.settleTimer); riState.settleTimer = null; }
     if (riState.rearmTimer) { clearTimeout(riState.rearmTimer); riState.rearmTimer = null; }
@@ -1854,9 +1865,13 @@
     const n = riState.rearmN;
     riHide();
     riState.rearmN = n;
-    if (n >= RI.SETTLE_MAX || riState.rearmTimer) return;
+    if (n >= RI.SETTLE_MAX || riState.rearmTimer) { if (n >= RI.SETTLE_MAX) DBG.log('reddit.inline', 'rearm', 'skipped', 'REARM_EXHAUSTED', { attempt: n }, { lvl: 'debug' }); return; }
     riState.rearmN = n + 1;
-    riState.rearmTimer = setTimeout(() => { riState.rearmTimer = null; riEvaluate(); }, RI.SETTLE_MS);
+    riState.rearmTimer = setTimeout(() => {
+      riState.rearmTimer = null;
+      DBG.log('reddit.inline', 'rearm', 'info', undefined, { attempt: n + 1 }, { lvl: 'debug' });
+      riEvaluate();
+    }, RI.SETTLE_MS);
   }
 
   function riRecheck() {
@@ -1879,6 +1894,7 @@
   }
 
   function riShow(el, snap, plan) {
+    DBG.log('reddit.inline', 'show', 'info', undefined, () => ({ kind: snap.kind, count: plan.n, compact: Boolean(plan.compact), ownerId: snap.ownerId, layout: riEmbedHost(el) ? 'embed' : String(el.tagName || '').toLowerCase() }), { lvl: 'debug' });
     riEnsureHost();
     riState.snap = snap;
     riState.el = el;
@@ -1931,6 +1947,12 @@
     } catch (_) {
       riHide();
     }
+  }
+
+  function riOnViewportMove() {
+    // The iframe may keep the pointer after scrolling, so restart the bounded visibility check after motion settles.
+    riState.rearmN = 0;
+    riHideUntilVisible();
   }
 
   function riOnMove(e) {
@@ -2019,12 +2041,22 @@
     return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   };
 
+  // the journal's attempt id of a pending token (the token itself is never logged)
+  function riCidOf(token) {
+    const entry = typeof token === 'string' ? (riPending.get(token) || riBatches.get(token)) : null;
+    return entry && entry.cid ? entry.cid : undefined;
+  }
+
   function riSend(message, token, pending) {
+    const cid = pending && pending.get(token) ? pending.get(token).cid : undefined;
+    if (cid) message.dbg = cid;
     try {
       const sent = chrome.runtime.sendMessage(message);
-      if (sent && typeof sent.catch === 'function') sent.catch(() => {});
+      if (sent && typeof sent.catch === 'function') sent.catch(() => { DBG.log('reddit.inline', 'dispatch', 'failed', 'MESSAGE_FAILED', { action: message.action }, { cid }); });
+      DBG.log('reddit.inline', 'dispatch', 'start', undefined, { action: message.action }, { cid });
     } catch (_) {
       if (pending) pending.delete(token);
+      DBG.log('reddit.inline', 'dispatch', 'failed', 'EXTENSION_CONTEXT_GONE', { action: message.action }, { cid });
     }
     if (riState.btn) {
       riState.btn.setAttribute('aria-busy', 'true');
@@ -2043,23 +2075,32 @@
       if (typeof e.stopPropagation === 'function') e.stopPropagation();
       if (typeof e.preventDefault === 'function') e.preventDefault();
     }
-    if (!e || e.isTrusted !== true) return;
+    if (!e || e.isTrusted !== true) { DBG.log('reddit.inline', 'click', 'refused', 'NOT_TRUSTED', { which: 'this' }); return; }
+    const cid = DBG.cid();
     const shown = riState.snap;
     const el = shown && shown.elRef.deref();
     const s = riSize();
     const fresh = el ? riSnapshot(el, shown.kind) : null;
     // A stale control is refused: nothing is sent. A cross-origin iframe (a RedGIFs embed) gives this document no pointer event to show a control
     // again, so the refusal re-evaluates from the last pointer place with the existing bounded re-arm; only a freshly proven candidate shows one.
-    if (!fresh || !riSame(fresh, shown) || !riHolds(shown) || !riLayout(el, fresh.ownerRef.deref(), s.w, s.h)) { riHideUntilVisible(); return; }
+    // (The journal names the first gate that refused, in the same order and with the same short-circuit as the guard.)
+    const gate = !shown ? 'NO_CONTROL' : !el ? 'TARGET_GONE' : !fresh ? 'NO_SNAPSHOT' : !riSame(fresh, shown) ? 'TARGET_CHANGED' : !riHolds(shown) ? 'OWNER_NOT_HELD'
+      : !riLayout(el, fresh.ownerRef.deref(), s.w, s.h) ? 'LAYOUT_LOST' : '';
+    if (gate) {
+      DBG.log('reddit.inline', 'click', 'refused', gate, () => ({ which: 'this', kind: shown && shown.kind, ownerId: shown && shown.ownerId, layout: el && riEmbedHost(el) ? 'embed' : (el ? String(el.tagName || '').toLowerCase() : undefined) }), { cid });
+      riHideUntilVisible();
+      return;
+    }
     const key = `${fresh.ownerId}|${fresh.src}`;
     const now = Date.now();
-    if (riState.busyKey === key && now - riState.busyAt < RI.CLICK_GAP) return;
+    if (riState.busyKey === key && now - riState.busyAt < RI.CLICK_GAP) { DBG.log('reddit.inline', 'click', 'skipped', 'BUSY', { which: 'this' }, { cid }); return; }
+    DBG.log('reddit.inline', 'click', 'start', undefined, () => ({ which: 'this', kind: fresh.kind, ownerId: fresh.ownerId, layout: riEmbedHost(el) ? 'embed' : String(el.tagName || '').toLowerCase() }), { cid });
     riState.busyKey = key;
     riState.busyAt = now;
     for (const [t, v] of riPending) if (now - v.at > RI.TOKEN_TTL) riPending.delete(t);
     while (riPending.size >= 8) riPending.delete(riPending.keys().next().value);
     const token = riToken();
-    riPending.set(token, { snap: fresh, at: now, href: (typeof location !== 'undefined' && location.href) || '' });
+    riPending.set(token, { snap: fresh, at: now, href: (typeof location !== 'undefined' && location.href) || '', cid });
     riSend({ action: 'REDDIT_INLINE_SAVE', token }, token, riPending);
   }
 
@@ -2068,25 +2109,33 @@
       if (typeof e.stopPropagation === 'function') e.stopPropagation();
       if (typeof e.preventDefault === 'function') e.preventDefault();
     }
-    if (!e || e.isTrusted !== true) return;
+    if (!e || e.isTrusted !== true) { DBG.log('reddit.inline', 'click', 'refused', 'NOT_TRUSTED', { which: 'all' }); return; }
+    const cid = DBG.cid();
     const shown = riState.snap;
     const el = shown && shown.elRef.deref();
     const owner = shown && shown.ownerRef.deref();
     const s = riSize();
     const fresh = el ? riSnapshot(el, shown.kind) : null;
-    if (!fresh || !owner || riState.count < RI.BATCH_MIN || !riSame(fresh, shown) || !riHolds(shown) || !riLayout(el, owner, s.w, s.h)) { riHide(); return; }
+    const gate = !fresh ? (!shown ? 'NO_CONTROL' : (!el ? 'TARGET_GONE' : 'NO_SNAPSHOT')) : !owner ? 'OWNER_GONE' : riState.count < RI.BATCH_MIN ? 'NOT_A_BATCH'
+      : !riSame(fresh, shown) ? 'TARGET_CHANGED' : !riHolds(shown) ? 'OWNER_NOT_HELD' : !riLayout(el, owner, s.w, s.h) ? 'LAYOUT_LOST' : '';
+    if (gate) { DBG.log('reddit.inline', 'click', 'refused', gate, { which: 'all', count: riState.count }, { cid }); riHide(); return; }
     const items = riEnumerate(owner);
-    if (!items.isComplete || items.length !== riState.count || items.length > RI.BATCH_MAX || !riHas(items, el)) { riHide(); return; }
+    if (!items.isComplete || items.length !== riState.count || items.length > RI.BATCH_MAX || !riHas(items, el)) {
+      DBG.log('reddit.inline', 'click', 'refused', 'LIST_CHANGED', { which: 'all', count: items.length, n: riState.count, partial: !items.isComplete }, { cid });
+      riHide();
+      return;
+    }
     const snaps = [];
     for (const it of items) {
       const snap = riSnapshot(it.el, it.kind);
-      if (!snap || snap.ownerRef.deref() !== owner) { riHide(); return; }
+      if (!snap || snap.ownerRef.deref() !== owner) { DBG.log('reddit.inline', 'click', 'refused', 'ITEM_NOT_OWNED', { which: 'all', index: snaps.length }, { cid }); riHide(); return; }
       snaps.push(snap);
     }
     const sig = items.sig;
     const key = `all|${fresh.ownerId}|${sig}`;
     const now = Date.now();
-    if (riState.busyKey === key && now - riState.busyAt < RI.CLICK_GAP) return;
+    if (riState.busyKey === key && now - riState.busyAt < RI.CLICK_GAP) { DBG.log('reddit.inline', 'click', 'skipped', 'BUSY', { which: 'all' }, { cid }); return; }
+    DBG.log('reddit.inline', 'click', 'start', undefined, () => ({ which: 'all', count: snaps.length, ownerId: fresh.ownerId }), { cid });
     riState.busyKey = key;
     riState.busyAt = now;
     for (const [t, v] of riBatches) if (now - v.at > RI.BATCH_TTL) riBatches.delete(t);
@@ -2100,7 +2149,8 @@
       sig,
       keys: items.keys.slice(),
       ownerId: fresh.ownerId,
-      count: snaps.length
+      count: snaps.length,
+      cid
     });
     riSend({ action: 'REDDIT_INLINE_SAVE_ALL', token }, token, riBatches);
   }
@@ -2280,6 +2330,7 @@
   }
 
   function riTeardown() {
+    DBG.log('reddit', 'teardown', 'info');
     riHide();
     riPending.clear();
     riBatches.clear();
@@ -2299,7 +2350,8 @@
     document.addEventListener('focusout', riOnFocusOut, true);
     document.addEventListener('keydown', riOnDocKey, true);
     document.addEventListener('visibilitychange', riHide, true);
-    for (const type of ['scroll', 'wheel', 'resize', 'popstate']) window.addEventListener(type, riHide, { capture: true, passive: true });
+    for (const type of ['scroll', 'wheel', 'resize']) window.addEventListener(type, riOnViewportMove, { capture: true, passive: true });
+    window.addEventListener('popstate', riHide, { capture: true, passive: true });
     window.addEventListener('blur', (e) => { if (e.target === window) riHide(); }, true);
     window.addEventListener('pagehide', riTeardown, true);
   }

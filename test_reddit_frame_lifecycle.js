@@ -412,7 +412,9 @@ console.log('=== Running Reddit Frame & Pinned-Document Lifecycle Suite ===\n');
   });
 
   // Test 3: Document replaced by a new document during lookup (Navigation/reload race)
-  await test('3. Navigation race: documentId changed in frame 393 before injection -> refused with ERR, zero fetches and zero downloads', async () => {
+  // BUGFIX-MULTISITE-01: the replaced document of the SAME proven clip is found again within the same save (exactly one direct child, same clip) and
+  // that current document answers: the first trusted click saves once, pinned to the new document. The stale document itself is never used.
+  await test('3. Navigation race: documentId changed in frame 393 before injection -> the current document of the same clip is found again and saves once (pinned)', async () => {
     const h = createHarness({
       frames: [
         {
@@ -449,10 +451,12 @@ console.log('=== Running Reddit Frame & Pinned-Document Lifecycle Suite ===\n');
 
     await h.triggerInlineSave();
 
-    assert.strictEqual(h.downloads.length, 0, 'Must not download to old or replaced document');
-    assert.strictEqual(h.fetches.length, 0, 'Zero network fetches on document replacement race');
+    assert.strictEqual(h.downloads.length, 1, 'Exactly one download, from the current document of the same clip');
+    assert.strictEqual(h.downloads[0].url, 'https://media.redgifs.com/EvilUnequaledBufflehead.mp4');
+    assert.strictEqual(h.fetches.length, 1, 'One verification fetch of that clip');
     assert(h.warns.some((w) => /No document with id doc-old-initial/.test(w)), 'Expected injection refusal for stale documentId');
-    assert(h.badges.some((b) => b.text === 'ERR'), 'Expected ERR badge');
+    assert(h.injections.some((inj) => inj.target?.documentIds?.includes('doc-new-reloaded')), 'The retry is pinned to the replaced document');
+    assert.strictEqual(h.injections.filter((inj) => inj.target && inj.target.allFrames).length, 2, 'The frame is looked up once more, not more');
     assert(!h.injections.some((inj) => inj.target && Array.isArray(inj.target.frameIds)),
       'Must never fall back to unpinned frameIds');
   });
@@ -589,7 +593,7 @@ console.log('=== Running Reddit Frame & Pinned-Document Lifecycle Suite ===\n');
   });
 
   // Test 8: User-initiated positive recovery after refused attempt
-  await test('8. User-initiated recovery: fresh trusted save after refusal succeeds with new document ID without automatic retry', async () => {
+  await test('8. User-initiated recovery: a frame that vanished (no current document of the clip) is refused; a fresh trusted save later succeeds with the new document ID', async () => {
     // Phase 1: Attempt 1 with stale vanishing document
     const h = createHarness({
       frames: [
@@ -647,6 +651,86 @@ console.log('=== Running Reddit Frame & Pinned-Document Lifecycle Suite ===\n');
     assert(h.injections.some((inj) => inj.target?.documentIds?.includes('doc-393-fresh')),
       'Attempt 2 must be pinned strictly to fresh documentId doc-393-fresh');
     assert(h.badges.some((b) => b.text === 'OK'), 'Attempt 2 must flash OK badge on completion');
+  });
+
+  // ---- BUGFIX-MULTISITE-01: the first inline click on a lazily (re)loaded embed (r/rule34/s/PJkWkA6Phd, serviceworker-02.md lines 1460-1483) ----
+  // Native log: discovery pinned frame 97 to document DF78584CCCC27DBADDEB7A4DDE5EC7CF, injection failed with "No document with id", the save ended as
+  // UNRESOLVED_BLOB_MEDIA, and the next click on the same clip resolved its MP4 with provider audio. The frame's document was replaced between discovery and
+  // injection. These cases drive the production worker; a bounded retry pause is shortened so the suite stays fast.
+  const CLIP_PV = 'palevioletredfinishedwhippoorwill';
+  const frameOf = (documentId, over = {}) => ({ frameId: 97, documentId, href: `https://www.redgifs.com/ifr/${CLIP_EVIL}`, clipKey: CLIP_EVIL, child: true, alive: true, hasScript: false, ...over });
+  // the discovery answers the first document; the first lookup is followed by the replacement `next(n)` (n = lookups so far)
+  const replaceAfterLookup = (h, next) => {
+    let lookups = 0;
+    const orig = h.sandbox.chrome.scripting.executeScript;
+    h.sandbox.chrome.scripting.executeScript = async (opts) => {
+      const res = await orig(opts);
+      if (opts && opts.target && opts.target.allFrames) { lookups++; const f = next(lookups); if (f) h.setFrames(f); }
+      return res;
+    };
+    return () => lookups;
+  };
+  const fast = (h) => vm.runInContext('REDGIFS_EMBED_RETRY_MS = 5', h.sandbox);
+
+  await test('9. Observed first click (frame 97, DF78...): the replaced document of the same clip answers within the same save; one download, pinned, no guess', async () => {
+    const h = createHarness({ frames: [frameOf('DF78584CCCC27DBADDEB7A4DDE5EC7CF')] });
+    fast(h);
+    const lookups = replaceAfterLookup(h, (n) => (n === 1 ? [frameOf('doc-97-current')] : null));
+    await h.triggerInlineSave({ timeoutMs: 2000 });
+    assert.strictEqual(h.downloads.length, 1, 'The first trusted click saves the clip');
+    assert.strictEqual(h.downloads[0].url, 'https://media.redgifs.com/EvilUnequaledBufflehead.mp4');
+    assert(h.warns.some((w) => /No document with id DF78584CCCC27DBADDEB7A4DDE5EC7CF/.test(w)), 'The observed stale-document failure happens first');
+    assert(h.injections.some((inj) => inj.target?.documentIds?.includes('doc-97-current')), 'The retry is pinned to the current document');
+    assert.strictEqual(lookups(), 2, 'Exactly one more frame lookup');
+    assert.strictEqual(h.fetches.length, 1, 'One verification fetch, of the resolved clip only');
+    assert(!h.injections.some((inj) => inj.target && Array.isArray(inj.target.frameIds)), 'Never an unpinned injection');
+    assert(h.logs.some((l) => /did not answer; asking the current document of the same clip again/.test(l)), 'The retry is logged');
+  });
+
+  await test('10. The frame now shows another clip: the lookup finds no frame of the proven clip; refused, nothing fetched', async () => {
+    const h = createHarness({ frames: [frameOf('doc-a')] });
+    fast(h);
+    replaceAfterLookup(h, (n) => (n === 1 ? [frameOf('doc-b', { href: `https://www.redgifs.com/ifr/${CLIP_PV}`, clipKey: CLIP_PV })] : null));
+    await h.triggerInlineSave({ timeoutMs: 2000 });
+    assert.strictEqual(h.downloads.length, 0, 'A changed source is never saved');
+    assert.strictEqual(h.fetches.length, 0, 'Nothing fetched');
+    assert(!h.injections.some((inj) => inj.target?.documentIds?.includes('doc-b')), 'The other clip\'s document is never asked');
+    assert(h.badges.some((b) => b.text === 'ERR'));
+  });
+
+  await test('11. The replacement is ambiguous (two direct children show the clip): refused, nothing fetched', async () => {
+    const h = createHarness({ frames: [frameOf('doc-a')] });
+    fast(h);
+    replaceAfterLookup(h, (n) => (n === 1 ? [frameOf('doc-b'), frameOf('doc-c', { frameId: 98 })] : null));
+    await h.triggerInlineSave({ timeoutMs: 2000 });
+    assert.strictEqual(h.downloads.length, 0);
+    assert.strictEqual(h.fetches.length, 0);
+    assert(!h.injections.some((inj) => inj.target?.documentIds && !inj.target.documentIds.includes('doc-a')), 'Neither candidate document is asked');
+  });
+
+  await test('12. A frame that answers with a refusal is not asked again (only a lost document is retried)', async () => {
+    const h = createHarness({ frames: [frameOf('doc-a', { hasScript: true })] });
+    fast(h);
+    const orig = h.sandbox.chrome.tabs.sendMessage;
+    h.sandbox.chrome.tabs.sendMessage = async (tabId, msg, options) => {
+      if (msg && msg.action === 'RESOLVE_FRAME_MEDIA') return { success: false, error: 'UNRESOLVED_BLOB_MEDIA', diagnostics: {} };
+      return orig(tabId, msg, options);
+    };
+    await h.triggerInlineSave({ timeoutMs: 2000 });
+    assert.strictEqual(h.downloads.length, 0);
+    assert.strictEqual(h.fetches.length, 0);
+    assert.strictEqual(h.injections.filter((inj) => inj.target && inj.target.allFrames).length, 1, 'No second lookup after the frame\'s own refusal');
+  });
+
+  await test('13. A document that keeps being replaced: bounded (at most two more lookups), then refused; nothing fetched', async () => {
+    const h = createHarness({ frames: [frameOf('doc-0')] });
+    fast(h);
+    const lookups = replaceAfterLookup(h, (n) => [frameOf('doc-' + n)]);
+    await h.triggerInlineSave({ timeoutMs: 2000 });
+    assert.strictEqual(h.downloads.length, 0);
+    assert.strictEqual(h.fetches.length, 0);
+    assert.strictEqual(lookups(), 3, 'One discovery and two bounded lookups');
+    assert(h.badges.some((b) => b.text === 'ERR'));
   });
 
   console.log(`\n======================================================`);

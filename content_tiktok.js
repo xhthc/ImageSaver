@@ -5,6 +5,9 @@
  */
 
 (function () {
+  // DEBUG-MENU-01: the shared journal client (lib/debug_journal.js); a no-op when it is absent. Outcomes only: never the copied link.
+  const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {} };
+  DBG.log('tiktok', 'init', 'info');
   'use strict';
   const isI18n = globalThis.ImageSaverI18n;
   const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
@@ -597,7 +600,7 @@
 
       if (!shareUrl) {
         wrap.setAttribute('data-diagnostic-clipboard', 'skipped');
-        wrap.setAttribute('data-diagnostic-result', 'unavailable');
+        wrap.setAttribute('data-diagnostic-result', 'unavailable'); DBG.log('tiktok.copy', 'link', 'failed', 'NO_SHARE_URL');
         wrap.classList.remove('is-success');
         wrap.classList.remove('is-clipboard-error');
         wrap.classList.remove('is-error');
@@ -626,6 +629,7 @@
       }
 
       const copied = await copyTextToClipboard(shareUrl);
+      DBG.log('tiktok.copy', 'link', copied ? 'ok' : 'failed', copied ? undefined : 'CLIPBOARD_FAILED');
       wrap.setAttribute('data-diagnostic-clipboard', copied ? 'success' : 'failure');
 
       if (copied) {

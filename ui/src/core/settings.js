@@ -9,6 +9,7 @@
 //   change also re-renders a message that is already shown.
 import { createStore } from './store.js';
 import { translator } from './i18n.js';
+import { uiLog } from './debuglog.js';
 
 export const ALLOWED_HOSTS = Object.freeze({
   xShareHost: Object.freeze(['x.com', 'fixupx.com', 'cunnyx.com']),
@@ -114,6 +115,7 @@ export function createSettings(deps) {
     if (folderError) {
       // Excessive input is rejected explicitly: nothing is saved and nothing is silently shortened.
       showMessage(describeRootError(folderError), 'error');
+      uiLog('settings', 'save', 'refused', folderError === 'too_deep' ? 'FOLDER_TOO_DEEP' : 'FOLDER_TOO_LONG');
       return false;
     }
     const values = {
@@ -128,6 +130,7 @@ export function createSettings(deps) {
     try {
       await chromeApi.storage.local.set(values);
       console.log('[MediaLatch Popup] Settings saved:', values);
+      uiLog('settings', 'save', 'ok', undefined, { mode: values.folderOrganizationMode, fallback: Boolean(folderChanged) });
       showMessage(folderChanged
         ? (cleanFolder ? { key: 'settings.savedCorrected', vars: { folder: cleanFolder } } : 'settings.savedCorrectedRoot')
         : 'settings.saved', 'success');
@@ -135,6 +138,7 @@ export function createSettings(deps) {
     } catch (saveError) {
       console.error('[MediaLatch Popup] Settings could not be saved:', saveError);
       showMessage('settings.saveFailed', 'error');
+      uiLog('settings', 'save', 'failed', 'STORAGE_WRITE');
       return false;
     } finally {
       store.setState({ saving: false });
@@ -147,8 +151,10 @@ export function createSettings(deps) {
     try {
       await chromeApi.storage.local.set({ notifySuccess: wanted });
       store.setState({ notify: { checked: wanted, error: '' } });
+      uiLog('settings', 'notify', 'ok', undefined, { enabled: wanted === true });
     } catch (_) {
       store.setState({ notify: { checked: !wanted, error: 'notify.error.save' } });
+      uiLog('settings', 'notify', 'failed', 'STORAGE_WRITE');
     }
   }
 

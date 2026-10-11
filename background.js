@@ -9,7 +9,256 @@ if (typeof importScripts === 'function') importScripts('lib/i18n.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback_tracker.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback_history.js');
+if (typeof importScripts === 'function') importScripts('lib/debug_journal.js');
 const FeedbackLib = globalThis.ImageSaverFeedback;
+
+// ============================================================================
+// 0. DEBUG-MENU-01: the opt-in debug journal (lib/debug_journal.js)
+// ============================================================================
+// The worker is the journal's only writer. Its own events (dbg) and the events of content scripts, frames and extension pages
+// (DEBUG_EVENT, context derived from the sender) are recorded only while `debugEnabled === true`; until the preference is read at a
+// cold start at most DEBUG_EARLY_MAX events wait and are kept only if recording is on. The journal lives in IndexedDB (a large value in
+// chrome.storage would be broadcast to every content script's storage.onChanged); only the preference is in chrome.storage.local.
+// Nothing here can alter or block a save: every call is guarded and fire-and-forget.
+var debugJournal = null;
+var debugState = 'unknown'; // 'unknown' | 'on' | 'off'
+var debugEarly = [];
+const DEBUG_EARLY_MAX = 200;
+const DEBUG_INGEST_PER_SEC = 200;
+var debugBucket = { at: 0, n: 0, over: 0, reportedAt: 0 };
+
+function debugIdbStorage() {
+  if (typeof indexedDB === 'undefined' || !indexedDB || typeof indexedDB.open !== 'function') return null;
+  let opening = null;
+  const open = () => opening || (opening = new Promise((resolve, reject) => {
+    const req = indexedDB.open('medialatch-debug', 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore('kv'); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => { opening = null; reject(req.error); };
+  }));
+  const run = (mode, fn) => open().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction('kv', mode);
+    const req = fn(tx.objectStore('kv'));
+    tx.oncomplete = () => resolve(req ? req.result : undefined);
+    tx.onerror = tx.onabort = () => reject(tx.error || new Error('IDB'));
+  }));
+  return { get: (key) => run('readonly', (s) => s.get(key)), set: (key, value) => run('readwrite', (s) => s.put(value, key)) };
+}
+
+function dbgInit() {
+  const D = globalThis.ImageSaverDebug;
+  if (!D || typeof chrome === 'undefined' || !chrome.storage?.local) return;
+  const storage = debugIdbStorage() || {
+    get: async (key) => ((await chrome.storage.local.get(key)) || {})[key],
+    set: (key, value) => chrome.storage.local.set({ [key]: value })
+  };
+  const journal = D.createJournal({ storage });
+  const flush = journal.flush;
+  // a page showing the journal is told after every successful write (extension pages only; content scripts never receive it)
+  debugJournal = Object.assign({}, journal, {
+    flush: () => flush().then((ok) => { if (ok) dbgNotifyPages(); return ok; })
+  });
+  const append = journal.append;
+  debugJournal.append = (ev, ctx) => { const ok = append(ev, ctx); if (ok) dbgScheduleNotify(); return ok; };
+  let touched = false;
+  const apply = (on) => {
+    debugState = on ? 'on' : 'off';
+    const queued = debugEarly;
+    debugEarly = [];
+    if (on) for (const [ev, ctx] of queued) debugJournal.append(ev, ctx);
+  };
+  try {
+    chrome.storage.onChanged?.addListener?.((changes, area) => {
+      if (area === 'local' && changes && changes[D.ENABLED_KEY]) { touched = true; apply(changes[D.ENABLED_KEY].newValue === true); }
+    });
+    Promise.resolve(chrome.storage.local.get(D.ENABLED_KEY)).then((r) => { if (!touched) apply(Boolean(r) && r[D.ENABLED_KEY] === true); }, () => { if (!touched) apply(false); });
+  } catch (_) {
+    if (!touched) debugState = 'off';
+  }
+}
+
+var debugNotifyTimer = null;
+function dbgScheduleNotify() {
+  if (debugNotifyTimer !== null) return;
+  // the journal writes its batch after a short delay; the page is told once that write is done
+  debugNotifyTimer = setTimeout(() => { debugNotifyTimer = null; if (debugJournal) void debugJournal.flush(); }, 450);
+}
+function dbgNotifyPages() {
+  try {
+    const p = chrome.runtime.sendMessage({ action: 'DEBUG_CHANGED' });
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch (_) { /* no page is open */ }
+}
+
+function dbgPut(ev, ctx) {
+  if (debugState === 'off' || !debugJournal) return;
+  if (debugState === 'unknown') { if (debugEarly.length < DEBUG_EARLY_MAX) debugEarly.push([ev, ctx]); return; }
+  debugJournal.append(ev, ctx);
+}
+
+/** A worker event: dbg(comp, act, out, why?, details? (object or lazy function), extra? { cid, op, lvl, tab, frame }). Never throws. */
+function dbg(comp, act, out, why, details, extra) {
+  if (debugState === 'off' || !debugJournal) return;
+  try {
+    const x = extra || {};
+    dbgPut({
+      t: Date.now(), lvl: x.lvl || (out === 'failed' ? 'warn' : 'info'), comp, act, out, why: why || undefined, cid: x.cid, op: x.op,
+      d: typeof details === 'function' ? details() : details
+    }, { src: 'worker', tab: x.tab, frame: x.frame });
+  } catch (_) { /* a debug failure never reaches the caller */ }
+}
+
+/** A correlation id carried by a producer's message (only for the journal; never an authority for anything). */
+function dbgCidOf(message) {
+  return message && typeof message.dbg === 'string' && /^[a-f0-9]{8,16}$/.test(message.dbg) ? message.dbg : undefined;
+}
+function dbgNewCid() {
+  try { return globalThis.ImageSaverDebug ? Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, '0')).join('') : undefined; } catch (_) { return undefined; }
+}
+
+/** DEBUG_EVENT from the extension's own content scripts and pages; the context comes from the sender, never from the event. */
+function dbgIngest(raw, sender) {
+  if (debugState === 'off' || !debugJournal || !sender || sender.id !== chrome.runtime.id) return;
+  const base = chrome.runtime.getURL('');
+  const url = typeof sender.url === 'string' ? sender.url : '';
+  let ctx = null;
+  if (url.startsWith(base)) {
+    const path = url.slice(base.length).split(/[?#]/)[0];
+    const src = path === 'popup/popup.html' ? 'settings' : path === 'popup/quick.html' ? 'popup' : path === 'offscreen.html' ? 'offscreen' : '';
+    if (src) ctx = { src };
+  } else if (sender.tab && Number.isInteger(sender.tab.id)) {
+    ctx = {
+      src: Number.isInteger(sender.frameId) && sender.frameId > 0 ? 'frame' : 'content',
+      tab: sender.tab.id,
+      frame: Number.isInteger(sender.frameId) ? sender.frameId : undefined,
+      doc: typeof sender.documentId === 'string' ? sender.documentId.slice(0, 8) : undefined,
+      page: url
+    };
+  }
+  if (!ctx) return;
+  const now = Date.now();
+  if (now - debugBucket.at >= 1000) { debugBucket.at = now; debugBucket.n = 0; }
+  if (++debugBucket.n > DEBUG_INGEST_PER_SEC) {
+    debugBucket.over++;
+    if (now - debugBucket.reportedAt >= 5000) {
+      debugBucket.reportedAt = now;
+      dbg('debug', 'ingest', 'skipped', 'RATE_LIMIT', { count: debugBucket.over });
+      debugBucket.over = 0;
+    }
+    return;
+  }
+  dbgPut(raw, ctx);
+}
+
+/** A reason code for the journal, or undefined (free text never becomes a reason). */
+function dbgCode(x) {
+  return typeof x === 'string' && /^[A-Z][A-Z0-9_]{1,47}$/.test(x) ? x : (FeedbackLib?.normalizeCode?.(x) || undefined);
+}
+
+// ---- journal views of the shared resolution boundaries (the implementations below are unchanged; every caller passes here) ----
+async function probeCandidate(candidate) {
+  const ok = await probeCandidateImpl(candidate);
+  dbg('probe', 'check', ok ? 'ok' : 'failed', ok ? undefined : (candidate && candidate.status === 429 ? 'RATE_LIMIT' : 'PROBE_FAILED'), () => ({
+    host: candidate && candidate.url, http: candidate && candidate.status, mime: candidate && candidate.contentType,
+    bytes: candidate && candidate.contentLength, source: candidate && candidate.source, tier: candidate && candidate.tier
+  }));
+  return ok;
+}
+async function resolveOriginalMediaPlan(...args) {
+  const plan = await resolveOriginalMediaPlanImpl(...args);
+  dbg('plan', 'select', plan && !plan.error ? 'ok' : 'failed', plan ? dbgCode(plan.error) : 'NO_PLAN', () => (plan ? {
+    provider: plan.provider, tier: plan.tier, transport: plan.transport, host: plan.primaryUrl, score: plan.score, http: plan._verificationStatus,
+    items: plan.pawchivePostMedia && Array.isArray(plan.pawchivePostMedia.items) ? plan.pawchivePostMedia.items.length : undefined,
+    mime: plan.metadata && plan.metadata.contentType, error: dbgCode(plan.failureCode)
+  } : null));
+  return plan;
+}
+async function resolveMediaTarget(options = {}) {
+  const r = await resolveMediaTargetImpl(options);
+  dbg('target', 'resolve', r && r.targetUrl ? 'ok' : 'failed', r ? dbgCode(r.error) : 'NO_TARGET', () => (r ? {
+    type: r.type, host: r.targetUrl, reason: dbgCode(r.reason), http: r.status, hls: Boolean(r.redditHls), gesture: Boolean(options.gesturePlayer)
+  } : null), { tab: options.tabId, frame: options.frameId });
+  return r;
+}
+async function resolveFrameLocalMedia(options = {}) {
+  const r = await resolveFrameLocalMediaImpl(options);
+  dbg('frame', 'resolve', r && r.success ? 'ok' : 'failed', r && r.success ? undefined : (r && r.noAnswer ? 'NO_FRAME_ANSWER' : dbgCode(r && r.error)), () => ({
+    frame: options.frameId, host: r && r.targetUrl, audio: Boolean(r && r.audio === 'present'), clipId: r && typeof r.clipId === 'string' ? r.clipId : undefined,
+    inline: Boolean(options.inlineToken), gesture: Boolean(options.requireGesture)
+  }), { tab: options.tabId, frame: options.frameId });
+  return r;
+}
+async function recoverXPostMp4Variant(tabId, mediaDescriptor) {
+  const r = await recoverXPostMp4VariantImpl(tabId, mediaDescriptor);
+  dbg('x', 'recover', r && r.ok ? 'ok' : 'failed', r && r.ok ? undefined : dbgCode(r && r.error), () => {
+    const d = (r && r.diag) || {};
+    return {
+      how: d.how, point: d.point, id: d.id, sel: d.sel, quote: d.quote, req: d.req, media: d.media, seen: d.seen, variants: d.variants, mp4: d.mp4,
+      hls: d.hls === 1, fibers: d.fibers, foreign: d.foreign, edge: d.edge, detail: dbgCode(r && r.detail) ? r.detail : undefined, host: r && r.mp4Url,
+      postId: mediaDescriptor && mediaDescriptor.tweetId, mediaId: mediaDescriptor && mediaDescriptor.mediaIdHint, isQuote: Boolean(mediaDescriptor && mediaDescriptor.isQuoteTweet)
+    };
+  }, { tab: tabId });
+  return r;
+}
+async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
+  const mime = await verifyFinalMediaMimeImpl(targetUrl, mediaPlan, isVideoContext);
+  dbg('mime', 'final', mime ? 'ok' : 'failed', mime ? undefined : 'MIME_NOT_VERIFIED', () => ({ host: targetUrl, mime: typeof mime === 'string' ? mime : undefined, transport: mediaPlan && mediaPlan.transport, kind: isVideoContext ? 'video' : 'image' }));
+  return mime;
+}
+async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options = {}) {
+  dbg('plan', 'execute', 'start', undefined, () => ({ provider: plan && plan.provider, tier: plan && plan.tier, transport: plan && plan.transport, host: plan && plan.primaryUrl, count: plan && Array.isArray(plan.variants) ? plan.variants.length : undefined }), { op: options && options.feedbackOp });
+  const r = await executeMediaPlanImpl(plan, settings, rawImageUrl, options);
+  dbg('plan', 'execute', r && r.success ? 'ok' : (r && r.cancelled ? 'skipped' : 'failed'), r && r.success ? undefined : (r && r.cancelled ? 'CANCELLED' : dbgCode(r && r.error)), () => (r ? {
+    http: r.status, mime: r.normalizedMime, bytes: r.size, downloadId: r.downloadId, fallback: r.isFallback === true, transport: r.transport
+  } : null), { op: options && options.feedbackOp });
+  return r;
+}
+/** A request to the offscreen document, recorded as its start and result (codes and numbers only; never an address, payload or Blob). */
+async function offscreenRequest(msg) {
+  const action = msg && msg.action;
+  const t0 = Date.now();
+  dbg('offscreen', 'request', 'start', undefined, () => ({ action, job: msg.jobId, host: msg.url }));
+  try {
+    const res = await chrome.runtime.sendMessage(msg);
+    const refused = !res || res.success === false;
+    dbg('offscreen', 'request', refused ? 'failed' : 'ok', refused ? (!res ? 'NO_ANSWER' : (dbgCode(res.error) || 'OFFSCREEN_FAILED')) : undefined, () => ({
+      action, job: msg.jobId, ms: Date.now() - t0, http: res && res.status, mime: res && (res.contentType || res.mime), bytes: res && res.size, frames: res && res.frames
+    }));
+    return res;
+  } catch (e) {
+    dbg('offscreen', 'request', 'failed', 'MESSAGE_FAILED', () => ({ action, job: msg.jobId, ms: Date.now() - t0 }));
+    throw e;
+  }
+}
+
+/** Only the extension's full settings page may read or clear the journal. */
+function dbgPageSender(sender) {
+  return Boolean(sender) && sender.id === chrome.runtime.id && typeof sender.url === 'string' &&
+    sender.url.split(/[?#]/)[0] === chrome.runtime.getURL('popup/popup.html');
+}
+
+dbgInit();
+if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const action = message && message.action;
+    if (action === 'DEBUG_EVENT') { dbgIngest(message.ev, sender); return false; }
+    if (action !== 'DEBUG_LIST' && action !== 'DEBUG_CLEAR') return false;
+    if (!dbgPageSender(sender) || !debugJournal) {
+      sendResponse({ success: false, error: 'FORBIDDEN' });
+      return false;
+    }
+    (async () => {
+      try {
+        if (action === 'DEBUG_CLEAR') await debugJournal.clear();
+        const listed = await debugJournal.list();
+        sendResponse({ success: true, recording: debugState === 'on', ...listed });
+      } catch (_) {
+        sendResponse({ success: false, error: action === 'DEBUG_CLEAR' ? 'DEBUG_CLEAR_FAILED' : 'DEBUG_UNAVAILABLE' });
+      }
+    })();
+    return true;
+  });
+}
 
 // ============================================================================
 // 1. Initialization: Context menu and declarativeNetRequest for Pixiv
@@ -1266,7 +1515,10 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
     // ordered against the click already on the menu, so it must not start a click, reset the current one, change the visibility
     // or open the click to descriptors of an earlier gesture: it is refused like any other malformed message. A resting
     // pointer ('pointer') has no gesture and no stamp.
-    if (message.source === 'gesture' && gestureAt === null) return;
+    if (message.source === 'gesture' && gestureAt === null) { dbg('target', 'gesture', 'refused', 'NO_GESTURE_STAMP', null, { tab: sender.tab.id, frame: sender.frameId }); return; }
+    if (message.source === 'gesture') {
+      dbg('target', 'gesture', 'info', undefined, () => ({ phase: message.phase, ok: selectable, kind: evidence && evidence.kind, host: evidence && evidence.url, linkHost: link || undefined }), { tab: sender.tab.id, frame: sender.frameId });
+    }
     const stamp = ++hintClock;
     const apply = () => {
       // A resting pointer is a hint for the window that owns the menu now: not for a window that lost focus (its message may
@@ -1603,6 +1855,11 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender) => {
     // Provider hints from a background tab must not fill the caches of the active tab.
     if (sender?.tab?.active === false) return;
+    if (message?.action === 'X_MEDIA_CONTEXTMENU_DETECTED' || message?.action === 'REDDIT_MEDIA_CONTEXTMENU_DETECTED') {
+      dbg(message.action === 'X_MEDIA_CONTEXTMENU_DETECTED' ? 'x.menu' : 'reddit.menu', 'detected', 'info', undefined, () => ({
+        type: message.media && message.media.type, host: message.media && (message.media.url || message.media.src), blob: Boolean(message.media && message.media.isBlobPlayer)
+      }), { tab: sender && sender.tab && sender.tab.id, frame: sender && sender.frameId });
+    }
     if (message?.action === 'X_MEDIA_CONTEXTMENU_DETECTED' && sender?.tab?.id) {
       lastDetectedXMediaByTab.set(sender.tab.id, {
         media: message.media,
@@ -1690,17 +1947,19 @@ async function injectContextTargetIntoOpenTabs() {
   try { tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] }); } catch (_) { return; }
   for (const tab of Array.isArray(tabs) ? tabs : []) {
     if (!tab || !Number.isInteger(tab.id) || tab.discarded) continue;
-    try { await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['content_context_target.js'] }); } catch (_) {}
+    try { await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, injectImmediately: true, files: ['lib/debug_journal.js', 'content_context_target.js'] }); dbg('lifecycle', 'reinject', 'ok', undefined, { target: 'context_target' }, { tab: tab.id }); } catch (_) { dbg('lifecycle', 'reinject', 'failed', 'INJECT_FAILED', { target: 'context_target' }, { tab: tab.id }); }
   }
 }
 
 chrome.runtime.onInstalled.addListener((details) => {
+  dbg('lifecycle', 'installed', 'info', undefined, { reason: details && details.reason });
   setupDeclarativeNetRequestRules();
   setupContextMenus();
   if (details?.reason === 'install' || details?.reason === 'update') injectContextTargetIntoOpenTabs().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  dbg('lifecycle', 'startup', 'info');
   setupDeclarativeNetRequestRules();
   setupContextMenus();
   reconcileActiveOffscreenDownloads();
@@ -1949,7 +2208,7 @@ function isExplicitNonImageMime(mime) {
  * Adjusts candidate finalScore according to verified content characteristics.
  * (User Requirement 1: Dimensions/size are taken into account while provenance remains primary).
  */
-async function probeCandidate(candidate) {
+async function probeCandidateImpl(candidate) {
   if (!candidate || !candidate.url) return false;
   if (typeof candidate.status !== 'number') {
     candidate.status = 0;
@@ -4300,6 +4559,7 @@ async function resolveContextOwner(tabId, frameId, claim) {
   try {
     const results = await chrome.scripting.executeScript({
       target: Number.isInteger(frameId) && frameId >= 0 ? { tabId, frameIds: [frameId] } : { tabId },
+      injectImmediately: true,
       func: verifyContextOwner,
       args: [claim]
     });
@@ -4315,6 +4575,7 @@ async function resolveContextMediaTarget(tabId, frameId) {
   try {
     const results = await chrome.scripting.executeScript({
       target: Number.isInteger(frameId) && frameId >= 0 ? { tabId, frameIds: [frameId] } : { tabId },
+      injectImmediately: true,
       func: readContextMediaTarget
     });
     const res = results && results[0] && results[0].result;
@@ -5140,7 +5401,7 @@ function redGifsClipKey(urlStr) {
  * Uses info.frameId and communicates with the owning frame's content script.
  * Never fetches blob: URLs in the service worker.
  */
-async function resolveFrameLocalMedia(options = {}) {
+async function resolveFrameLocalMediaImpl(options = {}) {
   const {
     tabId = null,
     frameId = 0,
@@ -5181,7 +5442,8 @@ async function resolveFrameLocalMedia(options = {}) {
       try {
         await chrome.scripting.executeScript({
           target: sendOptions.documentId ? { tabId, documentIds: [sendOptions.documentId] } : { tabId, frameIds: [targetFrameId] },
-          files: ['lib/i18n.js', 'content_redgifs.js'] // the label catalogue first (UI-LOCALIZATION-01)
+          injectImmediately: true,
+          files: ['lib/debug_journal.js', 'lib/i18n.js', 'content_redgifs.js'] // the journal client and the label catalogue first (DEBUG-MENU-01, UI-LOCALIZATION-01)
         });
         response = await chrome.tabs.sendMessage(
           tabId,
@@ -5246,6 +5508,8 @@ async function resolveFrameLocalMedia(options = {}) {
   return {
     success: false,
     error: 'UNRESOLVED_BLOB_MEDIA',
+    // no document answered at all (gone, replaced, or not able to run the script): not a refusal by the frame
+    ...(response ? {} : { noAnswer: true }),
     diagnostics: response?.diagnostics || { inspectedSources: ['No response from frame ' + targetFrameId] }
   };
 }
@@ -5316,7 +5580,8 @@ async function resolveRedditFrameBlobMedia({ tabId, frameId, clickedSrc, pageUrl
       try {
         await chrome.scripting.executeScript({
           target: { tabId, frameIds: [targetFrameId] },
-          files: ['lib/i18n.js', 'content_reddit.js'] // the label catalogue first (UI-LOCALIZATION-01)
+          injectImmediately: true,
+          files: ['lib/debug_journal.js', 'lib/i18n.js', 'content_reddit.js'] // the journal client and the label catalogue first (DEBUG-MENU-01, UI-LOCALIZATION-01)
         });
         response = await chrome.tabs.sendMessage(
           tabId,
@@ -5826,9 +6091,35 @@ function extractXPostVideoInMainWorld(params) {
     return tweet; // Existing foreign-owner refusal remains authoritative when no exact original is found.
   }
 
+  function isAttributionAnchor(a) {
+    if (!a) return false;
+    const href = a.href || (a.getAttribute && a.getAttribute('href')) || '';
+    if (/\/status(?:es)?\/\d+\/video\//i.test(href)) return true;
+    if (a.closest && a.closest('[data-testid="videoPlayer"], [data-testid="videoComponent"], video')) return true;
+    return false;
+  }
+
+  function findQuoteContainer(el, outerArt) {
+    if (!el) return null;
+    if (outerArt && typeof outerArt.contains === 'function' && !outerArt.contains(el)) return null;
+    for (let p = el, depth = 0; p && p !== outerArt && depth < 40; p = p.parentElement, depth++) {
+      const role = typeof p.getAttribute === 'function' ? p.getAttribute('role') : null;
+      if (p.tagName === 'ARTICLE' || role === 'blockquote' || p.getAttribute?.('data-testid') === 'quoteTweet') return p;
+      if (p.tagName === 'DIV' && typeof p.getAttribute === 'function' && p.getAttribute('role') === 'link') {
+        if (/\/status(?:es)?\/\d+/.test(p.getAttribute('data-href') || '') || (typeof p.querySelector === 'function' && p.querySelector('[data-testid="User-Name"]'))) return p;
+      }
+    }
+    return null;
+  }
+
   function extractStatusIdsFromContainer(container, isQuote, hintId) {
     if (!container) return [];
     const ids = [];
+    const selfHref = container.getAttribute && container.getAttribute('data-href');
+    if (selfHref) {
+      const sid = parseStatusIdFromUrl(selfHref);
+      if (sid && !ids.includes(sid)) ids.push(sid);
+    }
     let anchors = [];
     if (container.querySelectorAll) {
       if (hintId) {
@@ -5847,11 +6138,12 @@ function extractXPostVideoInMainWorld(params) {
       }
     }
     for (const a of anchors) {
-      if (!isQuote) {
-        if (a.closest && a.closest('[data-testid="quoteTweet"], [role="blockquote"]')) {
-          continue;
-        }
+      if (findQuoteContainer(a, container)) continue;
+      if (container.tagName === 'ARTICLE' && a.closest) {
+        const aArt = a.closest('article');
+        if (aArt && aArt !== container) continue;
       }
+      if (isAttributionAnchor(a)) continue;
       const rawHref = a.href || (a.getAttribute && a.getAttribute('href')) || '';
       const sid = parseStatusIdFromUrl(rawHref);
       if (sid && !ids.includes(sid)) {
@@ -5863,14 +6155,22 @@ function extractXPostVideoInMainWorld(params) {
 
   function getAuthoritativeStatusId(container, isQuote, hintId) {
     if (!container) return null;
+    const selfHref = container.getAttribute && container.getAttribute('data-href');
+    if (selfHref) {
+      const sid = parseStatusIdFromUrl(selfHref);
+      if (sid) return sid;
+    }
     let timeAnchors = [];
     if (container.querySelectorAll) {
       timeAnchors = Array.from(container.querySelectorAll('a:has(time), a[href*="/status/"], a'));
     }
     for (const a of timeAnchors) {
-      if (!isQuote && a.closest && a.closest('[data-testid="quoteTweet"], [role="blockquote"]')) {
-        continue;
+      if (findQuoteContainer(a, container)) continue;
+      if (container.tagName === 'ARTICLE' && a.closest) {
+        const aArt = a.closest('article');
+        if (aArt && aArt !== container) continue;
       }
+      if (isAttributionAnchor(a)) continue;
       const hasTime = a.querySelector ? Boolean(a.querySelector('time')) : (a.innerHTML ? a.innerHTML.includes('<time') : false);
       if (hasTime) {
         const sid = parseStatusIdFromUrl(a.href || (a.getAttribute && a.getAttribute('href')));
@@ -5906,6 +6206,58 @@ function extractXPostVideoInMainWorld(params) {
     const clean = urlStr.split('?')[0];
     const m = clean.match(/\/(?:ext_tw_video_thumb|amplify_video_thumb|ext_tw_video|amplify_video|media)\/(\d+)/i);
     return m ? m[1] : null;
+  }
+
+  // X-QUOTE-06: a quote card without its own permalink (the only status link in it is the video's attribution) carries its post on the
+  // component fibers that render the card, not on the card's DOM node. The owner is the post of the nearest such fiber directly above the
+  // card's own host fiber, and only when: the selected media id is one of that post's own media; every other post up to the outer article
+  // is that same post or one that explicitly quotes it (or reposts a post that quotes it); and at least one does. Another owner on the way,
+  // no quoting post, no media id or a media mismatch leaves the owner unknown (null). Bounded like the other fiber walks.
+  // A wrapper is this card's own only when it is not a quote container itself and contains no other one (only this card, its ancestors
+  // up to the wrapper and what the card itself contains).
+  function holdsOtherCard(node, card, outerArt) {
+    if (findQuoteContainer(node, outerArt) === node) return true;
+    const cards = typeof node.querySelectorAll === 'function'
+      ? Array.from(node.querySelectorAll('article, div[role="link"], [data-testid="quoteTweet"], [role="blockquote"]')) : [];
+    if (cards.length > 64) return true; // too much to prove it holds nothing else: not this card's wrapper
+    return cards.some((c) => c !== card && !(typeof c.contains === 'function' && c.contains(card)) && !(typeof card.contains === 'function' && card.contains(c)) &&
+      findQuoteContainer(c, outerArt) === c);
+  }
+
+  function quoteOwnerFromCardFibers(card, outerArt, mediaId) {
+    if (!card || !outerArt || !mediaId) return null;
+    const quotedIdOf = (t) => getTweetId(t?.quoted_status) || getTweetId(t?.quoted_status_result?.result) ||
+      getTweetId(t?.quoted_status_result?.result?.tweet) || getTweetId(t?.legacy?.quoted_status_result?.result);
+    const host = getReactFiber(card);
+    let owner = null;
+    let quotedBy = false;
+    let f = host ? host.return : null;
+    for (let depth = 0; f && depth < 60; f = f.return, depth++) {
+      diag.fibers++;
+      const node = f.stateNode && typeof f.stateNode === 'object' && f.stateNode.nodeType === 1 ? f.stateNode : null;
+      if (node) {
+        // X-QUOTE-07: the quote's own post may render wrapper elements around the card (observed: one DIV at fiber depth 9 before the post
+        // at 11/12). Before the owner is known, a DOM element passed on the way may only be such a wrapper: an ancestor of this card inside
+        // the outer article that is not a card itself and holds no other card. A sibling, an outside element or another card's container ends it.
+        if (!owner && !(node !== outerArt && typeof node.contains === 'function' && node.contains(card) && outerArt.contains(node) && !holdsOtherCard(node, card, outerArt))) return null;
+        if (node === outerArt) return owner && quotedBy ? owner : null;
+        if (node.tagName === 'ARTICLE' || node.tagName === 'BODY' || node.tagName === 'HTML') return null;
+        continue;
+      }
+      const t = f.memoizedProps && f.memoizedProps.tweet;
+      const tid = getTweetId(t);
+      if (!tid) continue;
+      if (!owner) {
+        if (!extractMediaFromTweet(t).some((m) => m && String(m.id_str || m.id || '') === mediaId)) return null;
+        owner = tid;
+        continue;
+      }
+      if (tid === owner) continue;
+      const inner = t.retweeted_status || t.retweeted_status_result?.result || t.legacy?.retweeted_status_result?.result;
+      if (quotedIdOf(t) === owner || quotedIdOf(inner) === owner) { quotedBy = true; continue; }
+      return null; // another post owns this part of the tree: ambiguous
+    }
+    return null; // The cap or an incomplete fiber chain leaves ancestors unverified.
   }
 
   const knownMediaIds = [];
@@ -6010,16 +6362,22 @@ function extractXPostVideoInMainWorld(params) {
     diag.point = el ? 'no-article' : 'no-element';
     if (el) {
       let candidateContainer = null;
+      let outerArticle = null;
+      if (el.closest) {
+        outerArticle = el.closest('article[data-testid="tweet"], article[role="article"]') || el.closest('article');
+        for (let up = outerArticle?.parentElement && outerArticle.parentElement.closest('article'); up; up = up.parentElement && up.parentElement.closest('article')) {
+          outerArticle = up;
+        }
+      }
       if (isQuoteTweet) {
-        candidateContainer = el.closest ? el.closest('[data-testid="quoteTweet"], [role="blockquote"]') : null;
+        candidateContainer = findQuoteContainer(el, outerArticle);
       } else {
-        candidateContainer = el.closest ? (el.closest('article[data-testid="tweet"], article[role="article"]') || el.closest('article')) : null;
+        candidateContainer = outerArticle;
       }
 
       if (candidateContainer) {
         diag.point = 'article';
         if (isQuoteTweet) {
-          const outerArticle = candidateContainer.closest ? (candidateContainer.closest('article[data-testid="tweet"], article[role="article"]') || candidateContainer.closest('article')) : null;
           const outerStatusIds = outerArticle ? extractStatusIdsFromContainer(outerArticle, false, requestedTweetId) : [];
           const outerReactId = outerArticle ? getTweetIdFromNode(outerArticle, false) : null;
           const quoteStatusIds = extractStatusIdsFromContainer(candidateContainer, true, requestedTweetId);
@@ -6073,17 +6431,30 @@ function extractXPostVideoInMainWorld(params) {
     const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"], article[role="article"], article'));
     for (const art of articles) {
       if (isQuoteTweet) {
-        const qContainer = art.querySelector ? art.querySelector('[data-testid="quoteTweet"], [role="blockquote"]') : null;
-        if (qContainer) {
+        const qContainers = [];
+        const legacyQ = art.querySelector ? art.querySelector('[data-testid="quoteTweet"], [role="blockquote"]') : null;
+        if (legacyQ) qContainers.push(legacyQ);
+        if (art.querySelectorAll) {
+          const nestedArts = Array.from(art.querySelectorAll('article')).filter(a => a !== art);
+          for (const na of nestedArts) if (!qContainers.includes(na)) qContainers.push(na);
+          const roleLinks = Array.from(art.querySelectorAll('div[role="link"]'));
+          for (const rl of roleLinks) {
+            if (findQuoteContainer(rl, art) === rl && !qContainers.includes(rl)) qContainers.push(rl);
+          }
+        }
+        let matchedQuote = null;
+        for (const qContainer of qContainers) {
           const qIds = extractStatusIdsFromContainer(qContainer, true, requestedTweetId);
           const qReactId = getTweetIdFromNode(qContainer, true);
-          const artIds = extractStatusIdsFromContainer(art, false, requestedTweetId);
-          const artReactId = getTweetIdFromNode(art, false);
-          if (qIds.includes(requestedTweetId) || qReactId === requestedTweetId || artIds.includes(requestedTweetId) || artReactId === requestedTweetId) {
-            postContainer = qContainer;
-            targetEl = qContainer;
+          if (qIds.includes(requestedTweetId) || qReactId === requestedTweetId) {
+            matchedQuote = qContainer;
             break;
           }
+        }
+        if (matchedQuote) {
+          postContainer = matchedQuote;
+          targetEl = matchedQuote;
+          break;
         }
       } else {
         const artIds = extractStatusIdsFromContainer(art, false, requestedTweetId);
@@ -6105,11 +6476,16 @@ function extractXPostVideoInMainWorld(params) {
     const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"], article[role="article"], article'));
     for (const art of articles) {
       let matchedInArticle = false;
+      let matchedMedia = null;
       if (cleanPoster) {
-        const videoEl = art.querySelector ? art.querySelector('video') : null;
-        const vPoster = videoEl ? (videoEl.getAttribute('poster') || videoEl.poster || '').split('?')[0].toLowerCase() : null;
-        if (vPoster && (vPoster === cleanPoster || vPoster.includes(cleanPoster) || cleanPoster.includes(vPoster))) {
-          matchedInArticle = true;
+        const videos = art.querySelectorAll ? Array.from(art.querySelectorAll('video')) : [];
+        for (const videoEl of videos) {
+          const vPoster = (videoEl.getAttribute('poster') || videoEl.poster || '').split('?')[0].toLowerCase();
+          if (vPoster && (vPoster === cleanPoster || vPoster.includes(cleanPoster) || cleanPoster.includes(vPoster))) {
+            matchedInArticle = true;
+            matchedMedia = videoEl;
+            break;
+          }
         }
         if (!matchedInArticle) {
           const imgs = art.querySelectorAll ? Array.from(art.querySelectorAll('img')) : [];
@@ -6117,6 +6493,7 @@ function extractXPostVideoInMainWorld(params) {
             const iSrc = (img.currentSrc || img.src || '').split('?')[0].toLowerCase();
             if (iSrc && (iSrc === cleanPoster || iSrc.includes(cleanPoster) || cleanPoster.includes(iSrc))) {
               matchedInArticle = true;
+              matchedMedia = img;
               break;
             }
           }
@@ -6128,6 +6505,7 @@ function extractXPostVideoInMainWorld(params) {
           const u = (mEl.getAttribute('poster') || mEl.poster || mEl.currentSrc || mEl.src || mEl.getAttribute('style') || '');
           if (u.includes(targetMid)) {
             matchedInArticle = true;
+            matchedMedia = mEl;
             break;
           }
         }
@@ -6142,12 +6520,14 @@ function extractXPostVideoInMainWorld(params) {
       }
       if (matchedInArticle) {
         if (isQuoteTweet) {
-          const qContainer = art.querySelector ? art.querySelector('[data-testid="quoteTweet"], [role="blockquote"]') : null;
-          postContainer = qContainer || art;
-          targetEl = postContainer;
+          const qContainer = matchedMedia && findQuoteContainer(matchedMedia, art);
+          if (!qContainer) continue;
+          postContainer = qContainer;
+          targetEl = matchedMedia;
         } else {
+          if (matchedMedia && findQuoteContainer(matchedMedia, art)) continue;
           postContainer = art;
-          targetEl = art;
+          targetEl = matchedMedia || art;
         }
         break;
       }
@@ -6168,13 +6548,17 @@ function extractXPostVideoInMainWorld(params) {
   if (isQuoteTweet) {
     const quoteReactId = getTweetIdFromNode(postContainer, true);
     const quoteStatusIds = extractStatusIdsFromContainer(postContainer, true, requestedTweetId);
-    targetTweetId = quoteReactId || quoteStatusIds[0] || null;
+    targetTweetId = quoteStatusIds[0] || quoteReactId || null;
     if (!targetTweetId && requestedTweetId) {
       const outerArt = postContainer.closest ? (postContainer.closest('article[data-testid="tweet"], article[role="article"]') || postContainer.closest('article')) : null;
       const outerArtId = outerArt ? (getTweetIdFromNode(outerArt, false) || getAuthoritativeStatusId(outerArt, false, requestedTweetId)) : null;
       if (requestedTweetId !== outerArtId) {
         targetTweetId = requestedTweetId;
       }
+    }
+    if (!targetTweetId && !requestedTweetId) {
+      const outerArt = postContainer.closest ? (postContainer.closest('article[data-testid="tweet"], article[role="article"]') || postContainer.closest('article')) : null;
+      targetTweetId = quoteOwnerFromCardFibers(postContainer, outerArt, mediaIdHint ? String(mediaIdHint) : (posterUrl ? extractMediaIdFromUrl(posterUrl) : null));
     }
   } else {
     targetTweetId = requestedTweetId ||
@@ -6193,16 +6577,41 @@ function extractXPostVideoInMainWorld(params) {
   const hintMediaId = mediaIdHint ? String(mediaIdHint) : (posterUrl ? extractMediaIdFromUrl(posterUrl) : null);
   if (hintMediaId && !knownMediaIds.includes(hintMediaId)) knownMediaIds.push(hintMediaId);
 
+  // BUGFIX-MULTISITE-01: found by status or poster because the point missed (a batch item outside the viewport or under the page's
+  // own header), the container's own node carries no post data. Start from the selected item's own media element inside it: the
+  // one showing the hinted media id, else (no id) the player at the descriptor's position. Never a nested card's media.
+  if (targetEl === postContainer && typeof postContainer.querySelectorAll === 'function') {
+    const ownedMedia = Array.from(postContainer.querySelectorAll('video, img')).filter(m => !findQuoteContainer(m, postContainer));
+    let item = null;
+    if (hintMediaId) {
+      item = ownedMedia.find((m) =>
+        extractMediaIdFromUrl((m.getAttribute && m.getAttribute('poster')) || m.poster || m.currentSrc || m.src || '') === hintMediaId) || null;
+    } else if (typeof mediaIndex === 'number') {
+      item = ownedMedia.filter(m => m.tagName === 'VIDEO')[mediaIndex] || null;
+    }
+    if (item) targetEl = item;
+  }
+
   const domPoster = !posterUrl && postContainer.querySelector ? (postContainer.querySelector('video')?.getAttribute('poster') || postContainer.querySelector('video')?.poster) : null;
   const domMediaId = domPoster ? extractMediaIdFromUrl(domPoster) : null;
   if (domMediaId && !knownMediaIds.includes(domMediaId)) knownMediaIds.push(domMediaId);
+
+  let outerArtBoundary = isQuoteTweet && postContainer.closest ? (postContainer.closest('article[data-testid="tweet"], article[role="article"]') || postContainer.closest('article')) : null;
+  for (let up = outerArtBoundary?.parentElement?.closest?.('article'); up; up = up.parentElement?.closest?.('article')) outerArtBoundary = up;
+  const walkBoundary = outerArtBoundary || postContainer;
+
+  function getTargetTweet(tweet) {
+    const owned = getOwnedTweet(tweet, targetTweetId);
+    if (!isQuoteTweet || getTweetId(owned) === targetTweetId) return owned;
+    return getOwnedTweet(tweet?.quoted_status || tweet?.quoted_status_result?.result?.legacy || tweet, targetTweetId);
+  }
 
   // Pre-pass: scan from targetEl up to postContainer to record any verified tweet props
   let scanNode = targetEl;
   while (scanNode) {
     const p = getReactProps(scanNode);
     if (p) {
-      const t = getOwnedTweet(isQuoteTweet ? (p.tweet?.quoted_status || p.tweet?.quoted_status_result?.result?.legacy || p.tweet) : p.tweet, targetTweetId);
+      const t = getTargetTweet(p.tweet);
       const tid = getTweetId(t) || getTweetId(p.tweet);
       if (!targetTweetId || !tid || tid === targetTweetId) {
         recordVerifiedTweet(t);
@@ -6212,34 +6621,34 @@ function extractXPostVideoInMainWorld(params) {
     let sf = f;
     let sDepth = 0;
     while (sf && sDepth < 30) {
-      // Bound fiber traversal to postContainer
+      // Bound fiber traversal to walkBoundary
       if (sf.stateNode && typeof sf.stateNode === 'object' && sf.stateNode.nodeType === 1) {
         const node = sf.stateNode;
-        if (node.tagName === 'ARTICLE' && node !== postContainer) break;
+        if (node.tagName === 'ARTICLE' && node !== walkBoundary && node !== postContainer) break;
         if (node.tagName === 'BODY' || node.tagName === 'HTML') break;
-        if (postContainer.contains && !postContainer.contains(node) && node !== postContainer) break;
+        if (walkBoundary.contains && !walkBoundary.contains(node) && node !== walkBoundary) break;
       }
 
       if (sf.memoizedProps) {
         const mp = sf.memoizedProps;
-        const t = getOwnedTweet(isQuoteTweet ? (mp.tweet?.quoted_status || mp.tweet?.quoted_status_result?.result?.legacy || mp.tweet) : mp.tweet, targetTweetId);
+        const t = getTargetTweet(mp.tweet);
         const tid = getTweetId(t) || getTweetId(mp.tweet);
         if (targetTweetId && tid && tid !== targetTweetId) {
           break;
         }
         recordVerifiedTweet(t);
       }
-      if (sf.stateNode === postContainer) break;
+      if (sf.stateNode === walkBoundary) break;
       sf = sf.return;
       sDepth++;
     }
-    if (scanNode === postContainer) break;
-    if (scanNode.tagName === 'ARTICLE' && scanNode !== postContainer) break;
+    if (scanNode === walkBoundary) break;
+    if (scanNode.tagName === 'ARTICLE' && scanNode !== walkBoundary && scanNode !== postContainer) break;
     if (scanNode.tagName === 'BODY' || scanNode.tagName === 'HTML') break;
     scanNode = scanNode.parentElement;
   }
 
-  // 2. Search React fiber & props tree within the postContainer boundary
+  // 2. Search React fiber & props tree within the walkBoundary
   let curr = targetEl;
   let confirmedHls = false;
   let foundAnyVariants = false;
@@ -6248,9 +6657,7 @@ function extractXPostVideoInMainWorld(params) {
   while (curr) {
     const props = getReactProps(curr);
     if (props) {
-      let tweet = getOwnedTweet(isQuoteTweet
-        ? (props.tweet?.quoted_status || props.tweet?.quoted_status_result?.result?.legacy || props.tweet)
-        : props.tweet, targetTweetId);
+      const tweet = getTargetTweet(props.tweet);
       const tid = getTweetId(tweet) || getTweetId(props.tweet);
 
       if (targetTweetId && tid && tid !== targetTweetId) {
@@ -6309,19 +6716,17 @@ function extractXPostVideoInMainWorld(params) {
     let depth = 0;
     while (f && depth < 30) {
       diag.fibers++;
-      // Bound fiber traversal to postContainer
+      // Bound fiber traversal to walkBoundary
       if (f.stateNode && typeof f.stateNode === 'object' && f.stateNode.nodeType === 1) {
         const node = f.stateNode;
-        if (node.tagName === 'ARTICLE' && node !== postContainer) { diag.edge++; break; }
+        if (node.tagName === 'ARTICLE' && node !== walkBoundary && node !== postContainer) { diag.edge++; break; }
         if (node.tagName === 'BODY' || node.tagName === 'HTML') { diag.edge++; break; }
-        if (postContainer.contains && !postContainer.contains(node) && node !== postContainer) { diag.edge++; break; }
+        if (walkBoundary.contains && !walkBoundary.contains(node) && node !== walkBoundary) { diag.edge++; break; }
       }
 
       const fProps = f.memoizedProps;
       if (fProps) {
-        let fTweet = getOwnedTweet(isQuoteTweet
-          ? (fProps.tweet?.quoted_status || fProps.tweet?.quoted_status_result?.result?.legacy || fProps.tweet)
-          : fProps.tweet, targetTweetId);
+        const fTweet = getTargetTweet(fProps.tweet);
         const fTid = getTweetId(fTweet) || getTweetId(fProps.tweet);
 
         // If fiber reaches props for another tweet, stop climbing!
@@ -6375,14 +6780,14 @@ function extractXPostVideoInMainWorld(params) {
         }
       }
 
-      if (f.stateNode === postContainer) break;
+      if (f.stateNode === walkBoundary) break;
       f = f.return;
       depth++;
     }
 
-    // Do NOT walk into another post or out of postContainer
-    if (curr === postContainer) break;
-    if (curr.tagName === 'ARTICLE' && curr !== postContainer) break;
+    // Do NOT walk into another post or out of walkBoundary
+    if (curr === walkBoundary) break;
+    if (curr.tagName === 'ARTICLE' && curr !== walkBoundary && curr !== postContainer) break;
     if (curr.tagName === 'BODY' || curr.tagName === 'HTML') break;
     curr = curr.parentElement;
   }
@@ -6430,7 +6835,7 @@ function describeXRecoveryFailure(recovery) {
  * Prioritizes content-script extracted MP4, then executes self-contained inspection in MAIN world.
  * Always attempts MAIN-world lookup for unknown blob players; avoids premature HLS-only rejection.
  */
-async function recoverXPostMp4Variant(tabId, mediaDescriptor) {
+async function recoverXPostMp4VariantImpl(tabId, mediaDescriptor) {
   if (!mediaDescriptor) return { ok: false, error: 'INVALID_PARAMS' };
 
   if (mediaDescriptor.recoveredMp4Url) {
@@ -6450,6 +6855,7 @@ async function recoverXPostMp4Variant(tabId, mediaDescriptor) {
     try {
       const results = await chrome.scripting.executeScript({
         target: { tabId },
+        injectImmediately: true,
         world: 'MAIN',
         func: extractXPostVideoInMainWorld,
         args: [{
@@ -6686,7 +7092,7 @@ function findMediaInElements(elements, pageUrl = '', linkUrl = null) {
  * If video source is invalid/unverified and poster exists, poster falls back to image resolver.
  * Standard images route to image resolver.
  */
-async function resolveMediaTarget(options = {}) {
+async function resolveMediaTargetImpl(options = {}) {
   const {
     descriptor = null,
     srcUrl = '',
@@ -6922,20 +7328,32 @@ async function resolveMediaTarget(options = {}) {
         const embedProof = options.redGifsEmbed || null;
         let frameResolvedUrl = null;
         if (options.tabId) {
-          const frameId = typeof options.frameId === 'number' ? options.frameId : 0;
+          let frame = { frameId: typeof options.frameId === 'number' ? options.frameId : 0, documentId: embedProof ? embedProof.documentId : '' };
           try {
-            const frameRes = await resolveFrameLocalMedia({
-              tabId: options.tabId,
-              frameId,
-              documentId: embedProof ? embedProof.documentId : '',
-              clickedSrc: videoUrl || mediaDesc.src || '',
-              pageUrl: options.pageUrl || mediaDesc.pageUrl || pageUrl,
-              linkUrl: options.linkUrl || mediaDesc.linkUrl || linkUrl,
-              mediaType: 'video'
-            });
-            if (frameRes && frameRes.success && frameRes.targetUrl &&
-                (!embedProof || (frameRes.clipId === embedProof.clipKey && redGifsClipKey(frameRes.targetUrl) === embedProof.clipKey))) {
-              frameResolvedUrl = frameRes.targetUrl;
+            for (let attempt = 0; ; attempt++) {
+              const frameRes = await resolveFrameLocalMedia({
+                tabId: options.tabId,
+                frameId: frame.frameId,
+                documentId: frame.documentId,
+                clickedSrc: videoUrl || mediaDesc.src || '',
+                pageUrl: options.pageUrl || mediaDesc.pageUrl || pageUrl,
+                linkUrl: options.linkUrl || mediaDesc.linkUrl || linkUrl,
+                mediaType: 'video'
+              });
+              if (frameRes && frameRes.success && frameRes.targetUrl &&
+                  (!embedProof || (frameRes.clipId === embedProof.clipKey && redGifsClipKey(frameRes.targetUrl) === embedProof.clipKey))) {
+                frameResolvedUrl = frameRes.targetUrl;
+                break;
+              }
+              // BUGFIX-MULTISITE-01: the embed's proven document can be replaced right after it was found (observed: "No document with id" on the first
+              // inline click, the next click resolved). Only when NO document answered, within the same save, the frame is found again: exactly one direct
+              // child of the top document showing the same proven clip, and that current document is asked. A frame's own refusal, another clip, several
+              // or no frames end it; at most REDGIFS_EMBED_RETRIES more attempts.
+              if (!embedProof || !frameRes || frameRes.noAnswer !== true || attempt >= REDGIFS_EMBED_RETRIES) break;
+              await new Promise((r) => setTimeout(r, REDGIFS_EMBED_RETRY_MS * (attempt + 1)));
+              frame = await redditInlineFindRedGifsFrame(options.tabId, { frameId: 0 }, embedProof.clipKey);
+              if (!frame) break;
+              console.info('[MediaLatch] Embedded RedGIFs frame did not answer; asking the current document of the same clip again');
             }
           } catch (_) {}
         }
@@ -7428,7 +7846,37 @@ function parsePawchivePostHtml(html, post) {
     const entry = images.find((i) => i.url === href);
     if (entry && th && th.kind === 'thumb') entry.thumbHash = th.hash;
   }
-  return unusable ? null : { videos, images };
+  // BUGFIX-MULTISITE-01: the previews the page shows (a not-imported post shows only these, with no original link), and the site's own
+  // not-imported state. That state is read only from the site's generated markup before the creator's content (the header badge, missing
+  // attachments, the missing-files line), never from post text; the counts are kept only when the line has exactly the site's wording.
+  const previews = [];
+  for (const img of files.match(/<img\b[^>]*>/gi) || []) {
+    const th = parsePawchiveMediaUrl(pawchiveAttr(img, 'data-src') || pawchiveAttr(img, 'src') || '', post.url);
+    if (th && th.kind === 'thumb' && !previews.includes(th.hash)) previews.push(th.hash);
+  }
+  const contentAt = html.search(/class\s*=\s*"[^"]*\bpost__content\b/i);
+  const head = contentAt < 0 ? html : html.slice(0, contentAt);
+  const stats = /<p\b[^>]*\sclass\s*=\s*"[^"]*\bpost__missing-stats\b[^"]*"[^>]*>([^<]*)<\/p>/i.exec(head);
+  let missing = null;
+  if (stats || /class\s*=\s*"[^"]*\b(?:state-badge--preview|post__attachment-link--missing)\b/i.test(head)) {
+    missing = { photos: null, videos: null };
+    const line = stats ? /^Missing (.+?),? as this post has not yet been imported\.$/.exec(stats[1].replace(/\s+/g, ' ').trim()) : null;
+    if (line) {
+      const n = { photos: 0, videos: 0 };
+      const ok = line[1].split(', ').every((part) => {
+        const m = /^(\d{1,3}) (full-res photos?|videos?)$/.exec(part);
+        if (m) n[m[2].startsWith('v') ? 'videos' : 'photos'] += Number(m[1]);
+        return Boolean(m);
+      });
+      if (ok) missing = n;
+    }
+  }
+  return unusable ? null : { videos, images, previews, missing };
+}
+
+// The failure code of a post whose originals the site has not imported: the counts the page states, else none (feedback.js reads them back).
+function pawchiveMissingCode(missing) {
+  return 'NOT_ARCHIVED' + (missing && Number.isInteger(missing.photos) && Number.isInteger(missing.videos) ? `_P${missing.photos}_V${missing.videos}` : '');
 }
 
 // Verifies the exact declared original with the shared probe: a real response of the expected kind, or a failure that is reported as it is.
@@ -7472,7 +7920,10 @@ async function probePawchiveOriginal(parsed, postUrl, srcUrl) {
 function selectPawchivePostOriginal(clicked, post, isFeedCard, declared) {
   // the selected preview must be one of this post's own images (its cover)
   const mine = declared.images.filter((i) => i.hash === clicked.hash || i.thumbHash === clicked.hash);
-  if (mine.length === 0) return { why: 'preview is not of this post' };
+  // a preview the page shows without its original, on a page the site marks as not imported: nothing of it can be fetched
+  const previewOnly = mine.length === 0 && Boolean(declared.missing) && (declared.previews || []).includes(clicked.hash);
+  if (mine.length === 0 && !previewOnly) return { why: 'preview is not of this post' };
+  if (previewOnly && !isFeedCard) return { unavailable: true };
   let chosen = null;
   if (isFeedCard) {
     // a feed card: every distinct original the post declares (videos, then images and GIFs incl. the cover; one per hash). Thumbnails and posters are
@@ -7484,7 +7935,9 @@ function selectPawchivePostOriginal(clicked, post, isFeedCard, declared) {
       if (!items.some((x) => x.hash === v.hash)) items.push(v);
     }
     // several originals: the resolver saves each one separately (resolvePawchiveOriginalPlan)
-    if (items.length > 1) return { chosen: items[0], items };
+    if (items.length > 1) return { chosen: items[0], items, partial: Boolean(declared.missing) };
+    // a not-imported post: none of its originals exists, or only this one (the rest is reported as unavailable)
+    if (declared.missing) return items.length ? { chosen: items[0], items, partial: true } : { unavailable: true };
     chosen = items[0] || null;
   } else if (mine.length === 1) {
     // a thumbnail inside the post page itself: that image
@@ -7534,12 +7987,19 @@ async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPost
   const declared = parsePawchivePostHtml(fetched.html, post);
   if (!declared) return refuse('post identity or declarations');
   const picked = selectPawchivePostOriginal(clicked, post, Boolean(linkedPost), declared);
+  if (picked.unavailable) {
+    // the site states it has not imported this post's originals: a failure of its own, never the preview, a filename or a guessed address
+    console.warn('[MediaLatch] Pawchive: оригинал не импортирован сайтом (' + pawchiveMissingCode(declared.missing) + '):', sanitizeUrlForLog(srcUrl));
+    const plan = adaptCandidateToGroup({ url: srcUrl, source: 'initial_src', tier: 'preview', score: 0, error: 'NOT_ARCHIVED' });
+    if (plan) plan.failureCode = pawchiveMissingCode(declared.missing);
+    return plan;
+  }
   if (!picked.chosen) return refuse(picked.why);
-  if (picked.items) {
+  if (picked.items && (picked.items.length > 1 || (picked.partial && allowPostMedia))) {
     // an explicit save of a feed preview of a post with several originals saves them all, each as its own item (savePawchivePostMedia); a caller that
-    // cannot do that gets the refusal, never one arbitrary original
+    // cannot do that gets the refusal, never one arbitrary original. A partly imported post also reports its missing originals there.
     if (!allowPostMedia) return refuse('several originals');
-    return { pawchivePostMedia: { postUrl: post.url, items: picked.items.map((v) => v.url) } };
+    return { pawchivePostMedia: { postUrl: post.url, items: picked.items.map((v) => v.url), ...(picked.partial ? { missingCode: pawchiveMissingCode(declared.missing) } : {}) } };
   }
   const out = await probePawchiveOriginal(picked.chosen, post.url, srcUrl);
   return out.plan || out.fail || refuse('original');
@@ -7554,7 +8014,7 @@ let PAWCHIVE_POST_MEDIA_PACE_MS = 1000;
 const pawchiveItemInfos = new WeakSet();
 
 async function pawchiveItemFailed(info, tab, url, failure) {
-  const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: url, site: fbSiteOf(info.pageUrl || tab?.url, url) });
+  const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: url, site: fbSiteOf(info.pageUrl || tab?.url, url), cid: info.dbgCid });
   await fbFail(op, failure);
   await fbBadgeReporter(op)(failure.code === 'RATE_LIMIT' ? 'RATE' : 'ERR', failure.code === 'RATE_LIMIT' ? '#f59e0b' : '#ef4444');
 }
@@ -7585,14 +8045,20 @@ async function savePawchivePostMedia(batch, info, tab) {
     await onContextMenuClicked(itemInfo, tab);
   }
   if (batch.items.length > urls.length) await pawchiveItemFailed(info, tab, batch.postUrl, { stage: 'resolve', code: 'NO_MEDIA' });
+  // a partly imported post: the originals the site has not imported are one failed operation of their own
+  if (typeof batch.missingCode === 'string' && /^NOT_ARCHIVED(?:_P\d{1,3}_V\d{1,3})?$/.test(batch.missingCode)) {
+    tally.notArchived = batch.missingCode;
+    await pawchiveItemFailed(info, tab, batch.postUrl, { stage: 'resolve', code: batch.missingCode });
+  }
   console.info('[MediaLatch] Pawchive post media:', tally);
+  dbg('pawchive', 'batch', 'ok', undefined, { items: tally.items, verified: tally.verified, refused: tally.refused, rateLimited: tally.rateLimited, skipped: tally.skipped, partial: Boolean(tally.notArchived), error: dbgCode(tally.notArchived) }, { cid: info && info.dbgCid, tab: tab && tab.id });
 }
 
 /**
  * Universal candidate resolution pipeline returning a structured CandidateGroup (Resolution Plan).
  * Supports Candidate Groups with variant failover policies, provenance scoring, and deferred validation.
  */
-async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg, fifthArg) {
+async function resolveOriginalMediaPlanImpl(firstArg, secondArg, thirdArg, fourthArg, fifthArg) {
   let srcUrl, pageUrl, linkUrl, tabId, domMeta, frameId, allowPostMedia = false;
 
   if (typeof firstArg === 'object' && firstArg !== null) {
@@ -7851,6 +8317,7 @@ async function resolveOriginalMediaPlan(firstArg, secondArg, thirdArg, fourthArg
       const results = await chrome.scripting.executeScript({
         // The selected image lives in the clicked frame; without a valid frameId keep the top-frame default.
         target: Number.isInteger(frameId) && frameId >= 0 ? { tabId, frameIds: [frameId] } : { tabId },
+        injectImmediately: true,
         func: extractDomImageMetadata,
         args: [srcUrl]
       });
@@ -8700,7 +9167,7 @@ if (typeof globalThis.ImageSaverFeedbackTracker?.createTracker === 'function') {
       return Array.isArray(items) && items.length ? items[0] : null;
     },
     peekEarlyTerminal: (id) => earlyTerminalDownloadStates.get(id),
-    notify: feedbackNotifyRecord,
+    notify: (record, ...rest) => { dbg('notify', 'show', 'info', undefined, () => ({ state: record && record.state }), { op: record && record.id }); return feedbackNotifyRecord(record, ...rest); },
     onFinished: (record) => (feedbackHistory ? feedbackHistory.record(record) : false),
     onChange: () => { if (!flashBadgeTimeout) restoreOrClearBadge(); },
     log: (...args) => console.warn('[MediaLatch] feedback:', ...args)
@@ -8721,35 +9188,46 @@ async function getUnseenFailureCount() {
   }
 }
 
+// DEBUG-MENU-01: every operation boundary is also a journal event (operation id, the click/attempt id when the caller has one).
 async function fbBegin(info) {
-  try { return feedbackTracker ? await feedbackTracker.begin(info) : null; } catch (_) { return null; }
+  let op = null;
+  try { op = feedbackTracker ? await feedbackTracker.begin(info) : null; } catch (_) { op = null; }
+  dbg('op', 'begin', op ? 'start' : 'failed', op ? undefined : 'NO_RECORD', () => ({ site: info && info.site, pageHost: info && info.pageUrl, srcHost: info && info.sourceUrl }), { op: op || undefined, cid: info && info.cid });
+  return op;
 }
 async function fbSetPost(op, url) {
   if (!op || !feedbackTracker) return;
+  dbg('op', 'post', 'info', undefined, { linked: Boolean(url) }, { op });
   try { await feedbackTracker.setPost(op, url); } catch (_) {}
 }
 async function fbStage(op, state, patch) {
   if (!op || !feedbackTracker) return;
+  dbg('op', 'stage', 'info', undefined, () => ({ state, type: patch && patch.expectedType, conversion: patch && patch.conversion, srcHost: patch && patch.sourceUrl }), { op });
   try { await feedbackTracker.stage(op, state, patch); } catch (_) {}
 }
 async function fbFail(op, info) {
   if (!op || !feedbackTracker) return;
+  dbg('op', 'fail', 'failed', dbgCode(info && info.code), () => ({ stage: info && info.stage, http: info && info.status, error: dbgCode(info && info.downloadError) }), { op });
   try { await feedbackTracker.fail(op, info); } catch (_) {}
 }
 async function fbCancel(op) {
   if (!op || !feedbackTracker) return;
+  dbg('op', 'cancel', 'info', 'USER_CANCELED', null, { op });
   try { await feedbackTracker.cancel(op); } catch (_) {}
 }
 async function fbDiscard(op) {
   if (!op || !feedbackTracker) return;
+  dbg('op', 'discard', 'skipped', 'DUPLICATE_OR_HANDED_OFF', null, { op });
   try { await feedbackTracker.discard(op); } catch (_) {}
 }
 async function fbAttach(op, downloadId, patch) {
   if (!op || !feedbackTracker) return;
+  dbg('download', 'start', 'start', undefined, () => ({ downloadId, mime: patch && patch.output && patch.output.mime, type: patch && patch.output && patch.output.type }), { op });
   try { await feedbackTracker.attachDownload(op, downloadId, patch); } catch (_) {}
 }
 async function fbDownloadTerminal(downloadId, state, errorCode) {
   if (!feedbackTracker) return;
+  dbg('download', state === 'complete' ? 'complete' : (state === 'cancelled' ? 'cancel' : 'interrupt'), state === 'complete' ? 'ok' : 'failed', dbgCode(errorCode), { downloadId, state });
   try { await feedbackTracker.downloadTerminal(downloadId, state, errorCode); } catch (_) {}
 }
 
@@ -8894,6 +9372,7 @@ if (typeof chrome !== 'undefined' && chrome.notifications?.onClicked?.addListene
       const prefix = globalThis.ImageSaverFeedbackTracker.NOTIFY_PREFIX;
       if (typeof notificationId !== 'string' || !notificationId.startsWith(prefix) || !feedbackTracker) return;
       const id = notificationId.slice(prefix.length);
+      dbg('notify', 'click', 'info', undefined, null, { op: id });
       const rec = await feedbackTracker.get(id);
       if (!rec) return;
       if (rec.state === 'complete' && Number.isInteger(rec.downloadId) && chrome.downloads?.show) {
@@ -8998,8 +9477,10 @@ async function decideNativeResume(id, errorCode) {
       await chrome.downloads.resume(id);
     } catch (err) {
       console.warn(`[MediaLatch] Загрузка ${id}: resume отклонён:`, err?.message || err);
+      dbg('download', 'resume', 'failed', 'RESUME_REFUSED', { downloadId: id });
       return refuseNativeResume(id, finalError);
     }
+    dbg('download', 'resume', 'start', 'NETWORK_FAILED', { downloadId: id });
     console.log(`[MediaLatch] Загрузка ${id} прервана (NETWORK_FAILED): запрошено одно возобновление`);
     return { resumed: true };
   } catch (_) {
@@ -9254,7 +9735,7 @@ async function settleEarlyTerminalDownload(downloadId) {
  * Iterates through variants according to group's variantPolicy.
  * Employs structured validation result and canonical MIME filename generation.
  */
-async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options = {}) {
+async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', options = {}) {
   const group = plan?.isCandidateGroup ? plan : adaptCandidateToGroup(plan);
   if (!group || !Array.isArray(group.variants) || group.variants.length === 0) {
     console.warn('[MediaLatch] executeMediaPlan: Недопустимый план или отсутствуют варианты:', plan);
@@ -9356,7 +9837,7 @@ async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options =
         const isGelbooru = hostInfo?.type === 'gelbooru';
         const action = isGelbooru ? 'FETCH_GELBOORU_BLOB' : 'FETCH_PROTECTED_BLOB';
 
-        const fetchResult = await chrome.runtime.sendMessage({
+        const fetchResult = await offscreenRequest({
           action,
           url: targetUrl
         });
@@ -9854,7 +10335,7 @@ async function convertXTweetVideoToGifBlob(videoUrl, options = {}) {
   const taskKey = acquireOffscreenTask('x_gif_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
   try {
     await ensureOffscreenDocument();
-    const res = await chrome.runtime.sendMessage({
+    const res = await offscreenRequest({
       action: 'CONVERT_X_TWEET_VIDEO_TO_GIF',
       url: videoUrl,
       jobId: taskKey,
@@ -9994,7 +10475,7 @@ async function convertRedditVideoToGifBlob(videoUrl, options = {}) {
   const taskKey = acquireOffscreenTask('reddit_gif_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
   try {
     await ensureOffscreenDocument();
-    const res = await chrome.runtime.sendMessage({
+    const res = await offscreenRequest({
       action: 'CONVERT_REDDIT_VIDEO_TO_GIF',
       url: videoUrl,
       jobId: taskKey,
@@ -10184,7 +10665,7 @@ async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) 
     await fbStage(feedbackOp, 'converting', { conversion: 'none', expectedType: 'video', sourceUrl: master.url, site: fbSiteOf(options?.pageUrl, master.url) });
     taskKey = acquireOffscreenTask('reddit_hls_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
     await ensureOffscreenDocument();
-    const res = await chrome.runtime.sendMessage({ action: 'ASSEMBLE_REDDIT_HLS', url: master.url, jobId: taskKey });
+    const res = await offscreenRequest({ action: 'ASSEMBLE_REDDIT_HLS', url: master.url, jobId: taskKey });
     if (!res || res.success !== true || typeof res.blobUrl !== 'string' || !res.blobUrl.startsWith('blob:') || !(res.size > 0)) {
       const failure = redditHlsFailure(res);
       // the worker log keeps only a bounded code and status: never an address, its query or text a server sent
@@ -10318,7 +10799,7 @@ async function releaseOffscreenTask(ownerOrBlob = null, blobToRevoke = null) {
   if (targetBlob && !activeRevokedBlobs.has(targetBlob)) {
     activeRevokedBlobs.add(targetBlob);
     try {
-      await chrome.runtime.sendMessage({ action: 'REVOKE_BLOB_URL', blobUrl: targetBlob });
+      await offscreenRequest({ action: 'REVOKE_BLOB_URL', blobUrl: targetBlob });
     } catch (_) {}
     setTimeout(() => activeRevokedBlobs.delete(targetBlob), 60000);
   }
@@ -10508,7 +10989,7 @@ reconcileActiveOffscreenDownloads();
  * For protected transport, uses protected fetch/probe when eligible and reuses Blob.
  * Returns verified MIME string or null if verification is unavailable.
  */
-async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
+async function verifyFinalMediaMimeImpl(targetUrl, mediaPlan, isVideoContext) {
   if (!targetUrl || typeof targetUrl !== 'string') return null;
 
   const hostInfo = getProtectedHostInfo(targetUrl);
@@ -10557,7 +11038,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
         console.log(`[Chooser Profiler] 3b. offscreen probe task dispatched (${action}) for variant [${i + 1}/${variants.length}]: ${sanitizeUrlForLog(currentUrl)}`);
         const tProbeStart = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
         try {
-          probeRes = await chrome.runtime.sendMessage({
+          probeRes = await offscreenRequest({
             action,
             url: currentUrl
           });
@@ -10570,7 +11051,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
           if (isConnLoss) {
             console.warn('[MediaLatch] Message channel closed during protected probe, retrying once:', sendErr.message);
             await ensureOffscreenDocument();
-            probeRes = await chrome.runtime.sendMessage({
+            probeRes = await offscreenRequest({
               action,
               url: currentUrl
             });
@@ -10793,6 +11274,13 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
 }
 
 async function onContextMenuClicked(info, tab) {
+  // DEBUG-MENU-01: one attempt id per save (an inline save brings the id of its click); journal only, never an authority
+  if (!info.dbgCid) info.dbgCid = dbgNewCid();
+  dbg('menu', 'click', 'start', undefined, () => ({
+    menu: info.menuItemId, hasSrc: Boolean(info.srcUrl), hasLink: Boolean(info.linkUrl), srcHost: info.srcUrl, linkHost: info.linkUrl,
+    pageHost: info.pageUrl || (tab && tab.url), frame: info.frameId, kind: info.mediaType,
+    inline: xInlineInfos.has(info) || redditInlineInfos.has(info) || redgifsInlineInfos.has(info), batch: pawchiveItemInfos.has(info)
+  }), { cid: info.dbgCid, tab: tab && tab.id });
   // A page/overlay click on X uses its existing selected-player path. Native sources and direct media links
   // retain the generic entry path (including X images); old IDs remain accepted for in-flight menu callbacks.
   if (info.menuItemId === 'save-image-item' && !info.srcUrl && !info.linkUrl &&
@@ -10811,11 +11299,12 @@ async function onContextMenuClicked(info, tab) {
     const claimsMediaLink = !rawImageUrl && hasMediaAssociation('', rawLinkUrl);
     // An inline Reddit click (UX-11-RD) was proven by the document right before this call; a gesture capture, possibly of another tile, must not decide it.
     const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || pawchiveItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '' });
+    dbg('menu', 'owner', owner === 'refused' || owner === 'preview' ? 'refused' : 'ok', owner === 'preview' ? 'SEEK_PREVIEW' : (owner === 'refused' ? 'STALE_OWNER' : undefined), { owner }, { cid: info.dbgCid, tab: tab && tab.id });
     if (owner === 'refused' || owner === 'preview') {
       console.warn(owner === 'preview'
         ? '[MediaLatch] The selected video is a seek preview, not the media of the post: save refused without requests'
         : '[MediaLatch] Владелец выбранной цели удалён, заменён или изменён после жеста — сохранение отклонено без запросов');
-      const staleOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, '') });
+      const staleOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, ''), cid: info.dbgCid });
       await fbFail(staleOp, { stage: 'resolve', code: 'NO_MEDIA' });
       await fbBadgeReporter(staleOp)('ERR', '#ef4444');
       return;
@@ -10889,6 +11378,7 @@ async function onContextMenuClicked(info, tab) {
       inlineToken = inlineRedGifs.token;
     } else if (!rawImageUrl && !hasMediaAssociation('', rawLinkUrl)) {
       const gestureMedia = await resolveContextMediaTarget(tab?.id, info.frameId);
+      dbg('menu', 'gesture', gestureMedia ? 'ok' : 'skipped', gestureMedia ? undefined : 'NO_GESTURE_MEDIA', () => (gestureMedia ? { kind: gestureMedia.kind, host: gestureMedia.url } : null), { cid: info.dbgCid, tab: tab && tab.id });
       if (gestureMedia && gestureMedia.kind === 'player') {
         const frameIsRedGifs = isRedGifsUrl(info.frameUrl) || (!info.frameUrl && !info.frameId && isRedGifsUrl(info.pageUrl || tab?.url));
         if (frameIsRedGifs && tab?.id) {
@@ -10911,7 +11401,8 @@ async function onContextMenuClicked(info, tab) {
       // resolved, probed or saved, before any provider or generic resolver runs. A click on the page entry or on a
       // link (the only way the image entry is reached without media) is refused visibly, not silently.
       if (info.menuItemId === CSS_MEDIA_MENU_ID || info.menuItemId === 'save-image-item' || rawLinkUrl) {
-        const noMediaOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, '') });
+        dbg('menu', 'click', 'refused', 'NO_MEDIA_ASSOCIATION', null, { cid: info.dbgCid, tab: tab && tab.id });
+        const noMediaOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, ''), cid: info.dbgCid });
         await fbFail(noMediaOp, { stage: 'resolve', code: 'NO_MEDIA' });
         await fbBadgeReporter(noMediaOp)('ERR', '#ef4444');
       }
@@ -10925,12 +11416,13 @@ async function onContextMenuClicked(info, tab) {
       : `gesture-player:${tab.id}:${info.frameId ?? 0}`);
     if (inFlightRequests.has(dedupeKey)) {
       console.warn('[MediaLatch] Запрос на сохранение данного медиа уже выполняется, игнорируем дубликат:', dedupeKey);
+      dbg('menu', 'click', 'skipped', 'DUPLICATE_IN_FLIGHT', null, { cid: info.dbgCid, tab: tab && tab.id });
       return;
     }
     inFlightRequests.add(dedupeKey);
     activeResolvingCount++;
 
-    const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: rawImageUrl || rawLinkUrl, site: fbSiteOf(info.pageUrl || tab?.url, rawImageUrl || rawLinkUrl) });
+    const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: rawImageUrl || rawLinkUrl, site: fbSiteOf(info.pageUrl || tab?.url, rawImageUrl || rawLinkUrl), cid: info.dbgCid });
     const flashBadge = fbBadgeReporter(op);
 
     // Declared before the try so the catch block below can read it (it was try-scoped, which made the
@@ -11083,6 +11575,13 @@ async function onContextMenuClicked(info, tab) {
         return;
       }
 
+      if (mediaPlan?.error === 'NOT_ARCHIVED') {
+        // BUGFIX-MULTISITE-01: the site states this post's originals are not imported: its own failure (with the stated counts), not an unresolved click
+        await fbFail(op, { stage: 'resolve', code: /^NOT_ARCHIVED(?:_P\d{1,3}_V\d{1,3})?$/.test(mediaPlan.failureCode || '') ? mediaPlan.failureCode : 'NOT_ARCHIVED' });
+        await flashBadge('ERR', '#ef4444');
+        return;
+      }
+
       const tProfilerPlan = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
       console.log(`[Chooser Profiler] 2. media plan selected (+${(tProfilerPlan - tProfilerStart).toFixed(1)}ms, duration: ${(tProfilerPlan - tProfilerStart).toFixed(1)}ms, target: ${sanitizeUrlForLog(targetMediaUrl)})`);
 
@@ -11212,7 +11711,7 @@ async function onContextMenuClicked(info, tab) {
       return;
     }
 
-    const op = await fbBegin({ pageUrl: tab.url || info.pageUrl || '', sourceUrl: '', site: fbSiteOf(tab.url || info.pageUrl, '') });
+    const op = await fbBegin({ pageUrl: tab.url || info.pageUrl || '', sourceUrl: '', site: fbSiteOf(tab.url || info.pageUrl, ''), cid: info.dbgCid });
     const flashBadge = fbBadgeReporter(op);
 
     try {
@@ -11228,7 +11727,8 @@ async function onContextMenuClicked(info, tab) {
           if (chrome.scripting?.executeScript) {
             await chrome.scripting.executeScript({
               target: { tabId: tab.id },
-              files: ['lib/i18n.js', 'content_x.js'] // the label catalogue first (UI-LOCALIZATION-01)
+              injectImmediately: true,
+              files: ['lib/debug_journal.js', 'lib/i18n.js', 'content_x.js'] // the journal client and the label catalogue first (DEBUG-MENU-01, UI-LOCALIZATION-01)
             });
             mediaResult = await chrome.tabs.sendMessage(tab.id, { action: 'GET_X_MEDIA_AT_CURSOR' });
           }
@@ -11238,7 +11738,15 @@ async function onContextMenuClicked(info, tab) {
       }
 
       const rawMediaUrl = mediaResult?.url || mediaResult?.src;
-      if (!mediaResult || !rawMediaUrl) {
+      // CLAUDE-RESUME-04: an unplayed X player has no address yet. When the content script proved it as a post's own player (X's own video poster and
+      // the owning post), the existing recovery below reads the post's declared MP4; the poster is never the media and nothing is guessed.
+      const unplayedOwnedXPlayer = Boolean(mediaResult) && !rawMediaUrl && mediaResult.type === 'video' && mediaResult.isBlobPlayer === true &&
+        mediaResult.isHlsOnly !== true && isXVideoPosterUrl(mediaResult.poster) && Boolean(mediaResult.tweetId || mediaResult.postUrl);
+      dbg('x', 'descriptor', mediaResult && (rawMediaUrl || unplayedOwnedXPlayer) ? 'ok' : 'refused', mediaResult && (rawMediaUrl || unplayedOwnedXPlayer) ? undefined : (mediaResult ? 'NO_ADDRESS' : 'NO_DESCRIPTOR'), () => (mediaResult ? {
+        type: mediaResult.type, host: rawMediaUrl, blob: mediaResult.isBlobPlayer === true, hls: mediaResult.isHlsOnly === true, isQuote: mediaResult.isQuoteTweet === true,
+        postId: mediaResult.tweetId || undefined, mediaId: mediaResult.mediaIdHint || undefined, index: mediaResult.mediaIndex, inline: xInlineInfos.has(info)
+      } : null), { cid: info.dbgCid, op, tab: tab.id });
+      if (!mediaResult || (!rawMediaUrl && !unplayedOwnedXPlayer)) {
         console.warn('[MediaLatch] Медиа под курсором на странице X не найдено');
         await fbFail(op, { stage: 'resolve', code: 'NO_MEDIA' });
         await flashBadge('ERR', '#ef4444');
@@ -11557,19 +12065,20 @@ async function xInlineAsk(tab, sender, payload) {
 }
 
 // A refused owner is visible: a failed operation and an ERR badge, never silence and never a request.
-async function xInlineRefuse(sender) {
-  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, '') });
+async function xInlineRefuse(sender, cid) {
+  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid });
   await fbFail(op, { stage: 'resolve', code: 'NO_MEDIA' });
   await fbBadgeReporter(op)('ERR', '#ef4444');
 }
 
 // One proven descriptor through the shared save-x-media-item pipeline, unless the same item is already running.
-async function xInlineRun(tab, sender, media) {
+async function xInlineRun(tab, sender, media, cid) {
   const key = `${tab.id}:${sender.frameId}:${media.recoveredMp4Url || media.url || media.poster || ''}|${media.tweetId || ''}`;
-  if (xInlineBusy.has(key)) return false;
+  if (xInlineBusy.has(key)) { dbg('x.inline', 'run', 'skipped', 'BUSY', null, { cid, tab: tab.id, frame: sender.frameId }); return false; }
   xInlineBusy.add(key);
   try {
-    const info = { menuItemId: 'save-x-media-item', pageUrl: sender.url, frameId: sender.frameId, xInlineMedia: media };
+    dbg('x.inline', 'run', 'start', undefined, () => ({ type: media.type, blob: media.isBlobPlayer, hls: media.isHlsOnly, isQuote: media.isQuoteTweet, postId: media.tweetId || undefined, mediaId: media.mediaIdHint || undefined, index: media.mediaIndex }), { cid, tab: tab.id, frame: sender.frameId });
+    const info = { menuItemId: 'save-x-media-item', pageUrl: sender.url, frameId: sender.frameId, xInlineMedia: media, dbgCid: cid };
     xInlineInfos.add(info);
     await onContextMenuClicked(info, tab);
     return true;
@@ -11579,15 +12088,18 @@ async function xInlineRun(tab, sender, media) {
 }
 
 async function handleXInlineSave(message, sender) {
-  if (!xInlineSenderOk(message, sender)) return;
+  const cid = dbgCidOf(message);
+  if (!xInlineSenderOk(message, sender)) { dbg('x.inline', 'save', 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
+  dbg('x.inline', 'save', 'start', undefined, null, { cid, tab: sender.tab.id, frame: sender.frameId });
   const answer = await xInlineAsk(sender.tab, sender, { action: 'X_INLINE_OWNER', token: message.token });
   const media = answer && answer.ok === true ? sanitizeXInlineMedia(answer.media) : null;
+  dbg('x.inline', 'owner', media ? 'ok' : 'refused', media ? undefined : (answer && answer.ok === false ? (dbgCode(answer.reason) || 'REFUSED') : (answer ? 'INVALID_DESCRIPTOR' : 'NO_ANSWER')), null, { cid, tab: sender.tab.id, frame: sender.frameId });
   if (!media) {
     console.warn('[MediaLatch] Inline X Save refused: the owner was not proven again');
-    await xInlineRefuse(sender);
+    await xInlineRefuse(sender, cid);
     return;
   }
-  await xInlineRun(sender.tab, sender, media);
+  await xInlineRun(sender.tab, sender, media, cid);
 }
 
 // "Save all (N)": the document proves the whole list first (count, owner, every item), then each item is proven AGAIN right before
@@ -11595,19 +12107,21 @@ async function handleXInlineSave(message, sender) {
 // Items run through the same pipeline as a single save with bounded concurrency; one failed or refused item never touches the
 // others, and every refused item is reported as a failed operation.
 async function handleXInlineSaveAll(message, sender) {
-  if (!xInlineSenderOk(message, sender)) return;
+  const cid = dbgCidOf(message);
+  if (!xInlineSenderOk(message, sender)) { dbg('x.inline', 'batch', 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
   const tab = sender.tab;
   const open = await xInlineAsk(tab, sender, { action: 'X_INLINE_BATCH', token: message.token });
   const count = open && open.ok === true && Number.isInteger(open.count) ? open.count : 0;
+  dbg('x.inline', 'batch', count >= 2 && count <= X_INLINE_BATCH_MAX ? 'start' : 'refused', count >= 2 && count <= X_INLINE_BATCH_MAX ? undefined : (open && open.ok === false ? (dbgCode(open.reason) || 'REFUSED') : (open ? 'INVALID_DESCRIPTOR' : 'NO_ANSWER')), { count, postId: open && open.ownerId }, { cid, tab: tab.id, frame: sender.frameId });
   if (count < 2 || count > X_INLINE_BATCH_MAX) {
     console.warn('[MediaLatch] Inline X Save all refused: the list of media was not proven');
-    await xInlineRefuse(sender);
+    await xInlineRefuse(sender, cid);
     return;
   }
   const ownerId = typeof open.ownerId === 'string' && /^\d{1,25}$/.test(open.ownerId) ? open.ownerId : '';
   const sig = typeof open.sig === 'string' && /^[a-f0-9]{8}$/.test(open.sig) ? open.sig : '';
   const batchKey = `${tab.id}:${sender.frameId}:all:${ownerId}:${sig}`;
-  if (xInlineBusy.has(batchKey)) return;
+  if (xInlineBusy.has(batchKey)) { dbg('x.inline', 'batch', 'skipped', 'BUSY', null, { cid, tab: tab.id }); return; }
   xInlineBusy.add(batchKey);
   const tally = { started: 0, refused: 0, duplicate: 0 };
   let next = 0;
@@ -11622,10 +12136,11 @@ async function handleXInlineSaveAll(message, sender) {
         tally.refused++;
         // an item that changed on its own is skipped; an owner that is gone, replaced, navigated or unknown ends the batch
         if (!answer || answer.ok !== false || answer.reason !== 'STALE_ITEM') lost = true;
-        await xInlineRefuse(sender);
+        dbg('x.inline', 'item', 'refused', (answer && answer.ok === false ? (dbgCode(answer.reason) || 'REFUSED') : (answer ? 'INVALID_DESCRIPTOR' : 'NO_ANSWER')), { index, batch: !lost }, { cid, tab: tab.id });
+        await xInlineRefuse(sender, cid);
         continue;
       }
-      if (await xInlineRun(tab, sender, media)) tally.started++;
+      if (await xInlineRun(tab, sender, media, cid)) tally.started++;
       else tally.duplicate++;
     }
   };
@@ -11633,9 +12148,10 @@ async function handleXInlineSaveAll(message, sender) {
     await Promise.all(Array.from({ length: Math.min(X_INLINE_BATCH_CONCURRENCY, count) }, worker));
     for (let i = Math.min(next, count); i < count; i++) {
       tally.refused++;
-      await xInlineRefuse(sender);
+      await xInlineRefuse(sender, cid);
     }
     console.info('[MediaLatch] Inline X Save all:', { items: count, ...tally });
+    dbg('x.inline', 'batch', 'ok', undefined, { items: count, started: tally.started, refused: tally.refused, duplicate: tally.duplicate }, { cid, tab: tab.id });
   } finally {
     xInlineBusy.delete(batchKey);
   }
@@ -11663,6 +12179,9 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
 const redditInlineInfos = new WeakSet();
 const redgifsInlineInfos = new WeakSet();
 const REDGIFS_INLINE_MAX_ACTIVE = 4;
+// An inline embed save whose proven frame document no longer answers looks the frame up again at most this many times, after a short pause each
+const REDGIFS_EMBED_RETRIES = 2;
+let REDGIFS_EMBED_RETRY_MS = 250;
 let redgifsInlineActive = 0;
 const redditInlineBusy = new Set();
 const REDDIT_INLINE_TOKEN = /^[a-f0-9]{32}$/;
@@ -11706,6 +12225,8 @@ async function redditInlineFindRedGifsFrame(tabId, sender, clip) {
   try {
     results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
+      // Only addresses are read; an unrelated loading feed frame must not delay this probe.
+      injectImmediately: true,
       func: () => ({ href: location.href, child: window !== window.top && window.parent === window.top })
     });
   } catch (_) {
@@ -11791,27 +12312,29 @@ function redditInlineSenderOk(message, sender) {
 }
 
 // A refused owner or item is visible: a failed operation and an ERR badge, never silence and never a request.
-async function redditInlineRefuse(sender, code = 'NO_MEDIA') {
-  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, '') });
+async function redditInlineRefuse(sender, code = 'NO_MEDIA', cid) {
+  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid });
   await fbFail(op, { stage: 'resolve', code });
   await fbBadgeReporter(op)('ERR', '#ef4444');
 }
 
 // One proven descriptor through the shared save-image-item pipeline, unless the same asset is already running.
-async function redditInlineRun(tab, sender, media) {
+async function redditInlineRun(tab, sender, media, cid) {
   const embed = media.redgifsEmbedClip || '';
   const key = `${tab.id}:${sender.frameId}:${embed ? `${media.ownerId}:` : ''}${media.url}`;
-  if (redditInlineBusy.has(key)) return false;
+  if (redditInlineBusy.has(key)) { dbg('reddit.inline', 'run', 'skipped', 'BUSY', null, { cid, tab: tab.id }); return false; }
   redditInlineBusy.add(key);
   try {
+    dbg('reddit.inline', 'run', 'start', undefined, () => ({ kind: media.kind, host: media.url, ownerId: media.ownerId, clipId: embed || undefined, hls: media.redditHls, blob: media.blobPlayer, index: media.index }), { cid, tab: tab.id, frame: sender.frameId });
     // `kind` is only the menu's mediaType hint: the shared pipeline recognises an animation (.gif with format=mp4), a direct video and a native .gif from the address itself
-    const info = { menuItemId: 'save-image-item', srcUrl: media.url, pageUrl: sender.url, frameId: sender.frameId, mediaType: media.kind, redditInlineMedia: media };
+    const info = { menuItemId: 'save-image-item', srcUrl: media.url, pageUrl: sender.url, frameId: sender.frameId, mediaType: media.kind, redditInlineMedia: media, dbgCid: cid };
     if (embed) {
       // RD-10: the click runs in the frame of the proven clip, pinned to the document found now, through the same resolver as the context menu
       const frame = await redditInlineFindRedGifsFrame(tab.id, sender, embed);
+      dbg('reddit.inline', 'frame', frame ? 'ok' : 'refused', frame ? undefined : 'NO_SINGLE_EMBED_FRAME', () => ({ clipId: embed, frame: frame ? frame.frameId : undefined }), { cid, tab: tab.id });
       if (!frame) {
         console.warn('[MediaLatch] Inline Reddit Save refused: no single frame shows the embedded RedGIFs clip');
-        await redditInlineRefuse(sender, 'UNRESOLVED_BLOB_MEDIA');
+        await redditInlineRefuse(sender, 'UNRESOLVED_BLOB_MEDIA', cid);
         return false;
       }
       info.frameId = frame.frameId;
@@ -11826,15 +12349,18 @@ async function redditInlineRun(tab, sender, media) {
 }
 
 async function handleRedditInlineSave(message, sender) {
-  if (!redditInlineSenderOk(message, sender)) return;
+  const cid = dbgCidOf(message);
+  if (!redditInlineSenderOk(message, sender)) { dbg('reddit.inline', 'save', 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
+  dbg('reddit.inline', 'save', 'start', undefined, null, { cid, tab: sender.tab.id, frame: sender.frameId });
   const answer = await xInlineAsk(sender.tab, sender, { action: 'REDDIT_INLINE_OWNER', token: message.token });
   const media = answer && answer.ok === true ? sanitizeRedditInlineMedia(answer.media, null) : null;
+  dbg('reddit.inline', 'owner', media ? 'ok' : 'refused', media ? undefined : dbgCode(redditInlineWhy(answer)), null, { cid, tab: sender.tab.id, frame: sender.frameId });
   if (!media) {
     console.warn('[MediaLatch] Inline Reddit Save refused:', redditInlineWhy(answer));
-    await redditInlineRefuse(sender, redditInlineRefusalCode(answer));
+    await redditInlineRefuse(sender, redditInlineRefusalCode(answer), cid);
     return;
   }
-  await redditInlineRun(sender.tab, sender, media);
+  await redditInlineRun(sender.tab, sender, media, cid);
 }
 
 // "Save all (N)": the document proves the whole list first (count, owner, every item), then each item is proven AGAIN right before it
@@ -11842,19 +12368,22 @@ async function handleRedditInlineSave(message, sender) {
 // batch never redirects work to another post. At most two items run at once; a failed or refused item never touches the others;
 // every refused or unprocessed item is a failed operation, so nothing is silently dropped. A repeated asset is saved once.
 async function handleRedditInlineSaveAll(message, sender) {
-  if (!redditInlineSenderOk(message, sender)) return;
+  const cid = dbgCidOf(message);
+  if (!redditInlineSenderOk(message, sender)) { dbg('reddit.inline', 'batch', 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
   const tab = sender.tab;
   const open = await xInlineAsk(tab, sender, { action: 'REDDIT_INLINE_BATCH', token: message.token });
   const count = open && open.ok === true && Number.isInteger(open.count) ? open.count : 0;
   const ownerId = open && typeof open.ownerId === 'string' && REDDIT_INLINE_OWNER_ID.test(open.ownerId) ? open.ownerId : '';
   const sig = open && typeof open.sig === 'string' && /^[a-f0-9]{8}$/.test(open.sig) ? open.sig : '';
+  const batchOk = !(count < REDDIT_INLINE_BATCH_MIN || count > REDDIT_INLINE_BATCH_MAX || !ownerId || !sig);
+  dbg('reddit.inline', 'batch', batchOk ? 'start' : 'refused', batchOk ? undefined : dbgCode(redditInlineWhy(open)), { count, ownerId: ownerId || undefined }, { cid, tab: tab.id, frame: sender.frameId });
   if (count < REDDIT_INLINE_BATCH_MIN || count > REDDIT_INLINE_BATCH_MAX || !ownerId || !sig) {
     console.warn('[MediaLatch] Inline Reddit Save all refused:', redditInlineWhy(open));
-    await redditInlineRefuse(sender);
+    await redditInlineRefuse(sender, undefined, cid);
     return;
   }
   const batchKey = `${tab.id}:${sender.frameId}:all:${ownerId}:${sig}`;
-  if (redditInlineBusy.has(batchKey)) return;
+  if (redditInlineBusy.has(batchKey)) { dbg('reddit.inline', 'batch', 'skipped', 'BUSY', null, { cid, tab: tab.id }); return; }
   redditInlineBusy.add(batchKey);
   const tally = { started: 0, refused: 0, duplicate: 0 };
   const seen = new Set();
@@ -11873,12 +12402,13 @@ async function handleRedditInlineSaveAll(message, sender) {
         const itemLevel = answer && answer.ok === false && (answer.reason === 'STALE_ITEM' || answer.reason === 'UNRESOLVED_BLOB' || answer.reason === 'UNSUPPORTED_STREAM');
         if (!itemLevel) lost = true;
         console.warn('[MediaLatch] Inline Reddit Save all item refused:', index, redditInlineWhy(answer));
-        await redditInlineRefuse(sender, redditInlineRefusalCode(answer));
+        dbg('reddit.inline', 'item', 'refused', dbgCode(redditInlineWhy(answer)), { index, batch: !lost }, { cid, tab: tab.id });
+        await redditInlineRefuse(sender, redditInlineRefusalCode(answer), cid);
         continue;
       }
-      if (seen.has(media.url)) { tally.duplicate++; continue; }
+      if (seen.has(media.url)) { tally.duplicate++; dbg('reddit.inline', 'item', 'skipped', 'DUPLICATE_ASSET', { index }, { cid, tab: tab.id }); continue; }
       seen.add(media.url);
-      if (await redditInlineRun(tab, sender, media)) tally.started++;
+      if (await redditInlineRun(tab, sender, media, cid)) tally.started++;
       else tally.duplicate++;
     }
   };
@@ -11886,9 +12416,10 @@ async function handleRedditInlineSaveAll(message, sender) {
     await Promise.all(Array.from({ length: Math.min(REDDIT_INLINE_BATCH_CONCURRENCY, count) }, worker));
     for (let i = Math.min(next, count); i < count; i++) {
       tally.refused++;
-      await redditInlineRefuse(sender);
+      await redditInlineRefuse(sender, undefined, cid);
     }
     console.info('[MediaLatch] Inline Reddit Save all:', { items: count, ...tally });
+    dbg('reddit.inline', 'batch', 'ok', undefined, { items: count, started: tally.started, refused: tally.refused, duplicate: tally.duplicate }, { cid, tab: tab.id });
   } finally {
     redditInlineBusy.delete(batchKey);
   }
@@ -11912,7 +12443,9 @@ function redgifsInlineSenderOk(message, sender) {
 }
 
 async function handleRedgifsInlineSave(message, sender) {
-  if (!redgifsInlineSenderOk(message, sender)) return;
+  const cid = dbgCidOf(message);
+  if (!redgifsInlineSenderOk(message, sender)) { dbg('redgifs.inline', 'save', 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
+  dbg('redgifs.inline', 'save', 'start', undefined, null, { cid, tab: sender.tab.id, frame: sender.frameId });
   // concurrent duplicates of one player: the shared pipeline's in-flight key (document and player key, see onContextMenuClicked) suppresses a second save
   const info = {
     menuItemId: 'save-image-item',
@@ -11920,11 +12453,13 @@ async function handleRedgifsInlineSave(message, sender) {
     frameUrl: sender.url,
     frameId: sender.frameId,
     mediaType: 'video',
-    redgifsInline: { token: message.token, documentId: sender.documentId, player: message.player }
+    redgifsInline: { token: message.token, documentId: sender.documentId, player: message.player },
+    dbgCid: cid
   };
   // at most a few saves resolve at once; one more is a visible failure, never a silent drop
   if (redgifsInlineActive >= REDGIFS_INLINE_MAX_ACTIVE) {
-    const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, '') });
+    dbg('redgifs.inline', 'save', 'refused', 'RATE_LIMIT', { n: redgifsInlineActive }, { cid, tab: sender.tab.id });
+    const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid });
     await fbFail(op, { stage: 'resolve', code: 'RATE_LIMIT' });
     await fbBadgeReporter(op)('ERR', '#ef4444');
     return;

@@ -9,6 +9,7 @@
 import { createStore } from './store.js';
 import { watchStorage } from './keys.js';
 import { I18n } from './i18n.js';
+import { uiLog } from './debuglog.js';
 
 export const LANGUAGE_KEY = I18n.PREF_KEY;
 
@@ -52,9 +53,11 @@ export function createLanguage(deps) {
       await chromeApi.storage.local.set({ [LANGUAGE_KEY]: lang });
     } catch (_) {
       if (!disposed) store.setState({ saving: false, error: 'lang.saveFailed' });
+      uiLog('language', 'set', 'failed', 'STORAGE_WRITE', { lang });
       return false;
     }
     touched = true;
+    uiLog('language', 'set', 'ok', undefined, { lang });
     // Storage events already applied the latest committed choice, possibly from another page.
     if (!disposed) store.setState({ ...(changeRevision === startedRevision ? { lang } : {}), saving: false, error: '' });
     return true;

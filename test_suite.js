@@ -25603,7 +25603,7 @@ async function runTests() {
           const ctx = vm.createContext({ WeakRef, Date, Set, URL,
             window: { addEventListener: (t, f) => { L[t] = f; }, getComputedStyle: (e) => ({ backgroundImage: e.bg || 'none' }) },
             document: { elementsFromPoint: () => stack } });
-          vm.runInContext(process.argv[1], ctx);
+          vm.runInContext(require('fs').readFileSync(0, 'utf8'), ctx);
           const gesture = () => {
             const scope = mk('DIV', null);
             const base = mk('DIV', scope, 'url("https://x.test/a.jpg")');
@@ -25620,7 +25620,8 @@ async function runTests() {
             for (let i = 0; i < 12; i++) { await new Promise(setImmediate); global.gc(); }
             console.log([g.proven].concat(g.refs.map((r) => (r.deref() ? 'retained' : 'collected'))).join(','));
           })();`;
-        const r = require('child_process').spawnSync(process.execPath, ['--expose-gc', '-e', child, scriptCode], { encoding: 'utf8', timeout: 10000 });
+        // the capture script travels on stdin: as a command-line argument it exceeds the Windows command-line limit (32767 characters)
+        const r = require('child_process').spawnSync(process.execPath, ['--expose-gc', '-e', child], { input: scriptCode, encoding: 'utf8', timeout: 10000 });
         assert(r.status === 0 && r.stdout.trim() === 'true,collected,collected,collected', '239.40: запись жеста с media (overlay, медиа под ним, контейнер): media подтверждается, а после gc удалённые узлы освобождаются, запись их не удерживает');
       }
 
@@ -28395,6 +28396,109 @@ async function runTests() {
             const videoExec = execCallsList.find((c) => c && c.world === 'MAIN');
             assert(videoExec && videoExec.args[0].tweetId === '2030' && videoExec.args[0].postUrl === 'https://x.com/someone/status/2030' && videoExec.args[0].x === 180 && videoExec.args[0].y === 300, '252.B24f: executeScript вызван в MAIN world с параметрами blob-плеера (tweetId, postUrl, координаты центра 180, 300)');
             mockChrome.scripting.executeScript = prevExec252;
+          }
+
+          // ---- CLAUDE-RESUME-04: an X player before its first playback (Grxit/status/2109005718015606807 report: NO_MEDIA until played) ----
+          // An unplayed X player has no source at all, only X's own video poster. It is still the post's own player: Save this, Save all and the
+          // context menu recover its MP4 from the post's declared variants (MAIN world, by the poster's media id), never play or load it, never save
+          // the poster. A player without X's video poster, or a descriptor without its owning post, is refused before any provider request.
+          {
+            const PID = '2109005718015606807';
+            const MID = ['2109005600000000001', '2109005600000000002'];
+            const posterOf = (m) => `https://pbs.twimg.com/amplify_video_thumb/${m}/img/p${m}.jpg`;
+            const mp4Of = (m) => `https://video.twimg.com/amplify_video/${m}/vid/avc1/720x1280/v${m}.mp4?tag=14`;
+            const unplayedPost = (w, mids, id = PID) => {
+              const p = post(w, { id, user: 'Grxit', height: 800 });
+              const players = mids.map((m, i) => {
+                const tile = el(w, 'div', p.art, { rect: R(20 + i * 330, 200, 320, 400), cs: { position: 'relative', overflow: 'hidden' } });
+                const v = mp4(w, tile, '', R(20 + i * 330, 200, 320, 400), m ? posterOf(m) : '');
+                v.calls = [];
+                v.play = () => { v.calls.push('play'); return Promise.resolve(); };
+                v.load = () => { v.calls.push('load'); };
+                return v;
+              });
+              return { p, players };
+            };
+            const mainCalls = [];
+            const recoverByPoster = async (opts) => {
+              execCalls++;
+              if (opts && opts.world === 'MAIN') {
+                mainCalls.push(opts.args[0]);
+                const a = opts.args[0];
+                const m = MID.find((x) => x === a.mediaIdHint);
+                return [{ result: a.tweetId === PID && m ? { ok: true, mp4Url: mp4Of(m), bitrate: 950000 } : { ok: false, error: 'METADATA_NOT_FOUND' } }];
+              }
+              return [{ result: null }];
+            };
+            try {
+              // Save this on a single unplayed player
+              {
+                const w = mkWorld();
+                const { players } = unplayedPost(w, [MID[0]]);
+                installNet(); attach(w);
+                mockChrome.scripting.executeScript = recoverByPoster;
+                mainCalls.length = 0;
+                w.move(100, 300);
+                assert(w.button() !== null, '252.P1: an unplayed X player (no source, X video poster) gets the inline control');
+                const before = dlCount();
+                w.click(); await settleN(w, 200);
+                const d = downloadedCalls.slice(before);
+                assert(d.length === 1 && d[0].url === mp4Of(MID[0]) && /\.mp4$/i.test(d[0].filename), '252.P2: Save this before the first playback saves the post\'s own MP4 (exact URL): ' + JSON.stringify(d.map((x) => x.url)));
+                const a = mainCalls[0];
+                assert(mainCalls.length === 1 && a.tweetId === PID && a.postUrl === `https://x.com/Grxit/status/${PID}` && a.mediaIdHint === MID[0] && a.posterUrl === posterOf(MID[0]) && a.isQuoteTweet === false && a.x === 180 && a.y === 400,
+                  '252.P3: the recovery is asked for that post, that media id and the player\'s own centre: ' + JSON.stringify(a));
+                assert(players[0].calls.length === 0 && !d.some((x) => /amplify_video_thumb|\.jpg/.test(x.url)), '252.P4: nothing is played or loaded, the poster is never saved');
+              }
+              // Save all over two unplayed players: two distinct exact MP4s
+              {
+                const w = mkWorld();
+                const { players } = unplayedPost(w, MID);
+                installNet(); attach(w);
+                mockChrome.scripting.executeScript = recoverByPoster;
+                mainCalls.length = 0;
+                w.move(100, 300);
+                assert(w.labelOf(w.buttonAll()) === 'Save all (2)', '252.P5: two unplayed players are two media of the post');
+                const before = dlCount();
+                w.clickAll(); await settleN(w, 300);
+                const urls = downloadedCalls.slice(before).map((x) => x.url).sort();
+                assert(JSON.stringify(urls) === JSON.stringify(MID.map(mp4Of).sort()) && players.every((v) => v.calls.length === 0), '252.P6: Save all before playback: each player\'s own MP4 once, nothing played: ' + JSON.stringify(urls));
+              }
+              // the context menu over an unplayed player: the same descriptor builder and the same recovery
+              {
+                const w = mkWorld();
+                unplayedPost(w, [MID[1]]);
+                installNet();
+                mockChrome.scripting.executeScript = recoverByPoster;
+                mainCalls.length = 0;
+                const prevSend = mockChrome.tabs._msgHandler;
+                mockChrome.tabs._msgHandler = async (tabId, msg) => (msg && msg.action === 'GET_X_MEDIA_AT_CURSOR' ? w.ctx.__findXMediaAtPoint(100, 300) : null);
+                const before = dlCount();
+                await mockChrome.contextMenus._handler({ menuItemId: 'save-x-media-item', pageUrl: `https://x.com/Grxit/status/${PID}` }, { id: TAB, url: `https://x.com/Grxit/status/${PID}` });
+                const d = downloadedCalls.slice(before);
+                assert(d.length === 1 && d[0].url === mp4Of(MID[1]) && mainCalls.length === 1 && mainCalls[0].mediaIdHint === MID[1], '252.P7: the context menu before playback recovers and saves that player\'s MP4: ' + JSON.stringify(d.map((x) => x.url)));
+                // refusals: a source-less player without X's video poster, and a descriptor whose owning post is not given, make no provider request
+                const noPoster = mkWorld();
+                unplayedPost(noPoster, ['']);
+                mockChrome.tabs._msgHandler = async (tabId, msg) => (msg && msg.action === 'GET_X_MEDIA_AT_CURSOR' ? noPoster.ctx.__findXMediaAtPoint(100, 300) : null);
+                mainCalls.length = 0;
+                const b2 = dlCount();
+                await mockChrome.contextMenus._handler({ menuItemId: 'save-x-media-item', pageUrl: `https://x.com/Grxit/status/${PID}` }, { id: TAB, url: `https://x.com/Grxit/status/${PID}` });
+                assert(dlCount() === b2 && mainCalls.length === 0, '252.P8: a source-less player without X\'s video poster stays unavailable: no recovery request, no download');
+                const unowned = { type: 'video', src: '', url: '', poster: posterOf(MID[1]), isBlobPlayer: true, isHlsOnly: false, mime: 'video/mp4', pageUrl: 'https://x.com/home' };
+                mockChrome.tabs._msgHandler = async (tabId, msg) => (msg && msg.action === 'GET_X_MEDIA_AT_CURSOR' ? unowned : null);
+                await mockChrome.contextMenus._handler({ menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/home' }, { id: TAB, url: 'https://x.com/home' });
+                assert(dlCount() === b2 && mainCalls.length === 0, '252.P9: an address-less player without its owning post is refused before any recovery request');
+                // the post's metadata does not name this media: a visible failure, never another item's MP4 or the poster
+                const foreign = mkWorld();
+                unplayedPost(foreign, [MID[0]], '2109009999999999999');
+                mockChrome.tabs._msgHandler = async (tabId, msg) => (msg && msg.action === 'GET_X_MEDIA_AT_CURSOR' ? foreign.ctx.__findXMediaAtPoint(100, 300) : null);
+                await mockChrome.contextMenus._handler({ menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/home' }, { id: TAB, url: 'https://x.com/home' });
+                assert(dlCount() === b2 && mainCalls.length === 1, '252.P10: a recovery that does not prove the media saves nothing');
+                mockChrome.tabs._msgHandler = prevSend;
+              }
+            } finally {
+              mockChrome.scripting.executeScript = prevExec252;
+            }
             // the same player and an identical poster in another place of the post are still one media (same media id)
             const w2 = mkWorld();
             const p2 = post(w2, { id: '2031', height: 800 });
@@ -29019,6 +29123,99 @@ async function runTests() {
         const qm = w2.lastOwnerAnswer.media;
         assert(qm.isQuoteTweet === true && qm.mediaIdHint === '9412' && qm.tweetId !== '411' && !/status\/411/.test(qm.postUrl || ''), '252.6c: видео цитаты помечено как цитата, несёт id своего медиа и не получает идентификатор основного поста (поиск владельца в MAIN-мире идёт по ссылкам самой цитаты)');
         mockChrome.scripting.executeScript = prevExec252;
+      }
+
+      // A media element with pointer-events:none is absent from the browser's hit stack, even inside an owned quote.
+      for (const kind of ['photo', 'video']) {
+        const w = mkWorld();
+        const p = post(w, { id: '431', quoteId: '432' });
+        p.quote.removeAttribute('data-testid');
+        p.quote.setAttribute('role', 'link');
+        p.quote.setAttribute('data-href', '/other/status/432');
+        const tile = el(w, 'div', p.quote, { rect: R(60, 540, 500, 200), cs: { position: 'relative', overflow: 'hidden' } });
+        const media = kind === 'photo' ? photo(w, tile, 'OVERLAY_QUOTE', R(60, 540, 500, 200))
+          : mp4(w, tile, 'https://video.twimg.com/ext_tw_video/432/pu/vid/avc1/640x360/overlay.mp4?tag=12', R(60, 540, 500, 200));
+        w.stackHook = () => [tile, p.quote, p.art, w.body, w.root];
+        w.toBackground = () => {};
+        w.move(300, 600);
+        const host = w.host();
+        assert(host && host.parentElement === tile && w.sent.length === 0, '252.6e (' + kind + '): owned quote media under a hit-test layer gets a control without requests');
+        if (host) {
+          w.click();
+          const answer = w.ask({ action: 'X_INLINE_OWNER', token: w.sent[0].token });
+          assert(answer?.ok === true && answer.media.url.includes(kind === 'photo' ? 'OVERLAY_QUOTE' : 'overlay.mp4'), '252.6f (' + kind + '): first click proves exactly the hovered quote media');
+        } else assert(false, '252.6f (' + kind + '): first click needs the missing control');
+        media.remove();
+        photo(w, tile, 'NEIGHBOR_ONLY', R(60, 1000, 500, 200));
+        w.move(300, 600);
+        assert(w.hosts().length === 0, '252.6g (' + kind + '): an ancestor\'s media outside the pointer never supplies a control');
+      }
+      {
+        const w = mkWorld();
+        const p = post(w, { id: '441', quoteId: '442' });
+        const tile = el(w, 'div', p.quote, { rect: R(60, 540, 500, 200), cs: { position: 'relative' } });
+        photo(w, tile, 'AMBIGUOUS_1', R(60, 540, 500, 200));
+        photo(w, tile, 'AMBIGUOUS_2', R(60, 540, 500, 200));
+        w.stackHook = () => [tile, p.quote, p.art, w.body, w.root];
+        w.move(300, 600);
+        assert(w.hosts().length === 0 && w.sent.length === 0, '252.6h: two media under one hit-test layer remain ambiguous');
+        tile.children[1].src = tile.children[1].currentSrc = 'https://pbs.twimg.com/profile_images/442/avatar.jpg';
+        w.move(300, 600);
+        assert(w.hosts().length === 0, '252.6i: an excluded image over media still blocks inferred selection');
+        tile.children[1].remove();
+        const cover = el(w, 'div', w.body, { rect: R(250, 580, 100, 40) });
+        w.stackHook = (x, y) => (x === 300 && y === 600 ? [cover, tile, p.quote, p.art, w.body, w.root] : [tile, p.quote, p.art, w.body, w.root]);
+        w.move(300, 600);
+        assert(w.hosts().length === 0, '252.6j: a foreign overlay at the pointer blocks inference even when the media corners are uncovered');
+        w.stackHook = () => [tile, p.quote, p.art, w.body, w.root];
+        for (let i = 0; i < 80; i++) photo(w, tile, 'OUT_OF_POINT_' + i, R(60, 1000 + i * 10, 500, 200));
+        w.move(300, 600);
+        assert(w.hosts().length === 0, '252.6k: a subtree over the scan bound is refused instead of silently omitting a possible second media');
+      }
+
+      // Helium capture: rounded quote corners hit the enclosing card, while the control area still hits owned media.
+      {
+        const w = mkWorld('https://x.com/Gumby_keto/status/2108940629145178305');
+        w.win.innerWidth = 832; w.win.innerHeight = 962;
+        w.toBackground = () => {};
+        const p = post(w, { id: '2108940629145178305', user: 'Gumby_keto', top: 53 });
+        p.art._rect = R(153, 53, 566, 705.3);
+        const wrapper = el(w, 'div', p.art, { rect: R(153, 179, 566, 478.3), cs: { position: 'relative' } });
+        const quote = el(w, 'div', wrapper, { attrs: { role: 'link' }, rect: R(153, 179, 566, 478.3), cs: { position: 'relative', overflow: 'hidden' } });
+        const header = el(w, 'div', quote, { attrs: { 'data-testid': 'User-Name' } });
+        el(w, 'a', header, { attrs: { href: '/asapsmiles/status/2108846479867527345' } });
+        const tile = el(w, 'div', quote, { attrs: { 'data-testid': 'tweetPhoto' }, rect: R(154, 280.3, 564, 376), cs: { position: 'absolute', overflow: 'hidden' } });
+        const media = photo(w, tile, 'HELIUM_QUOTE', R(154, 280.3, 564, 376));
+        media._cs = { position: 'absolute', opacity: '0', zIndex: '-1' };
+        const clippedCorners = (x, y) => y > 650 && (x < 160 || x > 712);
+        const capturedStack = (x, y) => clippedCorners(x, y) ? [wrapper, p.art, w.body, w.root] : w.stackAt(x, y);
+        w.stackHook = capturedStack;
+        w.move(423, 443);
+        const host = w.host();
+        const box = host?.getBoundingClientRect();
+        assert(host?.parentElement === tile && box.left >= 154 && box.right <= 718 && box.top >= 280.3 && box.bottom <= 656.3 && w.sent.length === 0,
+          '252.6l: captured enclosing-card corners allow a bounded quote control without requests');
+        if (host) {
+          w.click();
+          const answer = w.ask({ action: 'X_INLINE_OWNER', token: w.sent[0].token });
+          assert(answer?.ok === true && answer.media.url === media.currentSrc && w.sent.length === 1,
+            '252.6m: first click proves exactly the selected quoted image');
+        } else assert(false, '252.6m: first click needs the missing control');
+        // The top-right control corner is inside the captured media box, away from the rounded card corners.
+        const controlCorner = (x, y) => x > 700 && x < 710 && y > 288 && y < 300;
+        w.stackHook = (x, y) => controlCorner(x, y) ? [wrapper, p.art, w.body, w.root] : capturedStack(x, y);
+        w.move(423, 443);
+        assert(w.hosts().length === 0, '252.6n: an enclosing backdrop in the control area removes the already visible control');
+        const cover = el(w, 'div', w.body, { rect: R(153, 650, 566, 10) });
+        w.stackHook = (x, y) => clippedCorners(x, y) ? [cover, wrapper, p.art, w.body, w.root] : w.stackAt(x, y);
+        w.move(423, 443);
+        assert(w.hosts().length === 0, '252.6o: a foreign foreground element at a media corner still blocks the control');
+        w.stackHook = (x, y) => controlCorner(x, y) ? [] : capturedStack(x, y);
+        w.move(423, 443);
+        assert(w.hosts().length === 0, '252.6p: a missing control-area hit cannot prove a safe placement');
+        w.stackHook = capturedStack;
+        w.move(423, 443);
+        assert(w.host()?.parentElement === tile, '252.6q: removing the obstruction restores the same owned control');
       }
 
       // ===== 252.7-252.9: what must not get a button =====
@@ -29910,6 +30107,34 @@ async function runTests() {
         w.stack = [box(rect(0, 0, 400, 400)), w.body];
         w.ctx.__setLastContextmenuCoords(1030, 1010);
         assert(w.ask() === null, '240.8e: GET_X_MEDIA_AT_CURSOR при сдвинутой точке клика (30 px) не отдаёт сохранённое видео');
+      }
+      // Source-less X players need their gesture-time owner/poster proof: an empty URL cannot identify the media.
+      for (const shift of [false, true]) {
+        for (const change of ['poster', 'post', 'parent', 'detached', 'promoted']) {
+          const w = world();
+          const mediaId = '2109005600000000001';
+          let postId = '2109005718015606807';
+          const posterOf = (id) => `https://pbs.twimg.com/amplify_video_thumb/${id}/img/preview.jpg`;
+          let player;
+          const owner = {
+            tagName: 'ARTICLE', parentElement: null, isConnected: true,
+            getAttribute: (name) => name === 'data-href' ? `https://x.com/Grxit/status/${postId}` : null,
+            querySelector: () => null, querySelectorAll: (sel) => sel === 'video' ? [player] : sel === 'span' && change === 'promoted' ? [{ textContent: 'Ad' }] : [],
+            closest: () => null, contains: (el) => el === player || el === owner
+          };
+          player = vid('', rect(100, 100, 400, 300), { poster: posterOf(mediaId), parentElement: owner, isConnected: true,
+            getAttribute: () => null, closest: (sel) => sel === 'article' ? owner : null });
+          w.stack = [player, w.body];
+          w.down(200, 200, shift); w.menu(200, 200);
+          const selected = w.ask();
+          assert(selected?.url === '' && selected?.mediaIdHint === mediaId, `240.P1: source-less player remains selectable before mutation (shift=${shift}, ${change})`);
+          if (change === 'poster') player.poster = posterOf('2109005600000000002');
+          if (change === 'post') postId = '2109005718015606808';
+          if (change === 'parent') player.parentElement = { parentElement: owner };
+          if (change === 'detached') player.isConnected = false;
+          if (change === 'promoted') assert(w.ask()?.mediaIdHint === mediaId, `240.P2: explicit native save on the same promoted player stays admitted (shift=${shift})`);
+          else assert(w.ask() === null, `240.P2: source-less player ${change} after the menu opens is refused before recovery (shift=${shift})`);
+        }
       }
       // C. kept positives: overlay over a player, quoted post, tweet_video
       {
@@ -32176,7 +32401,7 @@ async function runTests() {
           await mockChrome.runtime._onInstalledCb({ reason: 'update' });
           await settle();
           assert(queries.length === 1 && JSON.stringify(queries[0]) === JSON.stringify({ url: ['http://*/*', 'https://*/*'] }), '265.12a: открытые вкладки запрашиваются только по http(s): ' + JSON.stringify(queries));
-          assert(JSON.stringify(execs.map((o) => o.target.tabId)) === JSON.stringify([11, 13, 14]) && execs.every((o) => o.target.allFrames === true && JSON.stringify(o.files) === JSON.stringify(['content_context_target.js']) && o.world === undefined && o.func === undefined),
+          assert(JSON.stringify(execs.map((o) => o.target.tabId)) === JSON.stringify([11, 13, 14]) && execs.every((o) => o.target.allFrames === true && JSON.stringify(o.files) === JSON.stringify(['lib/debug_journal.js', 'content_context_target.js']) && o.world === undefined && o.func === undefined),
             '265.12b: capture внедряется в каждую открытую вкладку (все кадры, только файл capture); отброшенная и безадресная вкладки пропущены, отказ одной вкладки не останавливает остальные: ' + JSON.stringify(execs.map((o) => o.target)));
           execs.length = 0; queries.length = 0;
           await mockChrome.runtime._onInstalledCb({ reason: 'install' });
@@ -32780,6 +33005,674 @@ async function runTests() {
       sandbox.console.log = prev.log;
       sandbox.console.error = prev.error;
       if (prev.runtimeId === undefined) delete mockChrome.runtime.id;
+    }
+  }
+
+  // ── Test 270: BUGFIX-MULTISITE-01 X Save all — an item whose centre is off-screen or under the page header still resolves its own MP4 ──
+  {
+    console.log('\n--- Test 270: X Save all — every distinct owned video of a multi-video post (point missed) ---');
+    const ID = '2101151634160005294';
+    const mp4Of = (mid) => `https://video.twimg.com/amplify_video/${mid}/vid/avc1/720x1558/${mid}.mp4?tag=14`;
+    const posterOf = (mid) => `https://pbs.twimg.com/amplify_video_thumb/${mid}/img/p${mid}.jpg`;
+    const vmedia = (mid, owner = ID, k = 1) => ({ id_str: mid, type: 'video', expanded_url: `https://x.com/u/status/${owner}/video/${k}`, video_info: { variants: [{ content_type: 'application/x-mpegURL', url: `https://video.twimg.com/amplify_video/${mid}/pl/a.m3u8` }, { content_type: 'video/mp4', bitrate: 950000, url: mp4Of(mid) }, { content_type: 'video/mp4', bitrate: 256000, url: mp4Of(mid).replace('720x1558', '320x692') }] } });
+    // A status page as X renders it: the article's own host fiber has only DOM props; the post data lives on a component fiber between
+    // each player and the article. Optional quote card with its own player (a nested owner).
+    const mkStatus = ({ mids, quoteMid = null, lazy = [] }) => {
+      const anchor = { tagName: 'A', href: `https://x.com/ChileanSluts/status/${ID}`, getAttribute: (n) => (n === 'href' ? `/ChileanSluts/status/${ID}` : null), querySelector: () => ({ tagName: 'TIME' }), closest: () => null };
+      const art = { tagName: 'ARTICLE', parentElement: null, getAttribute: (n) => (n === 'data-testid' ? 'tweet' : null) };
+      art.closest = (s) => (s.includes('article') ? art : null);
+      art.__reactFiber$t = { memoizedProps: { className: 'css-1' }, stateNode: art, return: null };
+      const tweet = { id_str: ID, extended_entities: { media: mids.map((m, i) => vmedia(m, ID, i + 1)) } };
+      const comp = { memoizedProps: { tweet }, stateNode: null, return: art.__reactFiber$t };
+      const media = [];
+      mids.forEach((mid, i) => {
+        const tile = { tagName: 'DIV', parentElement: art, closest: art.closest };
+        const isLazy = lazy.includes(i);
+        // a lazy tile shows only the video's poster image until its player hydrates
+        const m = isLazy
+          ? { tagName: 'IMG', src: posterOf(mid), currentSrc: posterOf(mid), parentElement: tile, getAttribute: () => null, closest: art.closest }
+          : { tagName: 'VIDEO', src: `blob:https://x.com/b${i}`, currentSrc: `blob:https://x.com/b${i}`, poster: posterOf(mid), parentElement: tile, getAttribute: (n) => (n === 'poster' ? posterOf(mid) : null), closest: art.closest };
+        m.__reactFiber$t = { memoizedProps: { src: m.src }, stateNode: m, return: comp };
+        media.push(m);
+      });
+      let quoteEl = null;
+      if (quoteMid) {
+        const quote = { tagName: 'DIV', parentElement: art, getAttribute: (n) => (n === 'data-testid' ? 'quoteTweet' : null) };
+        quote.closest = (s) => (s.includes('quoteTweet') ? quote : art.closest(s));
+        const qTweet = { id_str: '777', extended_entities: { media: [vmedia(quoteMid, '777')] } };
+        quoteEl = { tagName: 'VIDEO', src: 'blob:https://x.com/q', poster: posterOf(quoteMid), parentElement: quote, getAttribute: (n) => (n === 'poster' ? posterOf(quoteMid) : null), closest: quote.closest };
+        quoteEl.__reactFiber$t = { memoizedProps: { tweet: qTweet }, stateNode: null, return: comp };
+        media.push(quoteEl);
+      }
+      const all = [anchor, ...media];
+      art.contains = (n) => n === art || all.includes(n) || media.some((x) => x.parentElement === n);
+      art.querySelectorAll = (s) => {
+        const parts = s.split(',').map((x) => x.trim());
+        return all.filter((n) => parts.some((p) => p === n.tagName.toLowerCase() || (p.startsWith('a') && n.tagName === 'A')));
+      };
+      art.querySelector = (s) => art.querySelectorAll(s)[0] || null;
+      return { art, media, quoteEl };
+    };
+    const header = { tagName: 'DIV', closest: () => null };
+    const docWith = (point, arts) => ({ elementFromPoint: () => point, querySelector: () => null, querySelectorAll: () => arts });
+    const run = (doc, params) => { const prev = sandbox.document; sandbox.document = doc; try { return sandbox.extractXPostVideoInMainWorld({ tweetId: ID, postUrl: `https://x.com/ChileanSluts/status/${ID}`, x: 300, y: 40, ...params }); } finally { sandbox.document = prev; } };
+    const MIDS = ['2101151208358449152', '2101151195762982913', '2101151180000000001', '2101151170000000002'];
+
+    // 270.1-270.2: the reported failures — the item's centre lies under X's sticky header (no-article) or below the viewport (no-element)
+    const s4 = mkStatus({ mids: MIDS });
+    let r = run(docWith(header, [s4.art]), { mediaIdHint: MIDS[2], posterUrl: posterOf(MIDS[2]), mediaIndex: 2 });
+    assert(r.ok === true && r.mp4Url === mp4Of(MIDS[2]) && r.diag.point === 'no-article' && r.diag.how === 'status' && r.diag.sel === 'hint', '270.1: an item under the page header (point no-article) is found by status and resolves ITS OWN highest-bitrate MP4');
+    r = run(docWith(null, [s4.art]), { mediaIdHint: MIDS[3], posterUrl: posterOf(MIDS[3]), mediaIndex: 3 });
+    assert(r.ok === true && r.mp4Url === mp4Of(MIDS[3]) && r.diag.point === 'no-element', '270.2: an item below the viewport (point no-element) resolves its own MP4');
+    // 270.3: four distinct players of one post, each resolved off-screen, give four distinct exact URLs (no shared or first variant)
+    const urls = MIDS.map((mid, i) => run(docWith(null, [s4.art]), { mediaIdHint: mid, posterUrl: posterOf(mid), mediaIndex: i }).mp4Url);
+    assert(urls.every((u, i) => u === mp4Of(MIDS[i])) && new Set(urls).size === 4, '270.3: four videos of one post: four distinct exact MP4s, each the selected item\'s own');
+    // 270.4: three videos (MiriSaraw4k shape), the third not hydrated yet (poster image only)
+    const s3 = mkStatus({ mids: MIDS.slice(0, 3), lazy: [2] });
+    r = run(docWith(header, [s3.art]), { mediaIdHint: MIDS[2], posterUrl: posterOf(MIDS[2]) });
+    assert(r.ok === true && r.mp4Url === mp4Of(MIDS[2]), '270.4: a lazy item (poster image, no player yet) off-screen resolves its own MP4');
+    // 270.5: no media id (a player without poster): its position among the container's players selects it
+    r = run(docWith(null, [s4.art]), { mediaIndex: 1 });
+    assert(r.ok === true && r.mp4Url === mp4Of(MIDS[1]) && r.diag.sel === 'index', '270.5: without a media id the descriptor position selects that same player');
+    // 270.6: a media id the post does not show is refused; never the first video or another item's URL
+    r = run(docWith(null, [s4.art]), { mediaIdHint: '999', posterUrl: posterOf('999'), mediaIndex: 0 });
+    assert(r.ok === false && !r.mp4Url, '270.6: an unknown media id is a refusal (no mediaIndex 0 fallback)');
+    // 270.7: the quoted card's player inside the outer post is not the outer post's item
+    const sq = mkStatus({ mids: MIDS.slice(0, 2), quoteMid: '5550001' });
+    r = run(docWith(null, [sq.art]), { mediaIdHint: '5550001', posterUrl: posterOf('5550001') });
+    assert(r.ok === false && !r.mp4Url, '270.7: a nested quote\'s player is never resolved as an item of the outer post');
+    // 270.8: control — a visible item still resolves by point exactly as before
+    r = run(docWith(s4.media[0], [s4.art]), { mediaIdHint: MIDS[0], posterUrl: posterOf(MIDS[0]), mediaIndex: 0 });
+    assert(r.ok === true && r.mp4Url === mp4Of(MIDS[0]) && r.diag.how === 'point', '270.8: control: a visible item resolves by point');
+  }
+
+  // ── Test 271: BUGFIX-MULTISITE-01 Pawchive — a post the site has not imported (observed layout of /fanbox/user/37736420/post/10438170) ──
+  {
+    console.log('\n--- Test 271: Pawchive not-imported originals: accurate feedback, available originals of a partial post ---');
+    const prevFetch = sandbox.fetch;
+    const prevWarn = sandbox.console.warn;
+    const prevPace = vm.runInContext('PAWCHIVE_POST_MEDIA_PACE_MS', sandbox);
+    vm.runInContext('PAWCHIVE_POST_MEDIA_PACE_MS = 0', sandbox);
+    const FBM = vm.runInContext('ImageSaverFeedback', sandbox);
+    try {
+      sandbox.console.warn = () => {};
+      const POST_URL = 'https://pawchive.pw/fanbox/user/37736420/post/10438170';
+      const CREATOR_URL = 'https://pawchive.pw/fanbox/user/37736420';
+      const PREV = 'fd8c35aecbdd2e49661c7c49dd00d8be46341ef72708deb6ccad4d414612fe5f';
+      const OTHER = 'a45baf5db6ce7a9e70c1ddbb05dcab152150dda285add9bb964847f41552ed85';
+      const VH = 'cdb118ca3f778185baaee9c934d54dd991de5b0c06d7b054c762c81edb6b1904';
+      const CH = '9b31b482bbffa165a89bf936e21d34c5af64dd4a481eb2f30a2af3dfd106e0b2';
+      const thumb = (h, ext = 'jpg') => `https://img.pawchive.pw/thumbnail/data/${h.slice(0, 2)}/${h.slice(2, 4)}/${h}.${ext}`;
+      const file = (h, ext, q) => `https://file.pawchive.pw/data/${h.slice(0, 2)}/${h.slice(2, 4)}/${h}.${ext}?f=${q}`;
+      const VIDEO = file(VH, 'mp4', '0_15.mp4');
+      const COVER = file(CH, 'jpeg', 'cover.jpeg');
+      const STATS = 'Missing 1 full-res photo, 2 videos, as this post has not yet been imported.';
+      // the observed page, reduced to its identity, its generated state markup and its media blocks (whitespace as served)
+      const page = ({ badge = true, stats = STATS, missingNames = ['0_13.mp4', '0_14.mp4'], previews = [PREV], videos = [], covers = [], content = 'I thought I would share some clips with you guys.' } = {}) => `<!DOCTYPE html><html><head>
+<meta name="service" content="fanbox"><meta name="user" content="37736420"><meta name="id" content="10438170"><link rel="canonical" href="${POST_URL}"></head><body>
+<section class="site-section site-section--post" id="page" data-service="fanbox" data-user="37736420" data-id="10438170">
+<header class="post__header">${badge ? '<span class="state-badge state-badge--preview" title="haven&#39;t archived this post yet" aria-label="haven&#39;t archived this post yet"><svg viewBox="0 0 24 24"></svg></span>' : ''}<div class="post__info"><h1 class="post__title"><span>WIP</span> <span>(Pixiv Fanbox)</span></h1></div></header>
+<div class="post__body">${badge ? '<div class="post__cta">haven\'t archived this post yet. have a subscription? use the <a href="/importer">importer</a>!</div>' : ''}
+${videos.length ? `<ul class="post__videos">${videos.map((v) => `<li><video controls class="post__video"><source src="${v.replace(/&/g, '&amp;')}" type="video/mp4"/></video></li>`).join('')}</ul>` : ''}
+<h2>Downloads</h2><ul class="post__attachments">${missingNames.map((n) => `<li class="post__attachment"><span class="post__attachment-link post__attachment-link--missing">${n}</span></li>`).join('')}${videos.map((v) => `<li class="post__attachment"><a class="post__attachment-link" href="${v.replace(/&/g, '&amp;')}" download="v">Download</a></li>`).join('')}</ul>
+${stats !== null ? `<p class="post__missing-stats">\n        ${stats}\n      </p>` : ''}
+<h2>Content</h2><div class="post__content">${content}</div>
+<h2>Files</h2>${badge ? '<p class="subtitle post__previews-note">Previews only</p>' : ''}<div class="post__files">${previews.map((h) => `<div class="post__thumbnail"><figure><img data-src="${thumb(h)}" src="${thumb(h)}" loading="lazy"></figure></div>`).join('')}${covers.map((c) => `<div class="post__thumbnail"><figure><a class="fileThumb" href="${c.href}"><img data-src="${c.thumb}" src="${c.thumb}"></a></figure></div>`).join('')}</div>
+</div></section></body></html>`;
+      let calls = [];
+      let routes = {};
+      const mk = (status, headers, text) => ({ ok: status >= 200 && status < 300, status, type: 'basic', redirected: false, headers: new Map(Object.entries(headers || {})), text: async () => text || '' });
+      sandbox.fetch = async (url, opts) => {
+        const u = typeof url === 'string' ? url : (url?.url || '');
+        calls.push({ url: u, method: (opts && opts.method) || 'GET' });
+        return routes[u] || mk(404, { 'content-type': 'text/html' }, 'not found');
+      };
+      const html = (t) => mk(200, { 'content-type': 'text/html; charset=utf-8' }, t);
+      const media = (type) => mk(200, { 'content-type': type, 'content-length': '1000' });
+      const reset = (r) => { calls = []; routes = r; sandbox.resetActiveOffscreenTasks(0); };
+      const known = async () => { await sandbox.feedbackTracker.flush(); return new Set((await sandbox.feedbackTracker.list()).map((o) => o.id)); };
+      const failedSince = async (k) => { await sandbox.feedbackTracker.flush(); return (await sandbox.feedbackTracker.list()).filter((o) => !k.has(o.id) && o.state === 'failed'); };
+      const click = async (info) => {
+        const before = downloadedCalls.length;
+        const k = await known();
+        await mockChrome.contextMenus._handler({ menuItemId: 'save-image-item', ...info }, { id: 271001 });
+        return { dl: downloadedCalls.slice(before), failed: await failedSince(k) };
+      };
+      const card = { srcUrl: thumb(PREV), pageUrl: CREATOR_URL, linkUrl: POST_URL };
+      const noGuess = () => calls.every((c) => c.url === POST_URL || c.url === VIDEO || c.url === COVER);
+
+      // 271.1: the observed not-imported post (1 photo and 2 videos missing, previews only): its own failure with the site's counts, nothing fetched but the page
+      reset({ [POST_URL]: html(page()) });
+      const p1 = await sandbox.resolveOriginalMediaPlan({ ...card, allowPostMedia: true });
+      assert(p1 && p1.error === 'NOT_ARCHIVED' && p1.failureCode === 'NOT_ARCHIVED_P1_V2' && p1.score === 0, '271.1: the observed not-imported post resolves to NOT_ARCHIVED with the stated counts (1 photo, 2 videos): ' + JSON.stringify(p1 && [p1.error, p1.failureCode]));
+      reset({ [POST_URL]: html(page()) });
+      let r = await click(card);
+      assert(r.dl.length === 0 && r.failed.length === 1 && r.failed[0].failure.code === 'NOT_ARCHIVED_P1_V2' && r.failed[0].failure.category === 'not_archived' && r.failed[0].failure.status === null,
+        '271.2: the feed preview saves nothing and records one not_archived failure (no HTTP status claimed): ' + JSON.stringify(r.failed.map((o) => o.failure)));
+      assert(calls.length === 1 && calls[0].url === POST_URL && !calls.some((c) => /0_1[34]\.mp4|img\.pawchive/.test(c.url)), '271.3: only the post page is requested: no preview, no address built from the listed filenames');
+      // 271.4: the preview clicked inside the post page itself: the same failure
+      reset({ [POST_URL]: html(page()) });
+      r = await click({ srcUrl: thumb(PREV), pageUrl: POST_URL, linkUrl: null });
+      assert(r.dl.length === 0 && r.failed.length === 1 && r.failed[0].failure.code === 'NOT_ARCHIVED_P1_V2', '271.4: a preview inside the not-imported post page: not_archived, nothing saved');
+      // 271.5: the bilingual explanation states the counts and is neither "HTTP 404" nor "right-click the media"
+      const en = FBM.summarize(r.failed[0], 'en');
+      const ru = FBM.summarize(r.failed[0], 'ru');
+      assert(en.category === 'not_archived' && /not imported/i.test(en.title) && /1 full-resolution image, 2 videos/.test(en.explanation) && !/404|right-click/i.test(en.explanation + en.nextStep) && /preview was not saved/i.test(en.nextStep),
+        '271.5a: English: ' + JSON.stringify([en.title, en.explanation, en.nextStep]));
+      assert(/не импортирован/.test(ru.title) && /1 изображение в полном размере, 2 видео/.test(ru.explanation) && !/404|правой кнопкой/.test(ru.explanation + ru.nextStep), '271.5b: Russian: ' + JSON.stringify([ru.title, ru.explanation]));
+
+      // 271.6: a not-imported post without the missing-files line (observed post 10653431 shape): the state is known, the counts are not invented
+      reset({ [POST_URL]: html(page({ stats: null, missingNames: [] })) });
+      r = await click(card);
+      assert(r.dl.length === 0 && r.failed.length === 1 && r.failed[0].failure.code === 'NOT_ARCHIVED' && !/\d/.test(FBM.summarize(r.failed[0], 'en').explanation), '271.6: badge only: NOT_ARCHIVED without counts');
+      // 271.7: a wording the extension does not know keeps the state but not the numbers
+      reset({ [POST_URL]: html(page({ stats: 'Missing 3 attachments, as this post has not yet been imported.' })) });
+      const p7 = await sandbox.resolveOriginalMediaPlan({ ...card, allowPostMedia: true });
+      assert(Boolean(p7) && p7.failureCode === 'NOT_ARCHIVED', '271.7: an unknown missing-files wording: NOT_ARCHIVED, no counts guessed');
+
+      // 271.8: a partly imported post (synthetic: the observed state markup plus declared originals): the available originals are saved, the missing ones reported
+      reset({ [POST_URL]: html(page({ stats: 'Missing 1 full-res photo, as this post has not yet been imported.', missingNames: [], videos: [VIDEO], covers: [{ href: COVER, thumb: thumb(CH, 'jpeg') }] })), [VIDEO]: media('video/mp4'), [COVER]: media('image/jpeg') });
+      r = await click(card);
+      assert(r.dl.length === 2 && r.dl[0].url === VIDEO && r.dl[1].url === COVER && r.failed.length === 1 && r.failed[0].failure.code === 'NOT_ARCHIVED_P1_V0' && noGuess(),
+        '271.8: partial post: both declared originals saved with exact URLs, plus one not_archived report; no preview or guessed request: ' + JSON.stringify({ d: r.dl.map((d) => d.url.slice(-20)), f: r.failed.map((o) => o.failure.code), c: calls.map((c) => c.method + ' ' + c.url.slice(-25)) }));
+      const partialEn = FBM.summarize(r.failed[0], 'en');
+      const partialRu = FBM.summarize(r.failed[0], 'ru');
+      assert(/1 full-resolution image/.test(partialEn.explanation) && /1 изображение в полном размере/.test(partialRu.explanation) &&
+        !/only a preview|this post.s original files/i.test(partialEn.explanation) && !/только превью|оригинальные файлы этого поста им не импортированы/.test(partialRu.explanation),
+        '271.8b: a partial post reports the missing original in both languages without claiming its available originals are absent');
+      reset({ [POST_URL]: html(page({ missingNames: ['0_13.mp4'], videos: [VIDEO] })), [VIDEO]: media('video/mp4') });
+      r = await click(card);
+      assert(r.dl.length === 1 && r.dl[0].url === VIDEO && r.failed.length === 1 && /^NOT_ARCHIVED/.test(r.failed[0].failure.code), '271.9: partial post with one available original: that original is saved and the missing ones are still reported');
+      reset({ [POST_URL]: html(page({ missingNames: ['0_13.mp4'], videos: [VIDEO] })), [VIDEO]: media('video/mp4') });
+      const single = await sandbox.resolveOriginalMediaPlan({ ...card });
+      assert(single && single.primaryUrl === VIDEO, '271.9b: a caller without batch saving gets only the single available original (it reports no missing ones; the batch path does)');
+
+      // 271.10: user text is never the site state: an imported post whose content repeats the notice and the markup saves normally
+      const forged = `<p class="post__missing-stats">${STATS}</p><span class="state-badge state-badge--preview"></span><span class="post__attachment-link--missing">x.mp4</span> haven't archived this post yet`;
+      reset({ [POST_URL]: html(page({ badge: false, stats: null, missingNames: [], previews: [], videos: [VIDEO], covers: [{ href: COVER, thumb: thumb(PREV) }], content: forged })), [VIDEO]: media('video/mp4'), [COVER]: media('image/jpeg') });
+      r = await click(card);
+      assert(r.dl.length === 2 && r.failed.length === 0, '271.10: notice text and markup inside the creator content do not mark an imported post as missing: ' + JSON.stringify({ d: r.dl.length, f: r.failed.map((o) => o.failure.code) }));
+      // 271.11: a preview the not-imported page does not show is still a mismatch (never claimed as this post's missing original)
+      reset({ [POST_URL]: html(page()) });
+      assert((await sandbox.resolveOriginalMediaPlan({ ...card, srcUrl: thumb(OTHER), allowPostMedia: true })) === null, '271.11: a preview of another post on a not-imported page: refused as before, not NOT_ARCHIVED');
+      // 271.12: the category accepts only the exact code shapes
+      assert(FBM.classifyFailure({ code: 'NOT_ARCHIVED' }) === 'not_archived' && FBM.classifyFailure({ code: 'NOT_ARCHIVED_P1_V2' }) === 'not_archived' && FBM.classifyFailure({ code: 'NOT_ARCHIVED_X' }) !== 'not_archived' && FBM.classifyFailure({ code: 'NOT_ARCHIVED_P1_V2', status: 404 }) === 'not_found',
+        '271.12: only NOT_ARCHIVED and NOT_ARCHIVED_P<n>_V<n> are not_archived; an observed HTTP 404 still wins');
+      assert([500, 503].every((status) => FBM.classifyFailure({ code: 'NOT_ARCHIVED_P1_V2', status }) === 'server_error'),
+        '271.13: an observed HTTP server failure takes precedence over not_archived');
+    } finally {
+      sandbox.fetch = prevFetch;
+      sandbox.console.warn = prevWarn;
+      vm.runInContext(`PAWCHIVE_POST_MEDIA_PACE_MS = ${prevPace}`, sandbox);
+    }
+  }
+
+  // ── Test 272: BUGFIX-MULTISITE-01 / X-NESTED-01 — modern quote card, nested owner descriptor & MAIN-world recovery ──
+  {
+    console.log('\n--- Test 272: X nested quote, repost & attribution ownership: content script & MAIN world ---');
+    const xSrc272 = fs.readFileSync(path.resolve(__dirname, 'content_x.js'), 'utf8');
+    const csCtx = {
+      console, URL, Date, setTimeout, clearTimeout,
+      document: {
+        body: { tagName: 'BODY' },
+        documentElement: { tagName: 'HTML' },
+        readyState: 'loading',
+        addEventListener() {},
+        elementsFromPoint: () => []
+      },
+      window: {
+        location: { href: 'https://x.com/kirawontmiss/status/2108779775812927788' },
+        addEventListener() {}
+      },
+      chrome: {
+        runtime: {
+          sendMessage: () => {},
+          onMessage: { addListener: () => {} }
+        }
+      }
+    };
+    vm.createContext(csCtx);
+    vm.runInContext(xSrc272, csCtx);
+
+    const OUTER_ID = '2108779775812927788';
+    const QUOTE_ID = '1789302636283732047';
+    const PUBLISHER_ID = '1122334455667788990';
+
+    const mkEl = (tagName, attrs = {}, children = []) => {
+      const el = {
+        tagName: tagName.toUpperCase(),
+        nodeType: 1,
+        children: [...children],
+        parentElement: null,
+        src: attrs.src || '',
+        currentSrc: attrs.currentSrc || attrs.src || '',
+        poster: attrs.poster || '',
+        href: attrs.href || '',
+        getAttribute: (k) => attrs[k] !== undefined ? attrs[k] : null,
+        hasAttribute: (k) => attrs[k] !== undefined,
+        setAttribute: (k, v) => { attrs[k] = String(v); },
+        removeAttribute: (k) => { delete attrs[k]; },
+        getBoundingClientRect: () => ({ left: 100, top: 100, width: 400, height: 300, right: 500, bottom: 400 }),
+        style: { getPropertyValue: () => '', setProperty: () => {} }
+      };
+      children.forEach(c => { c.parentElement = el; });
+      el.appendChild = (child) => {
+        child.parentElement = el;
+        el.children.push(child);
+        return child;
+      };
+      el.contains = (node) => {
+        if (node === el) return true;
+        for (const c of el.children) {
+          if (c === node || (c.contains && c.contains(node))) return true;
+        }
+        return false;
+      };
+      const matchesSel = (cur, selector) => {
+        if (!cur || !cur.tagName) return false;
+        return selector.split(',').map(s => s.trim()).some(sel => {
+          if (sel === 'article') return cur.tagName === 'ARTICLE';
+          if (sel.includes('[data-testid="tweet"]')) return cur.tagName === 'ARTICLE' && cur.getAttribute('data-testid') === 'tweet';
+          if (sel.includes('[role="article"]')) return cur.getAttribute('role') === 'article';
+          if (sel.includes('[data-testid="quoteTweet"]')) return cur.getAttribute('data-testid') === 'quoteTweet';
+          if (sel.includes('[role="blockquote"]')) return cur.getAttribute('role') === 'blockquote';
+          if (sel.includes('div[role="link"]')) return cur.tagName === 'DIV' && cur.getAttribute('role') === 'link';
+          if (sel.includes('[data-testid="videoPlayer"]')) return cur.getAttribute('data-testid') === 'videoPlayer';
+          if (sel.includes('[data-testid="videoComponent"]')) return cur.getAttribute('data-testid') === 'videoComponent';
+          if (sel.includes('[data-testid="User-Name"]')) return cur.getAttribute('data-testid') === 'User-Name';
+          if (sel.includes('a:has(time)')) return cur.tagName === 'A' && Boolean(cur.querySelector && cur.querySelector('time'));
+          if (sel.includes('a[href*="/status/"]')) return cur.tagName === 'A' && (cur.getAttribute('href') || '').includes('/status/');
+          if (sel.includes('time')) return cur.tagName === 'TIME';
+          if (sel.includes('video')) return cur.tagName === 'VIDEO';
+          if (sel.includes('img')) return cur.tagName === 'IMG';
+          if (sel === 'a') return cur.tagName === 'A';
+          return false;
+        });
+      };
+      el.closest = (selector) => {
+        for (let cur = el; cur; cur = cur.parentElement) {
+          if (matchesSel(cur, selector)) return cur;
+        }
+        return null;
+      };
+      el.querySelectorAll = (selector) => {
+        const res = [];
+        const walk = (n) => {
+          for (const c of n.children) {
+            if (matchesSel(c, selector)) res.push(c);
+            walk(c);
+          }
+        };
+        walk(el);
+        return res;
+      };
+      el.querySelector = (selector) => el.querySelectorAll(selector)[0] || null;
+      return el;
+    };
+
+    // Synthetic modern quote layout; the logged-in reproducer DOM has not been captured.
+    const outerTime = mkEl('time', {}, []);
+    const outerPermalink = mkEl('a', { href: `/kirawontmiss/status/${OUTER_ID}` }, [outerTime]);
+    const outerVideo = mkEl('video', { src: 'blob:https://x.com/outer-blob', poster: `https://pbs.twimg.com/media_thumb/${OUTER_ID}/img/p.jpg` }, []);
+
+    const quoteHeader = mkEl('div', { 'data-testid': 'User-Name' }, []);
+    const quoteTime = mkEl('time', {}, []);
+    const quotePermalink = mkEl('a', { href: `/KaynakNews/status/${QUOTE_ID}` }, [quoteTime]);
+    const quotePlayer = mkEl('div', { 'data-testid': 'videoPlayer' }, []);
+    const attributionAnchor = mkEl('a', { href: `https://x.com/KaynakNews/status/${QUOTE_ID}/video/1` }, []);
+    attributionAnchor.textContent = 'From KaynakNews';
+    const quoteVideo = mkEl('video', { src: 'blob:https://x.com/quote-blob', poster: `https://pbs.twimg.com/amplify_video_thumb/${QUOTE_ID}/img/p.jpg` }, []);
+    quotePlayer.appendChild(attributionAnchor);
+    quotePlayer.appendChild(quoteVideo);
+
+    const quoteCard = mkEl('div', { role: 'link', 'data-href': `/KaynakNews/status/${QUOTE_ID}` }, [quoteHeader, quotePermalink, quotePlayer]);
+    const outerArticle = mkEl('article', { 'data-testid': 'tweet' }, [outerPermalink, outerVideo, quoteCard]);
+
+    // 272.1: Modern div[role="link"][data-href] quote card owner resolution
+    const xiCard = csCtx.__xiCardOf(quoteVideo);
+    assert(xiCard === quoteCard, '272.1: xiCardOf resolves modern div[role=link] quote card without falling back to outer article');
+    const xiOwner = csCtx.__xiOwnerOf(quoteVideo);
+    assert(xiOwner && xiOwner.owner === quoteCard && Boolean(xiOwner.quote) === true && xiOwner.article === outerArticle, '272.2: xiOwnerOf identifies quoteCard as owner and records outerArticle');
+    const qId = csCtx.__xiIdOf(quoteCard, true);
+    assert(qId === QUOTE_ID, '272.3: xiIdOf extracts quoted status ID from quoteCard data-href');
+    const qUrl = csCtx.__extractTweetUrl(quoteCard);
+    assert(qUrl && qUrl.includes(QUOTE_ID) && !qUrl.includes(OUTER_ID), '272.4: extractTweetUrl returns quoted status permalink, not outer tweet or page fallback');
+
+    // 272.5: Descriptor separation: findMediaInElements on quote video vs outer video
+    const quoteDesc = csCtx.__findMediaInElements([quoteVideo]);
+    assert(quoteDesc && quoteDesc.isQuoteTweet === true && quoteDesc.tweetId === QUOTE_ID && quoteDesc.postUrl.includes(QUOTE_ID), '272.5: findMediaInElements on quote video derives isQuoteTweet: true, quote tweetId, and quote postUrl');
+    const outerDesc = csCtx.__findMediaInElements([outerVideo]);
+    assert(outerDesc && outerDesc.isQuoteTweet === false && outerDesc.tweetId === OUTER_ID && outerDesc.postUrl.includes(OUTER_ID), '272.6: findMediaInElements on outer video derives isQuoteTweet: false and outer tweetId');
+
+    // 272.7: Attribution anchor inside player is excluded from post owner resolution
+    const publisherAnchor = mkEl('a', { href: `/Publisher/status/${PUBLISHER_ID}/video/1` });
+    const attributionOnly = mkEl('div', { role: 'link' }, [mkEl('div', { 'data-testid': 'User-Name' }), mkEl('div', { 'data-testid': 'videoPlayer' }, [publisherAnchor])]);
+    outerArticle.appendChild(attributionOnly);
+    assert(csCtx.__xiIdOf(attributionOnly, true) === null, '272.7: a third-party video attribution cannot establish the quote owner ID');
+    assert(csCtx.__extractTweetUrl(attributionOnly) === null, '272.8: a card with only attribution cannot borrow a permalink or the outer page status');
+
+    // 272.9: Nested <article> quote card shape
+    const nestedArtTime = mkEl('time', {}, []);
+    const nestedArtAnchor = mkEl('a', { href: `/NestedUser/status/987654321` }, [nestedArtTime]);
+    const nestedArtVideo = mkEl('video', { src: 'blob:https://x.com/nested-art-blob' }, []);
+    const nestedArt = mkEl('article', { 'data-testid': 'tweet' }, [nestedArtAnchor, nestedArtVideo]);
+    const parentArt = mkEl('article', { 'data-testid': 'tweet' }, [mkEl('a', { href: `/ParentUser/status/123456789` }, [mkEl('time', {}, [])]), nestedArt]);
+    const nestedOwner = csCtx.__xiOwnerOf(nestedArtVideo);
+    assert(nestedOwner && nestedOwner.owner === nestedArt && nestedOwner.article === parentArt && Boolean(nestedOwner.quote) === true, '272.9: nested <article> quote card sets nested owner and quote flag');
+
+    // The shared builder must use the card's own links when data-href is absent.
+    quoteCard.removeAttribute('data-href');
+    assert(csCtx.__extractTweetUrl(quoteCard) === `https://x.com/KaynakNews/status/${QUOTE_ID}`, '272.13: modern quote without data-href retains its own permalink');
+    quoteCard.setAttribute('data-href', `/KaynakNews/status/${QUOTE_ID}`);
+
+    const legacy = mkEl('div', { 'data-testid': 'quoteTweet' }, [mkEl('a', { href: '/legacy/status/4444' }, [mkEl('time')])]);
+    outerArticle.appendChild(legacy);
+    assert(csCtx.__extractTweetUrl(legacy) === 'https://x.com/legacy/status/4444', '272.14: legacy quote retains its own time permalink');
+
+    const missingNested = mkEl('article', { 'data-testid': 'tweet' }, [mkEl('video', { src: 'blob:https://x.com/no-permalink' })]);
+    outerArticle.appendChild(missingNested);
+    const missingDescriptor = csCtx.__findMediaInElements([missingNested.children[0]]);
+    assert(csCtx.__extractTweetUrl(missingNested) === null && !missingDescriptor.tweetId && !missingDescriptor.postUrl, '272.15: a nested article without an owner permalink never inherits the outer page status');
+
+    const grandVideo = mkEl('video', { src: 'blob:https://x.com/grand' });
+    const grandCard = mkEl('div', { role: 'link', 'data-href': '/grand/status/6666' }, [mkEl('a', { href: '/grand/status/6666' }, [mkEl('time')]), grandVideo]);
+    const ownVideo = mkEl('video', { src: 'blob:https://x.com/own' });
+    const parentCard = mkEl('div', { role: 'link' }, [mkEl('div', { 'data-testid': 'User-Name' }), grandCard, mkEl('a', { href: '/parent/status/5555' }, [mkEl('time')]), ownVideo]);
+    outerArticle.appendChild(parentCard);
+    assert(csCtx.__xiIdOf(parentCard, true) === '5555', '272.16: nested quotes do not lend their permalink to the parent quote');
+    const ownDescriptor = csCtx.__findMediaInElements([ownVideo]);
+    assert(ownDescriptor.tweetId === '5555' && ownDescriptor.mediaIndex === 0, '272.17: a quote video index counts only that quote owner, excluding deeper quote videos');
+
+    const mediaVariant = (id, owner) => ({ id_str: id, type: 'video', expanded_url: `https://x.com/user/status/${owner}/video/1`, video_info: { variants: [{ content_type: 'video/mp4', url: `https://video.twimg.com/amplify_video/${id}/vid/720x720/${id}.mp4` }] } });
+    const fiber = (el, tweet, boundary) => {
+      el.__reactFiber$lead = { memoizedProps: { src: el.src }, stateNode: el, return: { memoizedProps: { tweet }, stateNode: null, return: { memoizedProps: { className: 'host' }, stateNode: boundary, return: null } } };
+    };
+    const originalDoc = sandbox.document;
+    const runOwned = (point, art, params) => {
+      sandbox.document = { elementFromPoint: () => point, querySelectorAll: () => [art], querySelector: () => null };
+      return sandbox.extractXPostVideoInMainWorld(params);
+    };
+    try {
+      const outerOwn = mkEl('video', { src: 'blob:https://x.com/outer-index' });
+      const nestedFirst = mkEl('div', { role: 'link', 'data-href': '/quote/status/7777' }, [mkEl('video', { src: 'blob:https://x.com/quoted-index' })]);
+      const indexArt = mkEl('article', { 'data-testid': 'tweet' }, [mkEl('a', { href: '/outer/status/8888' }, [mkEl('time')]), nestedFirst, outerOwn]);
+      fiber(outerOwn, { id_str: '8888', extended_entities: { media: [mediaVariant('88881', '8888')] } }, indexArt);
+      const rIndex = runOwned(null, indexArt, { tweetId: '8888', postUrl: 'https://x.com/outer/status/8888', mediaIndex: 0, x: 1, y: 1 });
+      assert(rIndex.ok && rIndex.mp4Url.includes('/88881/'), '272.18: off-screen outer video index excludes a preceding quote player before MAIN-world lookup');
+
+      const nestedMedia = mkEl('video', { src: 'blob:https://x.com/nested-boundary', poster: 'https://pbs.twimg.com/amplify_video_thumb/99991/img/p.jpg' });
+      const nestedBoundary = mkEl('article', { 'data-testid': 'tweet' }, [mkEl('a', { href: '/nested/status/9999' }, [mkEl('time')]), nestedMedia]);
+      const boundaryArt = mkEl('article', { 'data-testid': 'tweet' }, [mkEl('a', { href: '/outer/status/8888' }, [mkEl('time')]), nestedBoundary]);
+      fiber(nestedMedia, { id_str: '8888', quoted_status: { id_str: '9999', extended_entities: { media: [mediaVariant('99991', '9999')] } } }, boundaryArt);
+      const outerComponent = nestedMedia.__reactFiber$lead.return;
+      nestedMedia.__reactFiber$lead.return = { memoizedProps: {}, stateNode: nestedBoundary, return: outerComponent };
+      const rNested = runOwned(nestedMedia, boundaryArt, { tweetId: '9999', postUrl: 'https://x.com/nested/status/9999', isQuoteTweet: true, mediaIdHint: '99991', posterUrl: nestedMedia.poster, x: 1, y: 1 });
+      assert(rNested.ok && rNested.mp4Url.includes('/99991/'), '272.19: nested article MAIN-world recovery keeps its owner and can inspect the containing post fiber');
+
+      const posterFirst = mkEl('video', { src: 'blob:https://x.com/poster-first', poster: 'https://pbs.twimg.com/amplify_video_thumb/77771/img/p.jpg' });
+      const posterSecond = mkEl('video', { src: 'blob:https://x.com/poster-second', poster: 'https://pbs.twimg.com/amplify_video_thumb/99991/img/p.jpg' });
+      const firstCard = mkEl('div', { role: 'link', 'data-href': '/first/status/7777' }, [posterFirst]);
+      const secondCard = mkEl('div', { role: 'link', 'data-href': '/second/status/9999' }, [posterSecond]);
+      const posterArt = mkEl('article', { 'data-testid': 'tweet' }, [firstCard, secondCard]);
+      fiber(posterFirst, { id_str: '7777', extended_entities: { media: [mediaVariant('77771', '7777')] } }, firstCard);
+      fiber(posterSecond, { id_str: '9999', extended_entities: { media: [mediaVariant('99991', '9999')] } }, secondCard);
+      const rPoster = runOwned(null, posterArt, { isQuoteTweet: true, mediaIdHint: '99991', posterUrl: posterSecond.poster });
+      assert(rPoster.ok && rPoster.mp4Url.includes('/99991/'), '272.20: poster lookup selects the quote that owns the matching media, never the first quote in the article');
+
+      const parentTweet = { id_str: '5555', extended_entities: { media: [mediaVariant('55551', '5555')] }, quoted_status: { id_str: '6666', extended_entities: { media: [mediaVariant('66661', '6666')] } } };
+      ownVideo.__reactProps$lead = { tweet: parentTweet };
+      const ownWithMetadata = csCtx.__findMediaInElements([ownVideo]);
+      assert(ownWithMetadata.recoveredMp4Url?.includes('/55551/'), '272.21: isolated-world metadata keeps the selected quote tweet own media instead of its deeper quoted_status');
+      const rParent = runOwned(ownVideo, outerArticle, { tweetId: '5555', postUrl: 'https://x.com/parent/status/5555', isQuoteTweet: true, mediaIndex: 0, x: 1, y: 1 });
+      assert(rParent.ok && rParent.mp4Url.includes('/55551/'), '272.22: MAIN-world metadata keeps the selected quote own media even when that tweet also quotes another post');
+      const deepMedia = mkEl('video', { src: 'blob:https://x.com/deep-card', poster: 'https://pbs.twimg.com/amplify_video_thumb/99551/img/p.jpg' });
+      const deepCard = mkEl('div', { role: 'link', 'data-href': '/deep/status/9955' }, [deepMedia]);
+      const containingArticle = mkEl('article', { 'data-testid': 'tweet' }, [mkEl('a', { href: '/parent/status/9966' }, [mkEl('time')]), deepCard]);
+      outerArticle.appendChild(containingArticle);
+      fiber(deepMedia, { id_str: '9955', extended_entities: { media: [mediaVariant('99551', '9955')] } }, deepCard);
+      assert(csCtx.__xiOwnerOf(deepMedia)?.owner === deepCard, '272.23: a modern quote inside a nested article belongs to the nearest card, not its containing article');
+      const rDeep = runOwned(deepMedia, outerArticle, { tweetId: '9955', postUrl: 'https://x.com/deep/status/9955', isQuoteTweet: true, mediaIdHint: '99551', posterUrl: deepMedia.poster, x: 1, y: 1 });
+      assert(rDeep.ok && rDeep.mp4Url.includes('/99551/'), '272.24: MAIN-world resolves the nearest card inside a nested article without borrowing the parent status');
+    } finally { sandbox.document = originalDoc; }
+
+    // MAIN-world recovery tests using sandbox.extractXPostVideoInMainWorld
+    const mp4Of = (mid) => `https://video.twimg.com/amplify_video/${mid}/vid/avc1/720x1558/${mid}.mp4?tag=14`;
+    const posterOf = (mid) => `https://pbs.twimg.com/amplify_video_thumb/${mid}/img/p${mid}.jpg`;
+    const vmedia = (mid, owner) => ({ id_str: mid, type: 'video', expanded_url: `https://x.com/u/status/${owner}/video/1`, video_info: { variants: [{ content_type: 'video/mp4', bitrate: 950000, url: mp4Of(mid) }] } });
+
+    // 272.10: MAIN-world quote resolution when quoted_status is stored on outer article fiber (walkBoundary traversal)
+    const mwOuterAnchor = { tagName: 'A', href: `https://x.com/kirawontmiss/status/${OUTER_ID}`, getAttribute: (n) => (n === 'href' ? `/kirawontmiss/status/${OUTER_ID}` : null), querySelector: () => ({ tagName: 'TIME' }), closest: () => null };
+    const mwOuterArt = { tagName: 'ARTICLE', parentElement: null, getAttribute: (n) => (n === 'data-testid' ? 'tweet' : null) };
+    mwOuterArt.closest = (s) => (s.includes('article') ? mwOuterArt : null);
+    const outerTweetFiber = {
+      id_str: OUTER_ID,
+      quoted_status: { id_str: QUOTE_ID, extended_entities: { media: [vmedia(QUOTE_ID, QUOTE_ID)] } }
+    };
+    mwOuterArt.__reactFiber$t = { memoizedProps: { className: 'css-1' }, stateNode: mwOuterArt, return: null };
+    const outerFiberComp = { memoizedProps: { tweet: outerTweetFiber }, stateNode: null, return: mwOuterArt.__reactFiber$t };
+
+    const mwQuoteCard = {
+      tagName: 'DIV',
+      parentElement: mwOuterArt,
+      getAttribute: (n) => (n === 'role' ? 'link' : (n === 'data-href' ? `/KaynakNews/status/${QUOTE_ID}` : null)),
+      closest: (s) => (s.includes('article') ? mwOuterArt : null)
+    };
+    const mwQuoteVideo = {
+      tagName: 'VIDEO',
+      src: 'blob:https://x.com/quote-blob',
+      currentSrc: 'blob:https://x.com/quote-blob',
+      poster: posterOf(QUOTE_ID),
+      parentElement: mwQuoteCard,
+      getAttribute: (n) => (n === 'poster' ? posterOf(QUOTE_ID) : null),
+      closest: (s) => (s.includes('article') ? mwOuterArt : null)
+    };
+    mwQuoteVideo.__reactFiber$t = { memoizedProps: { src: mwQuoteVideo.src }, stateNode: mwQuoteVideo, return: outerFiberComp };
+
+    const mwAll = [mwOuterAnchor, mwQuoteCard, mwQuoteVideo];
+    mwOuterArt.contains = (n) => n === mwOuterArt || mwAll.includes(n);
+    mwOuterArt.querySelectorAll = (s) => {
+      if (s.includes('div[role="link"]')) return [mwQuoteCard];
+      if (s.includes('video')) return [mwQuoteVideo];
+      if (s.includes('article')) return [];
+      return mwAll.filter(n => (s.includes('a') && n.tagName === 'A') || (s.includes('video') && n.tagName === 'VIDEO'));
+    };
+    mwOuterArt.querySelector = (s) => mwOuterArt.querySelectorAll(s)[0] || null;
+    mwQuoteCard.contains = (n) => n === mwQuoteCard || n === mwQuoteVideo;
+    mwQuoteCard.querySelectorAll = (s) => (s.includes('video') ? [mwQuoteVideo] : []);
+    mwQuoteCard.querySelector = (s) => (s.includes('video') ? mwQuoteVideo : null);
+
+    const mwDoc = {
+      elementFromPoint: (x, y) => (x === 200 && y === 200 ? mwQuoteVideo : null),
+      querySelector: () => null,
+      querySelectorAll: (s) => (s.includes('article') ? [mwOuterArt] : [])
+    };
+
+    const prevDoc = sandbox.document;
+    sandbox.document = mwDoc;
+    try {
+      const resQuoteOuterFiber = sandbox.extractXPostVideoInMainWorld({
+        tweetId: QUOTE_ID,
+        postUrl: `https://x.com/KaynakNews/status/${QUOTE_ID}`,
+        isQuoteTweet: true,
+        mediaIdHint: QUOTE_ID,
+        posterUrl: posterOf(QUOTE_ID),
+        x: 200,
+        y: 200
+      });
+      assert(resQuoteOuterFiber.ok === true && resQuoteOuterFiber.mp4Url === mp4Of(QUOTE_ID), '272.10: MAIN-world resolves quote tweet MP4 across walkBoundary when quoted_status is on outer article fiber');
+
+      // 272.11: Direct quote fiber lookup on quote component
+      const quoteDirectFiber = { id_str: QUOTE_ID, extended_entities: { media: [vmedia(QUOTE_ID, QUOTE_ID)] } };
+      mwQuoteVideo.__reactFiber$t = { memoizedProps: { src: mwQuoteVideo.src }, stateNode: mwQuoteVideo, return: { memoizedProps: { tweet: quoteDirectFiber }, stateNode: null, return: null } };
+      const resQuoteDirectFiber = sandbox.extractXPostVideoInMainWorld({
+        tweetId: QUOTE_ID,
+        postUrl: `https://x.com/KaynakNews/status/${QUOTE_ID}`,
+        isQuoteTweet: true,
+        mediaIdHint: QUOTE_ID,
+        posterUrl: posterOf(QUOTE_ID),
+        x: 200,
+        y: 200
+      });
+      assert(resQuoteDirectFiber.ok === true && resQuoteDirectFiber.mp4Url === mp4Of(QUOTE_ID), '272.11: MAIN-world resolves quote tweet MP4 when post data resides directly on quote component fiber');
+
+      // 272.12: Refusal on conflicting quote owner (requested quote ID does not match card data-href or fiber)
+      const resConflict = sandbox.extractXPostVideoInMainWorld({
+        tweetId: '999888777666',
+        postUrl: `https://x.com/Other/status/999888777666`,
+        isQuoteTweet: true,
+        x: 200,
+        y: 200
+      });
+      assert(resConflict.ok === false && !resConflict.mp4Url, '272.12: MAIN-world fails closed on conflicting quote tweet ID (never returning foreign or outer media)');
+    } finally {
+      sandbox.document = prevDoc;
+    }
+
+    // ── Test 273: X-QUOTE-06 — a quote card with no own permalink (kirawontmiss/2108779775812927788, native-capture-v2.json) ──
+    // Observed: the card (div role=link, no data-href) shows only the video's attribution link 2082571149452427417; the quote post
+    // 2108399553988919745 with media 2082571006204317696 is the `tweet` of the component fibers right above the card's host fiber; the outer
+    // post 2108779775812927788 (further up) quotes it. Inline descriptor: isQuoteTweet, no tweet id, media id from the poster.
+    {
+      console.log('\n--- Test 273: X-QUOTE-06 quote card without its own permalink: owner from the card\'s own fibers ---');
+      const K_OUTER = '2108779775812927788';
+      const K_QUOTE = '2108399553988919745';
+      const K_MEDIA = '2082571006204317696';
+      const K_ATTR = '2082571149452427417';
+      const kPoster = (m) => `https://pbs.twimg.com/amplify_video_thumb/${m}/img/k${m}.jpg`;
+      const kMp4 = (m) => `https://video.twimg.com/amplify_video/${m}/vid/avc1/720x1280/k${m}.mp4?tag=21`;
+      const kMedia = (m, owner) => ({ id_str: m, type: 'video', expanded_url: `https://x.com/u/status/${owner}/video/1`, video_info: { variants: [{ content_type: 'video/mp4', bitrate: 2176000, url: kMp4(m) }, { content_type: 'application/x-mpegURL', url: `https://video.twimg.com/amplify_video/${m}/pl/k.m3u8` }] } });
+      const host = (stateNode, ret) => ({ memoizedProps: { className: 'r-host' }, stateNode, return: ret });
+      const comp = (props, ret) => ({ memoizedProps: props, stateNode: null, return: ret });
+      // the observed layout; `between` = extra component fibers between the card host and the quote's own component; the chain is rebuilt per case
+      const build = ({ quoteTweet = { id_str: K_QUOTE, extended_entities: { media: [kMedia(K_MEDIA, K_QUOTE)] } }, outerTweet = { id_str: K_OUTER, quoted_status: { id_str: K_QUOTE } }, between = [], dataHref = null, ownQuote = true } = {}) => {
+        const video = mkEl('video', { src: 'blob:https://x.com/k-quote', poster: kPoster(K_MEDIA) });
+        const attribution = mkEl('a', { href: `/KaynakNews/status/${K_ATTR}` });
+        const player = mkEl('div', { 'data-testid': 'videoPlayer' }, [attribution, video]);
+        const card = mkEl('div', dataHref ? { role: 'link', 'data-href': dataHref } : { role: 'link' }, [mkEl('div', { 'data-testid': 'User-Name' }), player]);
+        const wrapper = mkEl('div', {}, [card]);
+        const art = mkEl('article', { 'data-testid': 'tweet' }, [mkEl('a', { href: `/kirawontmiss/status/${K_OUTER}` }, [mkEl('time')]), wrapper]);
+        const artHost = host(art, null);
+        const outerUp = comp({ tweet: outerTweet, isFocalTweet: true }, artHost);
+        const wrapperHost = host(wrapper, outerUp);
+        const outerComp = comp({ tweet: outerTweet, onQuoteTweetClick: () => {} }, wrapperHost);
+        let top = outerComp;
+        if (ownQuote) top = comp({ tweet: quoteTweet, quotingTweet: outerTweet }, comp({ tweet: quoteTweet, nestedQuotedTweet: null }, top));
+        for (const b of between.slice().reverse()) top = comp(b, top);
+        const cardHost = host(card, top);
+        card.__reactFiber$k = cardHost;
+        const playerHost = host(player, cardHost);
+        player.__reactFiber$k = playerHost;
+        video.__reactFiber$k = host(video, comp({ videoId: K_MEDIA, contentType: 'media_entity' }, playerHost));
+        art.__reactFiber$k = artHost;
+        return { video, card, art };
+      };
+      const run = (b, params = {}) => {
+        const prev = sandbox.document;
+        sandbox.document = { elementFromPoint: () => b.video, querySelectorAll: () => [b.art], querySelector: () => null };
+        try {
+          return sandbox.extractXPostVideoInMainWorld({ isQuoteTweet: true, tweetId: null, postUrl: null, mediaIdHint: K_MEDIA, posterUrl: kPoster(K_MEDIA), x: 300, y: 300, ...params });
+        } finally { sandbox.document = prev; }
+      };
+
+      // 273.1: the reported failure is fixed: the quote's own MP4 from its own post, not the outer post, not the attribution
+      let r = run(build());
+      assert(r.ok === true && r.mp4Url === kMp4(K_MEDIA) && r.diag.how === 'point' && r.diag.point === 'article' && r.diag.quote === 1 && r.diag.req === 0 && r.diag.id === 'dom',
+        '273.1: no-permalink quote card: owner taken from the card\'s own fibers, its own MP4 recovered: ' + JSON.stringify({ ok: r.ok, err: r.error, d: r.diag }));
+      // 273.2: a repost of the quoting post (the outer post\'s retweet wrapper quotes the owner) is the same explicit association
+      r = run(build({ outerTweet: { id_str: '2108779775812900000', retweeted_status: { id_str: K_OUTER, quoted_status: { id_str: K_QUOTE } } } }));
+      assert(r.ok === true && r.mp4Url === kMp4(K_MEDIA), '273.2: a repost wrapper whose post quotes the owner is accepted as the quoting post');
+      // 273.3-273.9: refusals, never the outer post, the attribution, another quote or a guessed address
+      const refused = (res) => res.ok === false && !res.mp4Url;
+      r = run(build({ outerTweet: { id_str: K_OUTER } }));
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '273.3: no post above the card quotes the candidate: owner unknown, refused');
+      r = run(build({ between: [{ tweet: { id_str: '5550001', extended_entities: { media: [kMedia(K_MEDIA, '5550001')] } } }] }));
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '273.4: another post nearer the card (not the quote, not quoting it) makes the owner ambiguous: refused');
+      r = run(build({ ownQuote: false }));
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '273.5: the card\'s own fibers carry no post (only the outer post further up): the outer post or the attribution is never the owner');
+      r = run(build(), { mediaIdHint: '2082571000000000999', posterUrl: kPoster('2082571000000000999') });
+      assert(refused(r), '273.6: the selected media id is not one of the candidate\'s media: refused');
+      r = run(build(), { mediaIdHint: null, posterUrl: null });
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '273.7: without the selected media id the owner is not established');
+      r = run(build({ quoteTweet: { id_str: K_QUOTE, extended_entities: { media: [kMedia('2082571000000000777', K_QUOTE)] }, quoted_status: { id_str: '777', extended_entities: { media: [kMedia(K_MEDIA, '777')] } } } }));
+      assert(refused(r), '273.8: the media belongs to a deeper quoted post, not to the card\'s own post: refused');
+      r = run(build(), { tweetId: K_OUTER, postUrl: `https://x.com/kirawontmiss/status/${K_OUTER}` });
+      assert(refused(r) && !String(r.mp4Url || '').length, '273.9: an explicitly requested id equal to the outer post is not turned into the quote owner');
+      // 273.10: control: a card with its own permalink keeps the existing DOM owner
+      r = run(build({ dataHref: `/anindanet/status/${K_QUOTE}` }));
+      assert(r.ok === true && r.mp4Url === kMp4(K_MEDIA), '273.10: control: a card with its own permalink resolves as before');
+
+      // The owner is provisional until the walk reaches this card's outer article, even after a quoting post was found.
+      const capped = build();
+      const quotingFiber = capped.card.__reactFiber$k.return.return.return;
+      let tail = comp({ tweet: { id_str: '5558001' } }, quotingFiber.return);
+      for (let i = 0; i < 70; i++) tail = comp({}, tail);
+      quotingFiber.return = tail;
+      r = run(capped);
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '273.11: conflict beyond the fiber cap: incomplete owner proof refused');
+
+      const incomplete = build();
+      incomplete.card.__reactFiber$k.return.return.return.return = null;
+      r = run(incomplete);
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '273.12: fiber chain ends before the outer article: refused');
+
+      const foreignBoundary = build();
+      const foreignQuoting = foreignBoundary.card.__reactFiber$k.return.return.return;
+      foreignQuoting.return = host(mkEl('article', { 'data-testid': 'tweet' }), foreignQuoting.return);
+      r = run(foreignBoundary);
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '273.13: another article boundary cannot complete this quote owner proof');
+
+      const cyclic = build();
+      const cyclicQuoting = cyclic.card.__reactFiber$k.return.return.return;
+      cyclicQuoting.return = cyclicQuoting;
+      r = run(cyclic);
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '273.14: cyclic fiber returns hit the cap and refuse the incomplete owner proof');
+
+      // ── Test 274: X-QUOTE-07 — the captured ordered chain (checks/multisite-x-quote07/native-chain.json) ──
+      // From the card's host fiber .return: depths 0-8 components without a post, 9 the card's parent DIV (host), 11/12 the quote post
+      // 2108399553988919745 owning the selected media (expanded status = owner), 13 a DIV, 15 the outer post quoting the owner (no media),
+      // 20/23/32 DIVs, 35 the exact outer ARTICLE. The wrappers are DOM ancestors of the card inside the outer article.
+      console.log('\n--- Test 274: X-QUOTE-07 quote post above a wrapper of the card (captured fiber order) ---');
+      const chain = ({ wrapperIsSibling = false, wrapperHoldsOtherCard = false, wrapperIsCard = false, depth11 = null } = {}) => {
+        const video = mkEl('video', { src: 'blob:https://x.com/k-chain', poster: kPoster(K_MEDIA) });
+        const player = mkEl('div', { 'data-testid': 'videoPlayer' }, [mkEl('a', { href: `/KaynakNews/status/${K_ATTR}` }), video]);
+        const card = mkEl('div', { role: 'link' }, [mkEl('div', { 'data-testid': 'User-Name' }), player]);
+        const otherCard = mkEl('div', { role: 'link' }, [mkEl('div', { 'data-testid': 'User-Name' })]);
+        const wrapAttrs = wrapperIsCard ? { role: 'link' } : {};
+        const d9 = wrapperIsSibling ? mkEl('div', {}, []) : mkEl('div', wrapAttrs, [...(wrapperIsCard ? [mkEl('div', { 'data-testid': 'User-Name' })] : []), card, ...(wrapperHoldsOtherCard ? [otherCard] : [])]);
+        const d13 = mkEl('div', {}, wrapperIsSibling ? [d9, card] : [d9]);
+        const d20 = mkEl('div', {}, [d13]);
+        const d23 = mkEl('div', {}, [d20]);
+        const d32 = mkEl('div', {}, [d23]);
+        const art = mkEl('article', { 'data-testid': 'tweet' }, [mkEl('a', { href: `/kirawontmiss/status/${K_OUTER}` }, [mkEl('time')]), d32]);
+        const quoteTweet = { id_str: K_QUOTE, extended_entities: { media: [kMedia(K_MEDIA, K_QUOTE)] } };
+        const outerTweet = { id_str: K_OUTER, quoted_status: { id_str: K_QUOTE } };
+        const at = {
+          9: (ret) => host(d9, ret), 11: (ret) => comp({ tweet: depth11 || quoteTweet }, ret), 12: (ret) => comp({ tweet: quoteTweet }, ret),
+          13: (ret) => host(d13, ret), 15: (ret) => comp({ tweet: outerTweet }, ret), 20: (ret) => host(d20, ret), 23: (ret) => host(d23, ret),
+          32: (ret) => host(d32, ret), 35: (ret) => host(art, ret)
+        };
+        let top = null;
+        for (let d = 35; d >= 0; d--) top = at[d] ? at[d](top) : comp({ depth: d }, top);
+        const cardHost = host(card, top);
+        card.__reactFiber$k = cardHost;
+        const playerHost = host(player, cardHost);
+        player.__reactFiber$k = playerHost;
+        video.__reactFiber$k = host(video, comp({ videoId: K_MEDIA, contentType: 'media_entity' }, playerHost));
+        return { video, card, art };
+      };
+      r = run(chain());
+      assert(r.ok === true && r.mp4Url === kMp4(K_MEDIA) && r.diag.id === 'dom' && r.diag.req === 0,
+        '274.1: captured chain: the card\'s parent DIV precedes the quote post; the quote\'s own MP4 is recovered: ' + JSON.stringify({ ok: r.ok, err: r.error, d: r.diag }));
+      r = run(chain({ wrapperIsSibling: true }));
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '274.2: an element passed before the owner that is not an ancestor of the card (a sibling) ends the walk: refused');
+      r = run(chain({ wrapperHoldsOtherCard: true }));
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '274.3: a wrapper that also holds another quote card is not this card\'s own: refused');
+      r = run(chain({ wrapperIsCard: true }));
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '274.4: the element passed is itself another quote card (this card nested in it): refused');
+      r = run(chain({ depth11: { id_str: '5550011', extended_entities: { media: [kMedia(K_MEDIA, '5550011')] } } }));
+      assert(refused(r) && r.error === 'TARGET_POST_NOT_FOUND', '274.5: a conflicting post above the wrapper (then the quote) is ambiguous: refused');
+      r = run(chain(), { mediaIdHint: '2082571000000000999', posterUrl: kPoster('2082571000000000999') });
+      assert(refused(r), '274.6: captured chain with a media id the quote does not own: refused');
     }
   }
 

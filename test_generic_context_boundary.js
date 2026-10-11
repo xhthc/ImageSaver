@@ -56,6 +56,35 @@ async function save(env, f, page, frameId = 0, docs = { [frameId]: f.doc }, recs
 }
 
 async function main() {
+  // Real worker callers keep their frame/document and execution-world bindings while dispatching before document_idle.
+  const schedulingCases = [
+    ['open-tab capture', b => b.injectContextTargetIntoOpenTabs(), { tabId: 1, allFrames: true }, ['lib/debug_journal.js', 'content_context_target.js']],
+    ['selected owner', b => b.resolveContextOwner(1, 3, { src: 'https://cdn.example.test/selected.jpg' }), { tabId: 1, frameIds: [3] }, 'verifyContextOwner'],
+    ['selected target', b => b.resolveContextMediaTarget(1, 3), { tabId: 1, frameIds: [3] }, 'readContextMediaTarget'],
+    ['frame listener fallback', b => b.resolveFrameLocalMedia({ tabId: 1, frameId: 3, documentId: 'doc-selected', clickedSrc: 'blob:https://www.redgifs.com/selected' }), { tabId: 1, documentIds: ['doc-selected'] }, ['lib/debug_journal.js', 'lib/i18n.js', 'content_redgifs.js']],
+    ['Reddit listener fallback', b => b.resolveRedditFrameBlobMedia({ tabId: 1, frameId: 3, clickedSrc: 'blob:https://www.reddit.com/selected' }), { tabId: 1, frameIds: [3] }, ['lib/debug_journal.js', 'lib/i18n.js', 'content_reddit.js']],
+    ['X declared variants', b => b.recoverXPostMp4Variant(1, { isBlobPlayer: true, tweetId: '123' }), { tabId: 1 }, 'extractXPostVideoInMainWorld', 'MAIN'],
+    ['generic DOM metadata', b => b.resolveOriginalMediaPlan({ tabId: 1, frameId: 3, srcUrl: 'https://cdn.example.test/selected.jpg', pageUrl: 'https://unlisted.example.test/feed' }), { tabId: 1, frameIds: [3] }, 'extractDomImageMetadata'],
+    ['X listener fallback', b => b.onContextMenuClicked({ menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/home' }, { id: 1, url: 'https://x.com/home' }), { tabId: 1 }, ['lib/debug_journal.js', 'lib/i18n.js', 'content_x.js']],
+    ['embed frame address', b => b.redditInlineFindRedGifsFrame(1, { frameId: 0 }, 'wildcheetah'), { tabId: 1, allFrames: true }, 'func']
+  ];
+  for (const [name, run, target, entry, world] of schedulingCases) {
+    await test(`immediate injection: ${name}`, async () => {
+      const env = createTestEnv();
+      const calls = [];
+      env.mockChrome.tabs.sendMessage = async () => { throw new Error('No content listener'); };
+      env.mockChrome.scripting.executeScript = async opts => { calls.push(opts); return [{ result: null }]; };
+      await run(env.bgSandbox);
+      assert.equal(calls.length, 1, 'the actual worker path reaches one injection');
+      assert.equal(calls[0].injectImmediately, true, 'a loading document must not defer this request until document_idle');
+      assert.deepEqual(JSON.parse(JSON.stringify(calls[0].target)), target);
+      assert.equal(calls[0].world, world);
+      if (Array.isArray(entry)) assert.deepEqual(Array.from(calls[0].files), entry);
+      else assert.equal(calls[0].func.name, entry);
+      assert.equal(env.downloadedCalls.length, 0, 'an empty injected answer must not authorize a download');
+    });
+  }
+
   for (const page of ['https://unfamiliar.example.test', 'https://another-unlisted.example.test']) {
     for (const [ext, mime] of [['jpg', 'image/jpeg'], ['png', 'image/png'], ['gif', 'image/gif']]) {
       await test(`${new URL(page).host}: overlay-selected ${ext} retains exact signed URL and format`, async () => {
@@ -185,6 +214,88 @@ async function main() {
     assert.equal(calls.length, 0);
     assert(env.fetchedUrls.includes(source), 'selected source was actually probed');
   });
+
+  // ---- CLAUDE-RESUME-04: a player that has not been played (readyState 0, currentSrc empty), so Chrome's menu carries no source ----
+  // The player's own declaration is the selection: its src attribute, or the first own <source> the browser's resource selection would take.
+  // Nothing is played or loaded to find it; a re-sourced, detached, blob or manifest-only player is never saved generically.
+  const unplayed = (page, { src = '', sources = [], overlay = false } = {}) => {
+    const anchor = element('a', { href: page + '/watch', attrs: { role: 'link' } });
+    const scope = element('div', { parent: anchor });
+    const video = element('video', { parent: scope, attrs: src ? { src } : {} });
+    video.src = src;
+    video.currentSrc = '';
+    video.readyState = 0;
+    video.calls = [];
+    video.play = () => { video.calls.push('play'); return Promise.resolve(); };
+    video.load = () => { video.calls.push('load'); };
+    video.canPlayType = (type) => (/^video\/(mp4|webm)/.test(type) ? 'probably' : '');
+    const kids = sources.map((s) => { const el = element('source', { parent: video, attrs: { src: s.src, ...(s.type ? { type: s.type } : {}) } }); el.src = s.src; return el; });
+    video.querySelectorAll = (sel) => (sel === 'source' ? kids : []);
+    const cover = element('div', { parent: scope });
+    const stack = overlay ? [cover, video, scope, anchor] : [video, scope, anchor];
+    const doc = { hidden: false, elementsFromPoint: () => stack, querySelectorAll: () => [video, anchor], querySelector: () => null };
+    const rec = simulateGesture(doc, overlay ? cover : video, { x: 50, y: 50 }).rec;
+    return { anchor, scope, media: video, overlay: cover, doc, rec, video, kids };
+  };
+
+  await test('unplayed player (currentSrc empty) with a src attribute: saves exactly that source on the first save, without play()/load()', async () => {
+    const env = createTestEnv();
+    const page = 'https://preplay.example.test';
+    const source = 'https://cdn.example.test/clip.mp4?token=SYNTHETIC&exp=1';
+    const f = unplayed(page, { src: source });
+    network(env, source, 'video/mp4');
+    const calls = await save(env, f, page);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, source);
+    assert.match(calls[0].filename, /\.mp4$/);
+    assert.deepEqual(f.video.calls, [], 'never played or loaded');
+  });
+
+  for (const overlay of [false, true]) {
+    await test(`unplayed player with only <source> children${overlay ? ' under a covering layer' : ''}: the first playable declared source is saved`, async () => {
+      const env = createTestEnv();
+      const page = 'https://preplay-sources.example.test';
+      const skipped = 'https://cdn.example.test/clip.unplayable';
+      const source = 'https://cdn.example.test/clip.webm?sig=SYNTHETIC';
+      const f = unplayed(page, { sources: [{ src: skipped, type: 'video/x-unplayable' }, { src: source, type: 'video/webm' }, { src: 'https://cdn.example.test/later.mp4', type: 'video/mp4' }], overlay });
+      network(env, source, 'video/webm');
+      const calls = await save(env, f, page);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, source);
+      assert(!env.fetchedUrls.includes(skipped) && !env.fetchedUrls.includes('https://cdn.example.test/later.mp4'), 'only the selected source is requested');
+      assert.deepEqual(f.video.calls, [], 'never played or loaded');
+    });
+  }
+
+  for (const change of ['re-sourced', 'detached', 'reparented']) {
+    await test(`unplayed <source> player ${change} after the gesture is refused before any request`, async () => {
+      const env = createTestEnv();
+      const page = 'https://preplay-stale.example.test';
+      const source = 'https://cdn.example.test/clip.mp4';
+      const f = unplayed(page, { sources: [{ src: source, type: 'video/mp4' }] });
+      assert(f.rec.media && f.rec.media.check(), 'the capture is proven first');
+      network(env, source, 'video/mp4');
+      if (change === 're-sourced') { f.kids[0].src = 'https://cdn.example.test/other.mp4'; f.kids[0]._attrs.src = f.kids[0].src; }
+      if (change === 'detached') f.video.isConnected = false;
+      if (change === 'reparented') f.video.parentElement = element('div');
+      const calls = await save(env, f, page);
+      assert.equal(calls.length, 0);
+      assert.equal(env.fetchedUrls.length, 0);
+    });
+  }
+
+  for (const [label, opts] of [['a blob: source (MSE)', { src: 'blob:https://preplay.example.test/abc' }], ['only a manifest <source>', { sources: [{ src: 'https://cdn.example.test/master.m3u8', type: '' }] }], ['no source at all', {}]]) {
+    await test(`unplayed player with ${label}: nothing is guessed or saved generically`, async () => {
+      const env = createTestEnv();
+      const page = 'https://preplay-none.example.test';
+      const f = unplayed(page, opts);
+      network(env, 'https://cdn.example.test/never', 'video/mp4');
+      const calls = await save(env, f, page);
+      assert.equal(calls.length, 0);
+      assert.equal(env.fetchedUrls.length, 0, 'no request for an undeclared or stream source');
+      assert.deepEqual(f.video.calls, []);
+    });
+  }
 
   console.log(`Results: ${passed} passed, ${failed} failed`);
   if (failed) process.exitCode = 1;

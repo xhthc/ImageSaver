@@ -11,6 +11,7 @@ import {
   hasReport,
   postUrlOf,
 } from "@/core/present.js"
+import { uiLog } from "@/core/debuglog.js"
 import { useI18n } from "@/hooks/use-i18n"
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -37,8 +38,10 @@ function ReportBox({ record, env }: { record: any; env: DetailsEnv }) {
       await copyText(current, env.navigator)
       setOk(true)
       setStatus("report.copied")
+      uiLog("results", "report.copy", "ok")
     } catch {
       // Truthful failure: nothing was copied. Select the text so the user can copy it manually.
+      uiLog("results", "report.copy", "failed", "CLIPBOARD_FAILED")
       setOk(false)
       setStatus("report.copyFailed")
       try {
@@ -103,7 +106,9 @@ function PostBlock({ record, env }: { record: any; env: DetailsEnv }) {
     try {
       await copyText(post, env.navigator)
       setStatus("post.copied")
+      uiLog("results", "post.copy", "ok")
     } catch {
+      uiLog("results", "post.copy", "failed", "CLIPBOARD_FAILED")
       setStatus("post.copyFailed")
     }
   }

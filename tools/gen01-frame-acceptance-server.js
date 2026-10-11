@@ -212,6 +212,19 @@ ASSETS['/dl/json.png'] = { type: 'application/json', body: Buffer.from('{"error"
 addFile('/v/stream/43', 'video-b.webm', 'application/octet-stream', 'webm'); // extensionless WebM served as a generic binary
 ASSETS['/v/stream/44'] = { type: 'application/octet-stream', body: Buffer.from('<!doctype html><title>not a video</title><p>HTML behind a binary type</p>'), kind: 'html' };
 ASSETS['/v/html-video.mp4'] = { type: 'text/html', body: Buffer.from('<!doctype html><title>not a video</title><p>HTML behind an mp4 name</p>'), kind: 'html' };
+// PP: players before their first playback (page /preplay.html). Existing real videos under their own case paths, so the server log names the
+// case a request belongs to; the bytes (and SHA-256) are those of the reused asset. A source the browser cannot play and a lazy-loader
+// address are never served: a request for them is itself a failure.
+const alias = (p, from) => { ASSETS[p] = { ...ASSETS[from] }; };
+alias('/v/pp/own-src.mp4', '/v/video-a.mp4');
+alias('/v/pp/source-first.webm', '/v/video-b.webm');
+alias('/v/pp/source-later.mp4', '/v/silent-loop.mp4');
+alias('/v/pp/overlay.mp4', '/v/silent-loop.mp4');
+alias('/v/pp/stale-before.mp4', '/v/video-a.mp4');
+alias('/v/pp/stale-after.webm', '/v/video-b.webm');
+alias('/v/pp/removed.mp4', '/v/video-a.mp4');
+['/v/pp/source-unplayable.bin', '/v/pp/lazy-never.mp4'].forEach((p) => NOT_SERVED.add(p));
+const shaOf = (p) => crypto.createHash('sha256').update(ASSETS[p].body).digest('hex').slice(0, 16);
 const IGNORE_RANGE_BYTES = 2 * 1024 * 1024; // /dl/ignore-range.png: HEAD refused, GET ignores Range and streams this much, slowly
 const hung = [];
 const SIGNED_PATH = '/b/signed-full.png';
@@ -226,7 +239,7 @@ const pages = () => {
   return {
     '/': page('GEN-01 acceptance', `<h3>GEN-01 acceptance pages</h3>
 <ul><li><a href="/a.html">A: frame ownership</a></li><li><a href="/b1.html">B1: repeated preview + page metadata (gallery)</a>, <a href="/b1-single.html">single-subject page</a></li>
-<li><a href="/b2.html">B2: ordinary image layouts, relative URLs</a></li><li><a href="/c.html">C: direct video</a></li><li><a href="/css.html">CSS background and overlay entry points</a></li><li><a href="/guard.html">GUARD: selected target and availability of the save item</a></li><li><a href="/avif.html">AVIF: real AVIF originals and their nearest negatives</a></li><li><a href="/dl.html">DL: servers that refuse, lie or hang</a></li><li><a href="/menu.html">MENU: the save item is absent outside media and its label follows the click</a></li></ul>
+<li><a href="/b2.html">B2: ordinary image layouts, relative URLs</a></li><li><a href="/c.html">C: direct video</a></li><li><a href="/css.html">CSS background and overlay entry points</a></li><li><a href="/guard.html">GUARD: selected target and availability of the save item</a></li><li><a href="/avif.html">AVIF: real AVIF originals and their nearest negatives</a></li><li><a href="/dl.html">DL: servers that refuse, lie or hang</a></li><li><a href="/menu.html">MENU: the save item is absent outside media and its label follows the click</a></li><li><a href="/preplay.html">PP: saving a video before its first playback</a></li></ul>
 <p>Right-click the media and use the extension's save item. Each page lists the expected file for every click; the console of this server logs every request.</p>`),
     '/a.html': page('GEN-01 A', `<h3>A: frame ownership</h3>
 <div class="box"><b>A1. Top page preview (same URL as in the frames)</b><img src="${P}" data-original="${ORIGIN}/original/top-red.png" width="240" height="160"></div>
@@ -474,6 +487,62 @@ ${[1, 2, 3, 4].map((k) => `<img src="${ORIGIN}/b/gal-${k}.png" width="200" heigh
   e.attachShadow({ mode: 'open' }).innerHTML = '<span>shadow content: text only</span>';
   var s = document.getElementById('ms6').attachShadow({ mode: 'open' });
   s.innerHTML = '<video controls muted preload="metadata" width="240" height="135" src="/v/video-b.webm"></video>';
+})();
+</script>`),
+    '/preplay.html': page('GEN-01 pre-play video', `<style>.ppbox{position:relative;width:320px;height:180px}.ppbox video{display:block;margin:0;width:320px;height:180px}.cover{position:absolute;left:0;top:0;width:320px;height:180px;background:rgba(255,255,255,0)}#snap{white-space:pre-wrap;font:12px monospace;background:#fff;border:1px solid #999;padding:6px;max-height:420px;overflow:auto}</style>
+<h3>PP: save a video before its first playback</h3>
+<p>Relative URLs on purpose: run every case on <b>http://localhost:${PORT}/preplay.html</b> (and, optionally, on 127.0.0.1). Reload the extension, then open this page fresh. <b>Do not press play</b>, do not click the players and do not hover the controls long; just right-click the stated spot and choose <b>MediaLatch: Save media</b>. Every player has <code>preload="none"</code> and no autoplay; this page never calls play() or load().</p>
+<p>The panel at the bottom shows, for each right-click, what the page itself reports at the gesture and one second later: currentSrc (empty means Chromium has not selected a source yet), the src attribute, the declared &lt;source&gt; children and whether the browser can play their type, readyState, which videos lie under the click point, and the passive play/playing event counts. Copy it into the evidence. A currentSrc already filled in at the gesture is a valid result, but that run does not exercise the empty-currentSrc path.</p>
+<div class="row">
+<div class="box"><b>PP1 own src</b><div class="ppbox"><video id="pp1" controls preload="none" poster="/v/poster-a.png" src="/v/pp/own-src.mp4"></video></div></div>
+<div class="box"><b>PP2 &lt;source&gt; children only (unplayable type, then WebM, then MP4)</b><div class="ppbox"><video id="pp2" controls preload="none" poster="/v/poster-b.png"><source src="/v/pp/source-unplayable.bin" type="video/x-unplayable"><source src="/v/pp/source-first.webm" type="video/webm"><source src="/v/pp/source-later.mp4" type="video/mp4"></video></div></div>
+<div class="box"><b>PP3 one player under a transparent covering layer</b><div class="ppbox"><video id="pp3" preload="none" src="/v/pp/overlay.mp4"></video><div class="cover" id="pp3cover"></div></div></div></div>
+<div class="row">
+<div class="box"><b>PP4 no usable source (only a lazy-loader data-src, a poster)</b><div class="ppbox"><video id="pp4" controls preload="none" poster="/plain.png"><source data-src="/v/pp/lazy-never.mp4" type="video/mp4"></video></div></div>
+<div class="box"><b>PP5a source changes right after the right-click</b><div class="ppbox"><video id="pp5a" controls preload="none" src="/v/pp/stale-before.mp4"></video></div></div>
+<div class="box"><b>PP5b player removed right after the right-click</b><div class="ppbox" id="pp5bbox"><video id="pp5b" controls preload="none" src="/v/pp/removed.mp4"></video></div></div></div>
+<table><tr><th>#</th><th>Right-click</th><th>Expected</th><th>Wrong (and no request for it in the console)</th></tr>
+<tr><td>PP1</td><td>the player picture (not the controls)</td><td>own-src.mp4, sha256 ${shaOf('/v/pp/own-src.mp4')}&hellip; (= video-a.mp4: red, 440 Hz tone), plays to the end</td><td>poster-a.png, any PP2/PP3 file</td></tr>
+<tr><td>PP2</td><td>the player picture</td><td>source-first.webm, sha256 ${shaOf('/v/pp/source-first.webm')}&hellip; (= video-b.webm: blue, 880 Hz tone)</td><td>source-later.mp4 (a later alternative), source-unplayable.bin (never requested), poster-b.png</td></tr>
+<tr><td>PP3</td><td>the transparent layer over the player</td><td>overlay.mp4, sha256 ${shaOf('/v/pp/overlay.mp4')}&hellip; (= silent-loop.mp4: green, no audio)</td><td>own-src.mp4 or any neighbour's file</td></tr>
+<tr><td>PP4</td><td>the player picture</td><td><b>no file</b>, ERR</td><td>plain.png (its poster), lazy-never.mp4 (never requested), any PP1/PP2/PP3 file</td></tr>
+<tr><td>PP5a</td><td>the player (its src changes about 0.4 s later; wait at least one second, then choose Save)</td><td><b>no file</b>, ERR (the selection changed)</td><td>stale-before.mp4 or stale-after.webm</td></tr>
+<tr><td>PP5b</td><td>the player (it disappears about 0.4 s later; wait at least one second, then choose Save)</td><td><b>no file</b>, ERR</td><td>removed.mp4</td></tr></table>
+<p>After each positive case open the saved file: it must be the complete video and play (PP1/PP2 with audio, PP3 silent). Then press play on nothing; the event counts in the panel must still be 0 for every player. Not covered: blob/MSE, HLS/DASH and provider pages (X, Reddit, RedGIFs have their own native checks).</p>
+<div class="box"><b>Snapshot at the gesture (passive)</b><div id="snap">(right-click a player)</div></div>
+<script>
+(function () {
+  var ids = ['pp1', 'pp2', 'pp3', 'pp4', 'pp5a', 'pp5b'];
+  var counts = {};
+  ids.forEach(function (id) {
+    var v = document.getElementById(id);
+    counts[id] = { play: 0, playing: 0 };
+    v.addEventListener('play', function () { counts[id].play++; show(); });
+    v.addEventListener('playing', function () { counts[id].playing++; show(); });
+  });
+  var snaps = [];
+  function describe(v) {
+    if (!v) return null;
+    return { id: v.id, connected: v.isConnected, currentSrc: v.currentSrc || '(empty)', srcAttr: v.getAttribute('src'), readyState: v.readyState, networkState: v.networkState, paused: v.paused, preload: v.preload, autoplay: v.autoplay, poster: v.getAttribute('poster'),
+      sources: Array.prototype.map.call(v.querySelectorAll('source'), function (s) { var t = s.getAttribute('type'); return { src: s.getAttribute('src'), dataSrc: s.getAttribute('data-src'), type: t, canPlayType: t ? (v.canPlayType(t) || '(cannot)') : '(no type)' }; }),
+      events: counts[v.id] };
+  }
+  function show() { document.getElementById('snap').textContent = JSON.stringify(snaps.slice(-3), null, 1) + '\\n\\nplay/playing event counts: ' + JSON.stringify(counts); }
+  document.addEventListener('contextmenu', function (e) {
+    var box = e.target.closest ? e.target.closest('.ppbox') : null;
+    var vid = box ? box.querySelector('video') : null;
+    var hit = document.elementsFromPoint(e.clientX, e.clientY);
+    var rec = { at: new Date().toISOString().slice(11, 23), pressed: e.target.id || e.target.tagName, top: hit[0] ? (hit[0].id || hit[0].tagName) : null,
+      videosUnderPoint: hit.filter(function (n) { return n.tagName === 'VIDEO'; }).map(function (n) { return n.id; }), atGesture: describe(vid) };
+    snaps.push(rec);
+    show();
+    setTimeout(function () { rec.after1s = describe(vid); show(); }, 1000);
+  }, true);
+  var a = document.getElementById('pp5a');
+  a.addEventListener('contextmenu', function () { setTimeout(function () { a.setAttribute('src', '/v/pp/stale-after.webm'); }, 400); });
+  var b = document.getElementById('pp5b');
+  b.addEventListener('contextmenu', function () { setTimeout(function () { if (b.parentNode) b.parentNode.removeChild(b); }, 400); });
+  show();
 })();
 </script>`),
     '/avif/frame.html': page('avif frame', `<img src="rel-preview.png" data-original="rel/avif-frame-rel.avif" width="240" height="160"><div>(frame: relative preview and relative AVIF original)</div>`),
@@ -796,6 +865,22 @@ async function selfCheck() {
   check('DL: /dl/hang.png never answers (the caller times out)', hangAborted);
   check('DL: /dl/missing.png is 404 and the failing originals have their own preview files', (await get(ORIGIN + '/dl/missing.png')).status === 404 && ['html', 'json', '500', 'hang', 'missing', 'range', 'head'].every((n) => ASSETS['/dl/prev-' + n + '.png'] && ASSETS['/dl/prev-' + n + '.png'].kind === 'png'));
   check('DL: extensionless WebM and MP4 are generic binaries; the HTML ones really are HTML', ASSETS['/v/stream/43'].type === 'application/octet-stream' && ASSETS['/v/stream/43'].kind === 'webm' && ASSETS['/v/stream/42'].kind === 'mp4' && ASSETS['/v/stream/44'].kind === 'html' && ASSETS['/v/html-video.mp4'].type === 'text/html');
+  // PP page: players before their first playback; the markup carries each case, the page never plays or loads anything
+  const pp = text('/preplay.html');
+  const ppVideos = pp.match(/<video\b[^>]*>/g) || [];
+  const ppScript = (pp.match(/<script>([\s\S]*?)<\/script>/) || [])[1] || '';
+  check('PP page: the index links to it; relative URLs only', text('/').includes('/preplay.html') && !/(?:src|href|poster)="https?:/i.test(pp));
+  check('PP page: six players, every one preload="none", none autoplays, the page never calls play() or load()', ppVideos.length === 6 && ppVideos.every((v) => /preload="none"/.test(v) && !/autoplay/.test(v)) && !/\.(?:play|load)\s*\(/.test(ppScript));
+  check('PP page: PP1 has its own src; PP3 is one player under one transparent layer of its own size', /<video id="pp1"[^>]*src="\/v\/pp\/own-src\.mp4"/.test(pp) && /<div class="ppbox"><video id="pp3"[^>]*src="\/v\/pp\/overlay\.mp4"><\/video><div class="cover" id="pp3cover"><\/div><\/div>/.test(pp) && /\.cover\{position:absolute;left:0;top:0;width:320px;height:180px/.test(pp));
+  check('PP page: PP2 has no src, only <source> children: an unplayable type, then WebM, then MP4', /<video id="pp2"(?![^>]*\ssrc=)[^>]*><source src="\/v\/pp\/source-unplayable\.bin" type="video\/x-unplayable"><source src="\/v\/pp\/source-first\.webm" type="video\/webm"><source src="\/v\/pp\/source-later\.mp4" type="video\/mp4"><\/video>/.test(pp));
+  check('PP page: PP4 declares no usable source (no src, a lazy-loader data-src only) and has a poster', /<video id="pp4"(?![^>]*\ssrc=)[^>]*poster="\/plain\.png"><source data-src="\/v\/pp\/lazy-never\.mp4" type="video\/mp4"><\/video>/.test(pp));
+  check('PP page: PP5a is re-sourced and PP5b removed shortly after the right-click', /getElementById\('pp5a'\)[\s\S]*setAttribute\('src', '\/v\/pp\/stale-after\.webm'\)/.test(ppScript) && /getElementById\('pp5b'\)[\s\S]*removeChild\(b\)/.test(ppScript));
+  check('PP page: passive play/playing counters and a gesture snapshot of currentSrc, declared sources and the videos under the point', /addEventListener\('play'/.test(ppScript) && /addEventListener\('playing'/.test(ppScript) && /currentSrc: v\.currentSrc/.test(ppScript) && /videosUnderPoint/.test(ppScript) && /canPlayType/.test(ppScript));
+  const same = (x, y) => hashes[x] && hashes[x] === hashes[y];
+  check('PP files are the reused real videos byte for byte', same('/v/pp/own-src.mp4', '/v/video-a.mp4') && same('/v/pp/source-first.webm', '/v/video-b.webm') && same('/v/pp/source-later.mp4', '/v/silent-loop.mp4') && same('/v/pp/overlay.mp4', '/v/silent-loop.mp4') && same('/v/pp/stale-before.mp4', '/v/video-a.mp4') && same('/v/pp/stale-after.webm', '/v/video-b.webm') && same('/v/pp/removed.mp4', '/v/video-a.mp4'));
+  check('PP: every expected file differs from its case\'s wrong ones (later alternative, neighbours, the re-sourced file)', distinct('/v/pp/source-first.webm', '/v/pp/source-later.mp4') && distinct('/v/pp/own-src.mp4', '/v/pp/source-first.webm') && distinct('/v/pp/own-src.mp4', '/v/pp/overlay.mp4') && distinct('/v/pp/stale-before.mp4', '/v/pp/stale-after.webm') && distinct('/v/pp/own-src.mp4', '/plain.png'));
+  check('PP: the unplayable source and the lazy-loader address are never served (404)', (await get(ORIGIN + '/v/pp/source-unplayable.bin')).status === 404 && (await get(ORIGIN + '/v/pp/lazy-never.mp4')).status === 404);
+  check('PP page: the expected-file table states each file\'s SHA-256 prefix', ['/v/pp/own-src.mp4', '/v/pp/source-first.webm', '/v/pp/overlay.mp4'].every((p) => pp.includes(hashes[p].slice(0, 16))));
   check('every URL referenced by the pages is served (200)', missing.length === 0, missing.join('; '));
   const log = await get(CROSS + '/__requests', { headers: { 'X-Fixture-Control': '1' } });
   check('request log reachable only by a local control client', log.status === 200 && Array.isArray(await log.json()));

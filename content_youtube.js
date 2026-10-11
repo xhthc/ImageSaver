@@ -5,6 +5,9 @@
  */
 
 (function () {
+  // DEBUG-MENU-01: the shared journal client (lib/debug_journal.js); a no-op when it is absent. Outcomes only: never the copied link.
+  const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {} };
+  DBG.log('youtube', 'init', 'info');
   'use strict';
   const isI18n = globalThis.ImageSaverI18n;
   const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
@@ -354,7 +357,7 @@
 
       // Reject detached button
       if (wrap.isConnected === false) {
-        wrap.setAttribute('data-diagnostic-fail-branch', 'detached_button');
+        wrap.setAttribute('data-diagnostic-fail-branch', 'detached_button'); DBG.log('youtube.copy', 'link', 'failed', 'DETACHED_BUTTON');
         wrap.setAttribute('data-diagnostic-clipboard', 'failure');
         wrap.classList.add('is-error');
         return;
@@ -374,7 +377,7 @@
       }
 
       if (!liveRenderer || liveRenderer.isConnected === false) {
-        wrap.setAttribute('data-diagnostic-fail-branch', 'no_owner');
+        wrap.setAttribute('data-diagnostic-fail-branch', 'no_owner'); DBG.log('youtube.copy', 'link', 'failed', 'NO_OWNER');
         wrap.setAttribute('data-diagnostic-clipboard', 'failure');
         wrap.classList.add('is-error');
         return;
@@ -389,7 +392,7 @@
       wrap.setAttribute('data-diagnostic-share-url', shareUrl ? 'resolved' : 'null');
 
       if (!shareUrl) {
-        wrap.setAttribute('data-diagnostic-fail-branch', 'no_share_url');
+        wrap.setAttribute('data-diagnostic-fail-branch', 'no_share_url'); DBG.log('youtube.copy', 'link', 'failed', 'NO_SHARE_URL');
         wrap.setAttribute('data-diagnostic-clipboard', 'failure');
         wrap.classList.add('is-error');
         isLabel(wrap, 'title', 'inline.shortUnknown', 'MediaLatch: Не удалось определить ссылку на Short');
@@ -455,6 +458,7 @@
       wrap.setAttribute('data-diagnostic-fail-branch', copied ? 'none' : 'clipboard_failed');
       wrap.setAttribute('data-diagnostic-clipboard', copied ? 'success' : 'failure');
       wrap.setAttribute('data-diagnostic-method', usedMethod);
+      DBG.log('youtube.copy', 'link', copied ? 'ok' : 'failed', copied ? undefined : 'CLIPBOARD_FAILED', { method: usedMethod });
 
       if (copied) {
         wrap.classList.add('is-success');

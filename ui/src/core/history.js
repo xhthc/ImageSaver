@@ -9,6 +9,7 @@
 //   by dispose(); no timer and no polling; a change during a request is coalesced into one more request.
 import { createStore } from './store.js';
 import { HISTORY_ENABLED_KEY, HISTORY_KEY, watchStorage } from './keys.js';
+import { uiLog } from './debuglog.js';
 
 export const ENABLED_KEY = HISTORY_ENABLED_KEY;
 
@@ -94,14 +95,17 @@ export function createHistory(deps) {
     try {
       await chromeApi.storage.local.set({ [ENABLED_KEY]: wanted });
       store.setState({ prefError: '' });
+      uiLog('history', 'switch', 'ok', undefined, { enabled: wanted === true });
     } catch (_) {
       store.setState({ enabled: previous, prefError: 'history.error.prefSave' });
+      uiLog('history', 'switch', 'failed', 'STORAGE_WRITE');
     }
   }
 
   async function clear() {
     store.setState({ clearStatus: '', clearing: true });
     const after = await load('HISTORY_CLEAR');
+    uiLog('history', 'clear', after ? 'ok' : 'failed', after ? undefined : 'HISTORY_UNAVAILABLE');
     if (after && !disposed) store.setState({ records: after, status: 'ready', clearStatus: 'history.cleared' });
     store.setState({ clearing: false });
     return after;

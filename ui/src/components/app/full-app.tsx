@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react"
-import { Bell, FolderOpen, History, Share2, RefreshCw } from "lucide-react"
+import { Bell, Bug, FolderOpen, History, Share2, RefreshCw } from "lucide-react"
 
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { BrandMark } from "@/components/app/brand"
+import { DebugPanel } from "@/components/app/debug-panel"
 import { HistoryPanel } from "@/components/app/history-panel"
 import { LanguageSelect } from "@/components/app/language-select"
 import { ResultsList } from "@/components/app/results-list"
@@ -18,13 +19,14 @@ import {
 } from "@/components/app/settings-panels"
 import { I18n } from "@/core/i18n.js"
 import { DEFAULT_SECTION, SECTIONS, SETTINGS_SECTIONS, focusIdFromLocation, sectionFromLocation } from "@/core/nav.js"
+import { uiLog } from "@/core/debuglog.js"
 import { useI18n } from "@/hooks/use-i18n"
 import { getEnv } from "@/lib/env"
 
-const TAB_ICONS: Record<string, typeof History> = { history: History, saving: FolderOpen, notifications: Bell, embed: Share2, updates: RefreshCw }
+const TAB_ICONS: Record<string, typeof History> = { history: History, saving: FolderOpen, notifications: Bell, embed: Share2, updates: RefreshCw, debug: Bug }
 
 /**
- * The full extension page. Five sections as an accessible tab list. Deep links: popup.html#<section>,
+ * The full extension page. Six sections as an accessible tab list. Deep links: popup.html#<section>,
  * popup.html?section=<section>, popup.html?op=<operation id> (history section, that operation is opened).
  * All panels stay mounted (hidden when inactive) so unsaved edits survive a tab switch and a language change, and a results
  * list that was rendered while hidden acknowledges its failures only after the History panel is actually shown.
@@ -38,6 +40,7 @@ export function FullApp({ settings }: { settings: SettingsController }) {
   const select = useCallback((name: string) => {
     const next = (SECTIONS as readonly string[]).includes(name) ? name : DEFAULT_SECTION
     setSection(next)
+    uiLog("page", "section", "ok", undefined, { which: next })
     try {
       env.window?.history?.replaceState?.(null, "", `#${next}`)
     } catch {
@@ -110,6 +113,10 @@ export function FullApp({ settings }: { settings: SettingsController }) {
           <TabsContent value="updates" forceMount hidden={section !== "updates"} className="data-[state=inactive]:hidden" tabIndex={-1}>
             <h2 className="sr-only">{t("tab.updates")}</h2>
             <UpdatesPanel active={section === "updates"} />
+          </TabsContent>
+          <TabsContent value="debug" forceMount hidden={section !== "debug"} className="data-[state=inactive]:hidden" tabIndex={-1}>
+            <h2 className="sr-only">{t("tab.debug")}</h2>
+            <DebugPanel />
           </TabsContent>
         </Tabs>
 

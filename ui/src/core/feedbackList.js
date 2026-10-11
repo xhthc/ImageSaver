@@ -13,6 +13,7 @@
 import { createStore } from './store.js';
 import { operationUrl } from './nav.js';
 import { FEEDBACK_KEY, watchStorage } from './keys.js';
+import { uiLog } from './debuglog.js';
 
 /** Chromium brand and major version for the bug report (never the full user agent). */
 export function browserLabel(nav) {
@@ -149,6 +150,7 @@ export function createFeedbackList(deps, options = {}) {
   async function clear() {
     store.setState({ clearing: true });
     const after = await load('FEEDBACK_CLEAR');
+    uiLog('results', 'clear', after ? 'ok' : 'failed', after ? undefined : 'FEEDBACK_UNAVAILABLE');
     if (after && !disposed) store.setState({ status: 'ready', records: after.slice(0, limit), unreadIds: [], focusId: '' });
     store.setState({ clearing: false });
     return after;
@@ -156,7 +158,10 @@ export function createFeedbackList(deps, options = {}) {
 
   /** Explicit user action only: opens the full page at this operation (history section). */
   async function openFull(record) {
-    try { await chromeApi.tabs.create({ url: operationUrl(chromeApi, record.id) }); } catch (_) { /* the tab did not open */ }
+    try {
+      await chromeApi.tabs.create({ url: operationUrl(chromeApi, record.id) });
+      uiLog('results', 'open', 'ok', undefined, null);
+    } catch (_) { uiLog('results', 'open', 'failed', 'TAB_NOT_OPENED'); /* the tab did not open */ }
   }
 
   function dispose() {

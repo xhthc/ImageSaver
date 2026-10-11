@@ -1,5 +1,8 @@
 // content_x.js - Lightweight content script scoped strictly to X/Twitter
 (() => {
+  // DEBUG-MENU-01: the shared journal client (lib/debug_journal.js); a no-op when it is absent. Never an authority, never sees a token.
+  const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {}, cid() { return ''; }, enabled() { return false; } };
+  DBG.log('x', 'init', 'info');
   const isI18n = globalThis.ImageSaverI18n;
   const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
   const isLabel = (element, field, key, fallback, vars) => {
@@ -310,6 +313,15 @@
       return key ? el[key] : null;
     }
 
+    const ownerId = isQuoteTweet ? xiIdOf(postContainer, true) : null;
+    function selectContextTweet(tweet) {
+      const id = tweet && (tweet.id_str || tweet.id || tweet.rest_id);
+      const selected = isQuoteTweet && (!ownerId || String(id) !== ownerId)
+        ? (tweet?.quoted_status || tweet?.quoted_status_result?.result?.legacy || tweet) : tweet;
+      const selectedId = selected && (selected.id_str || selected.id || selected.rest_id);
+      return ownerId && selectedId && String(selectedId) !== ownerId ? null : selected;
+    }
+
     let curr = videoEl || postContainer;
     let confirmedHls = false;
     let foundAnyVariants = false;
@@ -330,9 +342,7 @@
           if (res.ok && res.bestMp4) return res;
           if (res.isHlsOnly) confirmedHls = true;
         }
-        let tweet = isQuoteTweet
-          ? (props.tweet?.quoted_status || props.tweet?.quoted_status_result?.result?.legacy || props.tweet)
-          : props.tweet;
+        const tweet = selectContextTweet(props.tweet);
         if (tweet) {
           const mediaList = extractMediaItemsFromTweet(tweet);
           if (mediaList.length > 0) {
@@ -366,9 +376,7 @@
             if (res.ok && res.bestMp4) return res;
             if (res.isHlsOnly) confirmedHls = true;
           }
-          let tweet = isQuoteTweet
-            ? (fProps.tweet?.quoted_status || fProps.tweet?.quoted_status_result?.result?.legacy || fProps.tweet)
-            : fProps.tweet;
+          const tweet = selectContextTweet(fProps.tweet);
           if (tweet) {
             const mediaList = extractMediaItemsFromTweet(tweet);
             if (mediaList.length > 0) {
@@ -525,6 +533,49 @@
       mime: cleanImageMime,
       animated: false
     };
+  }
+
+  const XI_POST = 'article[data-testid="tweet"], article[role="article"]';
+  const XI_QUOTE = '[data-testid="quoteTweet"], [role="blockquote"]';
+
+  function isAttributionAnchor(a) {
+    if (!a) return false;
+    const href = String((a.getAttribute && a.getAttribute('href')) || a.href || '');
+    if (/\/status(?:es)?\/\d+\/video\//i.test(href)) return true;
+    if (typeof a.closest === 'function' && a.closest('[data-testid="videoPlayer"], [data-testid="videoComponent"], video')) return true;
+    return false;
+  }
+
+  // The nested post, reply or quote card around `el` inside the top-level post `top`, if X shows one as a separate container:
+  // a nested <article> (the nearest article is not the top one), the legacy quote test ids, or a div[role=link] card that carries
+  // its own status link or author header. Gallery tiles are <a> elements and never match.
+  function xiCardOf(el, top) {
+    if (!el) return null;
+    if (!top && typeof el.closest === 'function') {
+      let up = el.closest('article');
+      for (let p = up?.parentElement && up.parentElement.closest('article'); p; p = p.parentElement && p.parentElement.closest('article')) up = p;
+      top = up;
+    }
+    if (top && typeof top.contains === 'function' && !top.contains(el)) return null;
+    for (let p = el, d = 0; p && p !== top && d < 40; p = p.parentElement, d++) {
+      const role = typeof p.getAttribute === 'function' ? p.getAttribute('role') : null;
+      if (p.tagName === 'ARTICLE' || role === 'blockquote' || p.getAttribute?.('data-testid') === 'quoteTweet') return p;
+      if (p.tagName !== 'DIV' || typeof p.getAttribute !== 'function' || p.getAttribute('role') !== 'link') continue;
+      if (/\/status(?:es)?\/\d+/.test(p.getAttribute('data-href') || '') || (typeof p.querySelector === 'function' && p.querySelector('[data-testid="User-Name"]'))) return p;
+    }
+    return null;
+  }
+
+  // article = the top-level post; quote = a nested card inside it (or null); owner = the card when there is one, else the post.
+  function xiOwnerOf(el) {
+    if (!el || typeof el.closest !== 'function') return null;
+    let top = el.closest('article');
+    if (!top) return null;
+    // the outermost article is the post: a nested article is a card inside it, even when only the outer one carries the post test id
+    for (let up = top.parentElement && top.parentElement.closest('article'); up; up = up.parentElement && up.parentElement.closest('article')) top = up;
+    const quote = xiCardOf(el, top);
+    if (quote && !(typeof top.contains === 'function' && top.contains(quote))) return null;
+    return { article: top, quote: quote || null, owner: quote || top };
   }
 
   /**
@@ -686,19 +737,25 @@
         });
       }
 
-      // 2. Blob-only / HLS-only stream without direct source -> Post-Linked MP4 Recovery
-      if (blobCandidates.length > 0) {
-        const quoteContainer = video ? (video.closest ? video.closest('[data-testid="quoteTweet"], [role="blockquote"]') : null) : null;
+      // 2. Blob-only / HLS-only stream without direct source -> Post-Linked MP4 Recovery. An unplayed X player (CLAUDE-RESUME-04: no source at all before
+      // the first playback, only X's own video poster) is the same selected player of the same post: it gets the same ownership metadata and the same
+      // recovery from the post's own declared variants; it is never "HLS only" for lack of an address and the poster is never its media.
+      const unplayedXPlayer = Boolean(video) && candidateUrls.length === 0 && isXVideoPosterUrl(posterUrl);
+      if (blobCandidates.length > 0 || unplayedXPlayer) {
+        const o = video ? xiOwnerOf(video) : null;
+        const quoteContainer = o?.quote || (video?.closest ? video.closest(XI_QUOTE) : null);
         const isQuoteTweet = Boolean(quoteContainer);
-        const postContainer = quoteContainer ||
+        const postContainer = quoteContainer || o?.article ||
           (video && video.closest ? (video.closest('article[data-testid="tweet"], article[role="article"]') || video.closest('article')) : null) ||
           video?.parentElement;
 
-        const postUrl = extractTweetUrl(postContainer, pageUrl) || pageUrl;
-        const tweetIdMatch = postUrl ? postUrl.match(/\/status\/(\d+)/) : null;
-        const tweetId = tweetIdMatch ? tweetIdMatch[1] : null;
+        const postUrl = extractTweetUrl(postContainer, isQuoteTweet ? null : pageUrl) || (isQuoteTweet ? null : pageUrl);
+        const tweetIdMatch = postUrl ? postUrl.match(/\/status(?:es)?\/(\d+)/) : null;
+        const tweetId = tweetIdMatch ? tweetIdMatch[1] : (isQuoteTweet ? xiIdOf(postContainer, true) : null);
 
-        const videosInContainer = postContainer && postContainer.querySelectorAll ? Array.from(postContainer.querySelectorAll('video')) : (video ? [video] : []);
+        const videosInContainer = postContainer && postContainer.querySelectorAll
+          ? Array.from(postContainer.querySelectorAll('video')).filter(v => !xiCardOf(v, postContainer))
+          : (video ? [video] : []);
         let mediaIndex = null;
         if (video && videosInContainer.length > 0) {
           const idx = videosInContainer.indexOf(video);
@@ -723,15 +780,15 @@
           isConfirmedHls = true;
         }
 
-        const isBlob = Boolean(blobCandidates[0]?.startsWith('blob:'));
+        const isBlob = unplayedXPlayer || Boolean(blobCandidates[0]?.startsWith('blob:'));
         // Represent "unknown", "confirmed HLS-only", and "MP4 found" separately:
         // Do NOT set isHlsOnly to true simply because isolated world has no metadata.
         const isHls = Boolean(isConfirmedHls);
 
         return createMediaDescriptor({
           type: 'video',
-          src: recoveredMp4Url || blobCandidates[0],
-          currentSrc: video?.currentSrc || blobCandidates[0],
+          src: recoveredMp4Url || blobCandidates[0] || '',
+          currentSrc: video?.currentSrc || blobCandidates[0] || '',
           poster: posterUrl,
           mime: 'video/mp4',
           pageUrl,
@@ -808,15 +865,16 @@
             });
           }
           if (isXVideoPosterUrl(imgUrl)) {
-            const quoteContainer = el.closest ? el.closest('[data-testid="quoteTweet"], [role="blockquote"]') : null;
+            const o = el ? xiOwnerOf(el) : null;
+            const quoteContainer = o?.quote || (el?.closest ? el.closest(XI_QUOTE) : null);
             const isQuoteTweet = Boolean(quoteContainer);
-            const postContainer = quoteContainer ||
+            const postContainer = quoteContainer || o?.article ||
               (el.closest ? (el.closest('article[data-testid="tweet"], article[role="article"]') || el.closest('article')) : null) ||
               el.parentElement;
 
-            const postUrl = extractTweetUrl(postContainer, pageUrl) || pageUrl;
-            const tweetIdMatch = postUrl ? postUrl.match(/\/status\/(\d+)/) : null;
-            const tweetId = tweetIdMatch ? tweetIdMatch[1] : null;
+            const postUrl = extractTweetUrl(postContainer, isQuoteTweet ? null : pageUrl) || (isQuoteTweet ? null : pageUrl);
+            const tweetIdMatch = postUrl ? postUrl.match(/\/status(?:es)?\/(\d+)/) : null;
+            const tweetId = tweetIdMatch ? tweetIdMatch[1] : (isQuoteTweet ? xiIdOf(postContainer, true) : null);
 
             const mediaIdMatch = imgUrl.match(/\/(?:ext_tw_video_thumb|amplify_video_thumb)\/(\d+)/i);
             const mediaIdHint = mediaIdMatch ? mediaIdMatch[1] : null;
@@ -888,15 +946,16 @@
             });
           }
           if (isXVideoPosterUrl(imgUrl)) {
-            const quoteContainer = insideImg.closest ? insideImg.closest('[data-testid="quoteTweet"], [role="blockquote"]') : null;
+            const o = insideImg ? xiOwnerOf(insideImg) : null;
+            const quoteContainer = o?.quote || (insideImg?.closest ? insideImg.closest(XI_QUOTE) : null);
             const isQuoteTweet = Boolean(quoteContainer);
-            const postContainer = quoteContainer ||
+            const postContainer = quoteContainer || o?.article ||
               (insideImg.closest ? (insideImg.closest('article[data-testid="tweet"], article[role="article"]') || insideImg.closest('article')) : null) ||
               insideImg.parentElement;
 
-            const postUrl = extractTweetUrl(postContainer, pageUrl) || pageUrl;
-            const tweetIdMatch = postUrl ? postUrl.match(/\/status\/(\d+)/) : null;
-            const tweetId = tweetIdMatch ? tweetIdMatch[1] : null;
+            const postUrl = extractTweetUrl(postContainer, isQuoteTweet ? null : pageUrl) || (isQuoteTweet ? null : pageUrl);
+            const tweetIdMatch = postUrl ? postUrl.match(/\/status(?:es)?\/(\d+)/) : null;
+            const tweetId = tweetIdMatch ? tweetIdMatch[1] : (isQuoteTweet ? xiIdOf(postContainer, true) : null);
 
             const mediaIdMatch = imgUrl.match(/\/(?:ext_tw_video_thumb|amplify_video_thumb)\/(\d+)/i);
             const mediaIdHint = mediaIdMatch ? mediaIdMatch[1] : null;
@@ -991,6 +1050,7 @@
     if (media) {
       savedMediaDescriptor = {
         descriptor: media,
+        selection: !media.url && lastFoundEl ? xiSnapshot(lastFoundEl, media.type, true) : null,
         owner: lastFoundEl ? new WeakRef(lastFoundEl) : null,
         x,
         y,
@@ -1058,6 +1118,7 @@
       if (fallbackMedia) {
         savedMediaDescriptor = {
           descriptor: fallbackMedia,
+          selection: !fallbackMedia.url && lastFoundEl ? xiSnapshot(lastFoundEl, fallbackMedia.type, true) : null,
           owner: lastFoundEl ? new WeakRef(lastFoundEl) : null,
           x: e.clientX,
           y: e.clientY,
@@ -1124,10 +1185,15 @@
           // The node the gesture chose must be the very node that is still there: connected and identical to the one
           // found at the point now, with the same media. A replacement with the same URL and type is another owner.
           result = owner && owner.isConnected !== false && owner === lastFoundEl &&
-            current && saved && current.url === saved.url && current.type === saved.type ? saved : null;
+            current && saved && current.url === saved.url && current.type === saved.type &&
+            // Empty URLs identify no media: re-prove the gesture-time poster, post and owner chain.
+            (saved.url || (savedMediaDescriptor.selection && xiHolds(savedMediaDescriptor.selection))) ? saved : null;
         } else if (!gestureKnown) {
           result = current;
         }
+        DBG.log('x.menu', 'descriptor', result ? 'ok' : 'refused', result ? undefined : (isGestureMatch ? 'STALE_SELECTION' : (gestureKnown ? 'GESTURE_MISMATCH' : 'NO_MEDIA')), () => (result ? {
+          type: result.type, host: result.url, blob: result.isBlobPlayer === true, isQuote: result.isQuoteTweet === true, postId: result.tweetId || undefined, mediaId: result.mediaIdHint || undefined
+        } : null));
         sendResponse(result);
         return true;
       }
@@ -1292,38 +1358,54 @@
   function extractTweetUrl(article, currentWindowUrl = null) {
     if (!article) return null;
 
+    const selfHref = String((typeof article.getAttribute === 'function' && article.getAttribute('data-href')) || '');
+    const selfMatch = selfHref.match(/\/([a-zA-Z0-9_]+)\/status(?:es)?\/(\d+)/);
+    if (selfMatch) {
+      return `https://x.com/${selfMatch[1]}/status/${selfMatch[2]}`;
+    }
+
     // 1. Primary: permalink anchor wrapping the tweet's <time> element
-    if (typeof article.querySelector === 'function') {
-      const timeEl = article.querySelector('time');
-      const timeLink = timeEl ? (timeEl.closest ? timeEl.closest('a') : timeEl.parentElement) : null;
-      if (timeLink) {
+    if (typeof article.querySelectorAll === 'function') {
+      const times = Array.from(article.querySelectorAll('time'));
+      for (const timeEl of times) {
+        const timeLink = timeEl.closest ? timeEl.closest('a') : timeEl.parentElement;
+        if (!timeLink) continue;
+        if (xiCardOf(timeLink, article)) continue;
+        const nestedArt = timeLink.closest ? timeLink.closest('article') : null;
+        if (nestedArt && nestedArt !== article && article.tagName === 'ARTICLE') continue;
+        if (isAttributionAnchor(timeLink)) continue;
         const href = (timeLink.getAttribute && timeLink.getAttribute('href')) || timeLink.href || '';
-        const match = href.match(/\/([a-zA-Z0-9_]+)\/status\/(\d+)/);
+        const match = href.match(/\/([a-zA-Z0-9_]+)\/status(?:es)?\/(\d+)/);
         if (match) {
           return `https://x.com/${match[1]}/status/${match[2]}`;
         }
       }
 
-      // 2. Scan all status links, excluding nested quote-tweet containers
-      const allStatusLinks = article.querySelectorAll ? Array.from(article.querySelectorAll('a[href*="/status/"]')) : [];
+      // 2. Scan all status links, excluding nested quote-tweet containers and attribution links
+      const allStatusLinks = Array.from(article.querySelectorAll('a[href*="/status/"]'));
       for (const a of allStatusLinks) {
-        if (a.closest && a.closest('[data-testid="quoteTweet"], [role="blockquote"]')) {
-          continue;
-        }
+        if (xiCardOf(a, article)) continue;
+        const nestedArt = a.closest ? a.closest('article') : null;
+        if (nestedArt && nestedArt !== article && article.tagName === 'ARTICLE') continue;
+        if (isAttributionAnchor(a)) continue;
         const href = (a.getAttribute && a.getAttribute('href')) || a.href || '';
-        const match = href.match(/\/([a-zA-Z0-9_]+)\/status\/(\d+)/);
+        const match = href.match(/\/([a-zA-Z0-9_]+)\/status(?:es)?\/(\d+)/);
         if (match) {
           return `https://x.com/${match[1]}/status/${match[2]}`;
         }
       }
     }
 
-    // 3. Fallback: if the user is on the tweet's direct permalink page
-    const pageUrl = currentWindowUrl || (typeof window !== 'undefined' ? window.location?.href : '');
-    if (pageUrl) {
-      const pageMatch = pageUrl.match(/(?:x\.com|twitter\.com)\/([a-zA-Z0-9_]+)\/status\/(\d+)/);
-      if (pageMatch) {
-        return `https://x.com/${pageMatch[1]}/status/${pageMatch[2]}`;
+    // 3. Fallback: if the user is on the tweet's direct permalink page (ONLY for top-level post, never quote card)
+    const isCard = Boolean(xiOwnerOf(article)?.quote) || (typeof article.getAttribute === 'function' &&
+      (article.getAttribute('role') === 'link' || article.getAttribute('data-testid') === 'quoteTweet' || article.getAttribute('role') === 'blockquote'));
+    if (!isCard) {
+      const pageUrl = currentWindowUrl || (typeof window !== 'undefined' ? window.location?.href : '');
+      if (pageUrl) {
+        const pageMatch = pageUrl.match(/(?:x\.com|twitter\.com)\/([a-zA-Z0-9_]+)\/status\/(\d+)/);
+        if (pageMatch) {
+          return `https://x.com/${pageMatch[1]}/status/${pageMatch[2]}`;
+        }
       }
     }
 
@@ -1373,6 +1455,7 @@
       const tweetUrl = extractTweetUrl(article);
       const shareUrl = tweetUrl ? formatXShareUrl(tweetUrl, cachedXShareHost) : null;
       if (!shareUrl) {
+        DBG.log('x.copy', 'link', 'failed', 'NO_POST_LINK');
         wrap.classList.add('is-error');
         isLabel(wrap, 'title', 'inline.postUnknown', 'MediaLatch: Не удалось определить ссылку на пост');
         setTimeout(() => {
@@ -1406,6 +1489,7 @@
         } catch (_) {}
       }
 
+      DBG.log('x.copy', 'link', copied ? 'ok' : 'failed', copied ? undefined : 'CLIPBOARD_FAILED');
       if (copied) {
         wrap.classList.add('is-success');
         btn.innerHTML = SVG_CHECK_ICON;
@@ -1517,8 +1601,6 @@
   // random token; background.js validates the sender and asks THIS document (same frame and document id) to prove the snapshot
   // again and to build the descriptor with the same builder the context menu uses, then runs the same X pipeline. No URL from
   // this message is ever trusted, no cursor state of the context menu is reused and no contextmenu event is simulated.
-  const XI_POST = 'article[data-testid="tweet"], article[role="article"]';
-  const XI_QUOTE = '[data-testid="quoteTweet"], [role="blockquote"]';
   const XI_PROMOTED = ['ad', 'promoted', 'реклама'];
   const XI = { HOVER_MS: 60, MAX_STACK: 24, MIN_W: 96, MIN_H: 64, TOKEN_TTL: 15000, CLICK_GAP: 1500, CHAIN: 14, INSET: 8, SIZE: 32, Z: 1, SETTLE_MS: 100, SETTLE_MAX: 12, DEPTH: 40, BATCH_MAX: 12, BATCH_TTL: 180000, MULTI_W: 104, MULTI_H: 60, COMPACT_W: 80, COMPACT_H: 32, ENUM_NODES: 80, TOL: 2, CORNER: 3 };
   const xiState = { host: null, btn: null, btnAll: null, lbl: null, lblAll: null, count: 0, compact: false, snap: null, el: null, observer: null, timer: null, settleTimer: null, settleN: 0, rearmTimer: null, rearmN: 0, sig: '', href: '', x: 0, y: 0, busyKey: '', busyAt: 0, busyTimer: null, keyEl: null, dismissed: null };
@@ -1537,44 +1619,23 @@
     return null; // avatars, emoji, link cards, banners and everything else are not post media
   }
 
-  // The nested post, reply or quote card around `el` inside the top-level post `top`, if X shows one as a separate container:
-  // a nested <article> (the nearest article is not the top one), the legacy quote test ids, or a div[role=link] card that carries
-  // its own status link or author header. Gallery tiles are <a> elements and never match.
-  function xiCardOf(el, top) {
-    const near = el.closest('article');
-    if (near && near !== top) return near;
-    const q = el.closest(XI_QUOTE);
-    if (q && q !== top) return q;
-    for (let p = el.parentElement, d = 0; p && p !== top && d < XI.DEPTH; p = p.parentElement, d++) {
-      if (p.tagName !== 'DIV' || typeof p.getAttribute !== 'function' || p.getAttribute('role') !== 'link') continue;
-      if (/\/status(?:es)?\/\d+/.test(p.getAttribute('data-href') || '') || (typeof p.querySelector === 'function' && p.querySelector('[data-testid="User-Name"]'))) return p;
-    }
-    return null;
-  }
-
-  // article = the top-level post; quote = a nested card inside it (or null); owner = the card when there is one, else the post.
-  function xiOwnerOf(el) {
-    if (!el || typeof el.closest !== 'function') return null;
-    let top = el.closest('article');
-    if (!top) return null;
-    // the outermost article is the post: a nested article is a card inside it, even when only the outer one carries the post test id
-    for (let up = top.parentElement && top.parentElement.closest('article'); up; up = up.parentElement && up.parentElement.closest('article')) top = up;
-    const quote = xiCardOf(el, top);
-    if (quote && !(typeof top.contains === 'function' && top.contains(quote))) return null;
-    return { article: top, quote: quote || null, owner: quote || top };
-  }
-
   // The status id this container itself shows: its own permalink (time link first), never an anchor of a nested quote or article.
   function xiIdOf(owner, isQuote) {
-    if (!owner || typeof owner.querySelectorAll !== 'function') return null;
+    if (!owner) return null;
+    const selfHref = String((typeof owner.getAttribute === 'function' && owner.getAttribute('data-href')) || '');
+    const mSelf = selfHref.match(/\/status(?:es)?\/(\d+)/);
+    if (mSelf) return mSelf[1];
+
+    if (typeof owner.querySelectorAll !== 'function') return null;
     const anchors = Array.from(owner.querySelectorAll('a[href*="/status/"]')).slice(0, 40);
     let fallback = null;
     for (const a of anchors) {
       if (typeof a.closest !== 'function') continue;
       // a link of a nested card belongs to that card; inside a card, a link of anything nested deeper is not its own
-      if (!isQuote && xiCardOf(a, owner)) continue;
+      if (xiCardOf(a, owner)) continue;
       const nested = a.closest('article');
       if (nested && nested !== owner && owner.tagName === 'ARTICLE') continue;
+      if (isAttributionAnchor(a)) continue;
       const m = String((a.getAttribute && a.getAttribute('href')) || a.href || '').match(/\/status(?:es)?\/(\d+)/);
       if (!m) continue;
       if (typeof a.querySelector === 'function' && a.querySelector('time')) return m[1];
@@ -1602,9 +1663,9 @@
     ? `${el.currentSrc || el.src || ''}|${(el.getAttribute && el.getAttribute('poster')) || el.poster || ''}`
     : (el.currentSrc || el.src || ''));
 
-  function xiSnapshot(el, kind) {
+  function xiSnapshot(el, kind, allowPromoted = false) {
     const o = xiOwnerOf(el);
-    if (!o || xiPromoted(o.article)) return null;
+    if (!o || (!allowPromoted && xiPromoted(o.article))) return null;
     if (typeof el.getBoundingClientRect !== 'function') return null;
     const chain = [];
     for (let p = el.parentElement; p && chain.length < XI.CHAIN; p = p.parentElement) {
@@ -1613,7 +1674,7 @@
     }
     return {
       elRef: new WeakRef(el), ownerRef: new WeakRef(o.owner), articleRef: new WeakRef(o.article), isQuote: Boolean(o.quote),
-      id: xiIdOf(o.owner, Boolean(o.quote)), tag: el.tagName, kind, src: xiSrcOf(el), chain
+      id: xiIdOf(o.owner, Boolean(o.quote)), tag: el.tagName, kind, src: xiSrcOf(el), chain, allowPromoted
     };
   }
 
@@ -1625,7 +1686,7 @@
       const article = s.articleRef.deref();
       if (!el || !owner || !article || el.isConnected === false || owner.isConnected === false || article.isConnected === false) return false;
       const o = xiOwnerOf(el);
-      if (!o || o.owner !== owner || o.article !== article || Boolean(o.quote) !== s.isQuote || xiPromoted(article)) return false;
+      if (!o || o.owner !== owner || o.article !== article || Boolean(o.quote) !== s.isQuote || (!s.allowPromoted && xiPromoted(article))) return false;
       if (el.tagName !== s.tag || xiSrcOf(el) !== s.src || xiIdOf(owner, s.isQuote) !== s.id) return false;
       let p = el.parentElement;
       for (const ref of s.chain) {
@@ -1657,6 +1718,14 @@
         const player = stack.slice(0, XI.MAX_STACK).find((v) => v && v.tagName === 'VIDEO' && xiOwnerOf(v) && xiOwnerOf(v).owner === (xiOwnerOf(el) || {}).owner);
         return player ? { el: player, kind: 'video' } : { el, kind };
       }
+    }
+    // pointer-events:none media is absent from the hit stack; its local layer must contain exactly one media at this point.
+    for (const node of stack.slice(0, XI.MAX_STACK)) {
+      if (!node || node === document.body || node === document.documentElement ||
+          (own && (node === own || (typeof own.contains === 'function' && own.contains(node))))) continue;
+      if (typeof node.closest !== 'function' || !node.closest('article')) return null;
+      const el = xiMediaWithin(node, { x: xiState.x, y: xiState.y });
+      if (el) return { el, kind: el.tagName === 'VIDEO' ? 'video' : xiImageKind(el.currentSrc || el.src) };
     }
     return null;
   }
@@ -1698,8 +1767,8 @@
       if ((L - r.left > XI.TOL || r.right - Rt > XI.TOL) &&
           (!compact || !(el.tagName === 'VIDEO' || (el.tagName === 'IMG' && xiImageKind(el.currentSrc || el.src))) || clipAt < 0 ||
            L - carouselLeft > XI.TOL || carouselRight - Rt > XI.TOL)) return null;
-      // ...and nothing outside the post (the sticky header, the sidebar, a dialog) may cover a corner of it.
-      if (xiCovered(owner, { left: L, top: T, right: Rt, bottom: B })) return null;
+      if (xiCovered(owner, { left: L, top: T, right: Rt, bottom: B },
+        { left: Rt - XI.INSET - w, top: T + XI.INSET, right: Rt - XI.INSET, bottom: T + XI.INSET + h })) return null;
       const cr = container.getBoundingClientRect();
       // a scaled or rotated container: local pixels no longer equal viewport pixels
       if (typeof container.offsetWidth === 'number' && container.offsetWidth > 0 && Math.abs(cr.width - container.offsetWidth) > 2) return null;
@@ -1711,15 +1780,21 @@
     }
   }
 
-  // The four corners of the visible media must hit something inside the post (the media itself, an overlay of the tile or our own
-  // control); the page's own interface drawn over the media is not part of the post.
-  function xiCovered(owner, vis) {
+  // Rounded media corners may hit the enclosing card backdrop; accepting it also requires owned control-area hits.
+  function xiCovered(owner, vis, control) {
     if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return false;
     const host = xiState.host;
     const d = XI.CORNER;
-    for (const [x, y] of [[vis.left + d, vis.top + d], [vis.right - d, vis.top + d], [vis.left + d, vis.bottom - d], [vis.right - d, vis.bottom - d]]) {
-      const t = document.elementFromPoint(x, y);
-      if (!t || !(t === host || (typeof owner.contains === 'function' && owner.contains(t)))) return true;
+    let backdrop = false;
+    for (const box of [vis, control]) {
+      if (box === control && !backdrop) break;
+      for (const [x, y] of [[box.left + d, box.top + d], [box.right - d, box.top + d], [box.left + d, box.bottom - d], [box.right - d, box.bottom - d]]) {
+        const t = document.elementFromPoint(x, y);
+        if (!t) return true;
+        if (t === host || (typeof owner.contains === 'function' && owner.contains(t))) continue;
+        if (box !== vis || typeof t.contains !== 'function' || !t.contains(owner)) return true;
+        backdrop = true;
+      }
     }
     return false;
   }
@@ -1933,6 +2008,7 @@
   }
 
   function xiHide() {
+    if (xiState.snap) DBG.log('x.inline', 'hide', 'info', undefined, null, { lvl: 'debug' });
     if (xiState.timer) { clearTimeout(xiState.timer); xiState.timer = null; }
     if (xiState.settleTimer) { clearTimeout(xiState.settleTimer); xiState.settleTimer = null; }
     if (xiState.rearmTimer) { clearTimeout(xiState.rearmTimer); xiState.rearmTimer = null; }
@@ -1952,7 +2028,8 @@
     const n = xiState.rearmN;
     xiHide();
     xiState.rearmN = n;
-    if (n >= XI.SETTLE_MAX || xiState.rearmTimer) return;
+    if (n >= XI.SETTLE_MAX || xiState.rearmTimer) { if (n >= XI.SETTLE_MAX) DBG.log('x.inline', 'rearm', 'skipped', 'REARM_EXHAUSTED', { attempt: n }, { lvl: 'debug' }); return; }
+    DBG.log('x.inline', 'rearm', 'info', undefined, { attempt: n + 1 }, { lvl: 'debug' });
     xiState.rearmN = n + 1;
     xiState.rearmTimer = setTimeout(() => { xiState.rearmTimer = null; xiEvaluate(); }, XI.SETTLE_MS);
   }
@@ -1978,6 +2055,7 @@
   }
 
   function xiShow(el, snap, plan) {
+    DBG.log('x.inline', 'show', 'info', undefined, () => ({ kind: snap.kind, count: plan.n, compact: Boolean(plan.compact), isQuote: Boolean(snap.isQuote), postId: snap.id || undefined }), { lvl: 'debug' });
     xiEnsureHost();
     xiState.snap = snap;
     xiState.el = el;
@@ -2045,12 +2123,18 @@
 
   // Keyboard: focusing an owned media (or its focusable wrapper) shows the control; Tab then moves to "Save this" and on to
   // "Save all", and Tab or Escape leaves it.
-  function xiMediaWithin(node) {
+  function xiMediaWithin(node, point = null) {
     if (!node) return null;
     if (node.tagName === 'VIDEO' || node.tagName === 'IMG') return node;
     if (typeof node.querySelectorAll !== 'function') return null;
-    const list = Array.from(node.querySelectorAll('video, img')).filter((m) => m.tagName === 'VIDEO' || xiImageKind(m.currentSrc || m.src));
-    return list.length === 1 ? list[0] : null;
+    const nodes = Array.from(node.querySelectorAll('video, img'));
+    if (point && nodes.length > XI.ENUM_NODES) return null;
+    const list = point ? nodes.filter((m) => {
+      if (typeof m.getBoundingClientRect !== 'function') return false;
+      const r = m.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
+    }) : nodes.filter((m) => m.tagName === 'VIDEO' || xiImageKind(m.currentSrc || m.src));
+    return list.length === 1 && (list[0].tagName === 'VIDEO' || xiImageKind(list[0].currentSrc || list[0].src)) ? list[0] : null;
   }
 
   function xiOnFocusIn(e) {
@@ -2112,11 +2196,15 @@
   };
 
   function xiSend(message, token, pending) {
+    const cid = pending && pending.get(token) ? pending.get(token).cid : undefined;
+    if (cid) message.dbg = cid;
     try {
       const sent = chrome.runtime.sendMessage(message);
-      if (sent && typeof sent.catch === 'function') sent.catch(() => {});
+      if (sent && typeof sent.catch === 'function') sent.catch(() => { DBG.log('x.inline', 'dispatch', 'failed', 'MESSAGE_FAILED', { action: message.action }, { cid }); });
+      DBG.log('x.inline', 'dispatch', 'start', undefined, { action: message.action }, { cid });
     } catch (_) {
       if (pending) pending.delete(token);
+      DBG.log('x.inline', 'dispatch', 'failed', 'EXTENSION_CONTEXT_GONE', { action: message.action }, { cid });
     }
     if (xiState.btn) {
       xiState.btn.setAttribute('aria-busy', 'true');
@@ -2136,22 +2224,27 @@
       if (typeof e.stopPropagation === 'function') e.stopPropagation();
       if (typeof e.preventDefault === 'function') e.preventDefault();
     }
-    if (!e || e.isTrusted !== true) return;
+    if (!e || e.isTrusted !== true) { DBG.log('x.inline', 'click', 'refused', 'NOT_TRUSTED', { which: 'this' }); return; }
+    const cid = DBG.cid();
     const shown = xiState.snap;
     const el = shown && shown.elRef.deref();
     const s = xiSize();
     // A fresh snapshot of the very element the button belongs to, equal to what the hover showed, still in a provable place.
     const fresh = el ? xiSnapshot(el, shown.kind) : null;
-    if (!fresh || !xiSame(fresh, shown) || !xiHolds(shown) || !xiLayout(el, fresh.ownerRef.deref(), s.w, s.h, xiState.compact)) { xiHide(); return; }
+    // (the journal names the first gate that refused, in the guard's own order and short-circuit)
+    const gate = !shown ? 'NO_CONTROL' : !el ? 'TARGET_GONE' : !fresh ? 'NO_SNAPSHOT' : !xiSame(fresh, shown) ? 'TARGET_CHANGED' : !xiHolds(shown) ? 'OWNER_NOT_HELD'
+      : !xiLayout(el, fresh.ownerRef.deref(), s.w, s.h, xiState.compact) ? 'LAYOUT_LOST' : '';
+    if (gate) { DBG.log('x.inline', 'click', 'refused', gate, () => ({ which: 'this', kind: shown && shown.kind, isQuote: Boolean(shown && shown.isQuote) }), { cid }); xiHide(); return; }
     const key = `${fresh.id}|${fresh.src}`;
     const now = Date.now();
-    if (xiState.busyKey === key && now - xiState.busyAt < XI.CLICK_GAP) return;
+    if (xiState.busyKey === key && now - xiState.busyAt < XI.CLICK_GAP) { DBG.log('x.inline', 'click', 'skipped', 'BUSY', { which: 'this' }, { cid }); return; }
+    DBG.log('x.inline', 'click', 'start', undefined, () => ({ which: 'this', kind: fresh.kind, isQuote: Boolean(fresh.isQuote), postId: fresh.id || undefined }), { cid });
     xiState.busyKey = key;
     xiState.busyAt = now;
     for (const [t, v] of xiPending) if (now - v.at > XI.TOKEN_TTL) xiPending.delete(t);
     while (xiPending.size >= 8) xiPending.delete(xiPending.keys().next().value);
     const token = xiToken();
-    xiPending.set(token, { snap: fresh, at: now });
+    xiPending.set(token, { snap: fresh, at: now, cid });
     xiSend({ action: 'X_INLINE_SAVE', token }, token, xiPending);
   }
 
@@ -2162,31 +2255,35 @@
       if (typeof e.stopPropagation === 'function') e.stopPropagation();
       if (typeof e.preventDefault === 'function') e.preventDefault();
     }
-    if (!e || e.isTrusted !== true) return;
+    if (!e || e.isTrusted !== true) { DBG.log('x.inline', 'click', 'refused', 'NOT_TRUSTED', { which: 'all' }); return; }
+    const cid = DBG.cid();
     const shown = xiState.snap;
     const el = shown && shown.elRef.deref();
     const owner = shown && shown.ownerRef.deref();
     const s = xiSize();
     const fresh = el ? xiSnapshot(el, shown.kind) : null;
-    if (!fresh || !owner || xiState.count < 2 || !xiSame(fresh, shown) || !xiHolds(shown) || !xiLayout(el, owner, s.w, s.h, xiState.compact)) { xiHide(); return; }
+    const gate = !fresh ? (!shown ? 'NO_CONTROL' : (!el ? 'TARGET_GONE' : 'NO_SNAPSHOT')) : !owner ? 'OWNER_GONE' : xiState.count < 2 ? 'NOT_A_BATCH'
+      : !xiSame(fresh, shown) ? 'TARGET_CHANGED' : !xiHolds(shown) ? 'OWNER_NOT_HELD' : !xiLayout(el, owner, s.w, s.h, xiState.compact) ? 'LAYOUT_LOST' : '';
+    if (gate) { DBG.log('x.inline', 'click', 'refused', gate, { which: 'all', count: xiState.count }, { cid }); xiHide(); return; }
     const items = xiEnumerate(owner);
-    if (items.length !== xiState.count || items.length > XI.BATCH_MAX || !items.some((i) => i.el === el)) { xiHide(); return; }
+    if (items.length !== xiState.count || items.length > XI.BATCH_MAX || !items.some((i) => i.el === el)) { DBG.log('x.inline', 'click', 'refused', 'LIST_CHANGED', { which: 'all', count: items.length, n: xiState.count }, { cid }); xiHide(); return; }
     const snaps = [];
     for (const it of items) {
       const snap = xiSnapshot(it.el, it.kind);
-      if (!snap || snap.ownerRef.deref() !== owner) { xiHide(); return; }
+      if (!snap || snap.ownerRef.deref() !== owner) { DBG.log('x.inline', 'click', 'refused', 'ITEM_NOT_OWNED', { which: 'all', index: snaps.length }, { cid }); xiHide(); return; }
       snaps.push(snap);
     }
     const sig = xiHash(snaps.map((x) => `${x.kind}:${x.src}`).join('|'));
     const key = `all|${fresh.id}|${sig}`;
     const now = Date.now();
-    if (xiState.busyKey === key && now - xiState.busyAt < XI.CLICK_GAP) return;
+    if (xiState.busyKey === key && now - xiState.busyAt < XI.CLICK_GAP) { DBG.log('x.inline', 'click', 'skipped', 'BUSY', { which: 'all' }, { cid }); return; }
+    DBG.log('x.inline', 'click', 'start', undefined, () => ({ which: 'all', count: snaps.length, postId: fresh.id || undefined }), { cid });
     xiState.busyKey = key;
     xiState.busyAt = now;
     for (const [t, v] of xiBatches) if (now - v.at > XI.BATCH_TTL) xiBatches.delete(t);
     while (xiBatches.size >= 4) xiBatches.delete(xiBatches.keys().next().value);
     const token = xiToken();
-    xiBatches.set(token, { items: snaps.map((snap) => ({ snap, used: false })), href: (typeof location !== 'undefined' && location.href) || '', at: now, opened: false, sig, id: fresh.id });
+    xiBatches.set(token, { items: snaps.map((snap) => ({ snap, used: false })), href: (typeof location !== 'undefined' && location.href) || '', at: now, opened: false, sig, id: fresh.id, cid });
     xiSend({ action: 'X_INLINE_SAVE_ALL', token }, token, xiBatches);
   }
 
@@ -2197,8 +2294,8 @@
     if (!media) return { ok: false, reason: 'NO_MEDIA' };
     const expected = snap.kind === 'photo' ? ['image'] : snap.kind === 'gif-poster' ? ['x_tweet_video'] : snap.kind === 'video-poster' ? ['video'] : ['video', 'x_tweet_video'];
     if (!expected.includes(media.type)) return { ok: false, reason: 'KIND_MISMATCH' };
-    if (typeof media.x === 'number') {
-      // a player's recovery looks the post up by point: this element's own centre, never the context-menu cursor
+    if (typeof media.x === 'number' || media.isBlobPlayer === true) {
+      // a player's recovery looks the post up by point: this element's own centre, never the context-menu cursor (also when no menu was ever opened)
       const r = el.getBoundingClientRect();
       media.x = Math.round(r.left + r.width / 2);
       media.y = Math.round(r.top + r.height / 2);
@@ -2256,6 +2353,7 @@
   }
 
   function xiTeardown() {
+    DBG.log('x', 'teardown', 'info');
     xiHide();
     xiPending.clear();
     xiBatches.clear();
@@ -2280,10 +2378,18 @@
       const action = message && message.action;
       if (action !== 'X_INLINE_OWNER' && action !== 'X_INLINE_BATCH' && action !== 'X_INLINE_OWNER_ITEM') return;
       // only the extension's own background (not a page, not a content script of another tab) may ask
-      if (!sender || sender.tab || sender.id !== chrome.runtime.id) return;
-      sendResponse(action === 'X_INLINE_OWNER' ? xiAnswerOwner(message.token)
+      if (!sender || sender.tab || sender.id !== chrome.runtime.id) { DBG.log('x.inline', 'proof', 'refused', 'FOREIGN_ASKER'); return; }
+      const pendingEntry = typeof message.token === 'string' ? (xiPending.get(message.token) || xiBatches.get(message.token)) : null;
+      const cid = pendingEntry && pendingEntry.cid ? pendingEntry.cid : undefined;
+      const answer = action === 'X_INLINE_OWNER' ? xiAnswerOwner(message.token)
         : action === 'X_INLINE_BATCH' ? xiBatchOpen(message.token)
-          : xiBatchItem(message.token, message.index));
+          : xiBatchItem(message.token, message.index);
+      DBG.log('x.inline', action === 'X_INLINE_OWNER' ? 'proof' : (action === 'X_INLINE_BATCH' ? 'batch.proof' : 'item.proof'), answer && answer.ok ? 'ok' : 'refused',
+        answer && answer.ok ? undefined : (answer && answer.reason) || 'NO_ANSWER', () => ({
+          index: Number.isInteger(message.index) ? message.index : undefined, count: answer && answer.count, type: answer && answer.media && answer.media.type,
+          host: answer && answer.media && answer.media.url, isQuote: Boolean(answer && answer.media && answer.media.isQuoteTweet), postId: answer && answer.media ? (answer.media.tweetId || undefined) : (answer && answer.ownerId)
+        }), { cid });
+      sendResponse(answer);
     });
   }
 
@@ -2314,6 +2420,9 @@
     globalThis.__inspectVideoVariants = inspectVideoVariants;
     globalThis.__extractPostMetadataFromDom = extractPostMetadataFromDom;
     globalThis.__isXVideoPosterUrl = isXVideoPosterUrl;
+    globalThis.__xiCardOf = xiCardOf;
+    globalThis.__xiOwnerOf = xiOwnerOf;
+    globalThis.__xiIdOf = xiIdOf;
   }
 })();
 

@@ -18,6 +18,8 @@
   const KEY = '__imageSaverContextTarget';
   if (globalThis[KEY] !== undefined) return;
   globalThis[KEY] = null;
+  // DEBUG-MENU-01: the shared journal client (lib/debug_journal.js); a no-op when it is absent. Gestures only: never a pointer move.
+  const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {} };
 
   const OWNER_ATTRS = [
     'srcset', 'data-original', 'data-src', 'data-full', 'data-full-image', 'data-original-src', 'data-image',
@@ -55,6 +57,28 @@
     }
   };
 
+  // The address a player declares (CLAUDE-RESUME-04): what it plays (currentSrc), else its own src, else, before it has loaded anything
+  // (readyState 0, currentSrc still empty), the first of its own <source> children the browser's resource selection would take, in order:
+  // a declared type it cannot play or a media query that does not match is skipped. A src attribute wins over the children, as in the browser.
+  // http(s) only; a manifest is a stream, not a file, so a source-only player declaring one stays URL-less. Never a guess, never the poster.
+  const declaredSourceOf = (video) => {
+    const own = httpUrl(video.currentSrc || video.src);
+    if (own || video.currentSrc || (typeof video.getAttribute === 'function' && video.getAttribute('src'))) return own;
+    const list = typeof video.querySelectorAll === 'function' ? Array.from(video.querySelectorAll('source')).slice(0, 16) : [];
+    for (const s of list) {
+      if (s.parentElement !== video || typeof s.getAttribute !== 'function') continue;
+      const type = s.getAttribute('type');
+      if (type && typeof video.canPlayType === 'function' && video.canPlayType(type) === '') continue;
+      const mq = s.getAttribute('media');
+      if (mq && typeof window.matchMedia === 'function' && !window.matchMedia(mq).matches) continue;
+      const raw = s.src || s.getAttribute('src');
+      if (!raw) continue;
+      const url = httpUrl(raw);
+      return url && !/\.(?:m3u8|mpd)$/i.test(new URL(url).pathname) ? url : null;
+    }
+    return null;
+  };
+
   // The one http(s) asset an element itself is: an <img>/<video> source, or exactly one http(s) url() in its own
   // computed background (data:/blob: and gradients are not assets). 'multi' = several http(s) backgrounds.
   const mediaOf = (el) => {
@@ -65,7 +89,7 @@
     if (el.tagName === 'VIDEO') {
       // A blob:/MSE/not-yet-loaded player is still the selected player: it has no ready HTTP URL, and an existing
       // provider recovery may resolve it, so it is a (URL-less) target rather than no target.
-      const url = httpUrl(el.currentSrc || el.src);
+      const url = declaredSourceOf(el);
       return url ? { url, kind: 'video' } : { url: null, kind: 'player' };
     }
     const value = window.getComputedStyle(el).backgroundImage;
@@ -191,7 +215,7 @@
   const ownEvidence = (target) => {
     if (target.tagName === 'IMG') return evidenceOf('img', httpUrl(target.currentSrc || target.src));
     if (target.tagName === 'VIDEO') {
-      const url = httpUrl(target.currentSrc || target.src);
+      const url = declaredSourceOf(target);
       return evidenceOf(url ? 'video' : 'player', url);
     }
     return null;
@@ -251,7 +275,22 @@
           }
         };
       }
-    } else if (target.tagName !== 'VIDEO') {
+    } else if (target.tagName === 'VIDEO') {
+      // A pressed player that has not loaded yet gives Chrome no source (its currentSrc is empty), so the menu carries none: the address it
+      // declares is the selection, proven again when the save runs (same node, same owner chain, the same declared address).
+      const url = declaredSourceOf(target);
+      if (url) {
+        media = {
+          url,
+          kind: 'video',
+          ref,
+          check: () => {
+            const t = ref.deref();
+            return Boolean(t) && t.isConnected !== false && same(t) && declaredSourceOf(t) === url;
+          }
+        };
+      }
+    } else {
       const found = detect(target, x, y);
       if (found) {
         const url = found.url;
@@ -481,6 +520,7 @@
     try {
       if (torn || !m || m.action !== 'CONTEXT_HINT_RESET' || !sender || sender.id !== chrome.runtime.id) return;
     } catch (e) { return; }
+    DBG.log('target', 'reset', 'info', undefined, null, { lvl: 'debug' });
     lastSent = null;
     if (Number.isFinite(px) && !document.hidden) schedule();
   };
@@ -507,6 +547,13 @@
       globalThis[KEY] = target && target.nodeType === 1 ? record(target, event.clientX, event.clientY) : null;
     } catch (e) {
       globalThis[KEY] = null;
+    }
+    if (event.type === 'contextmenu') {
+      const rec = globalThis[KEY];
+      DBG.log('target', 'capture', rec ? 'ok' : 'skipped', rec ? undefined : 'NO_ELEMENT', () => (rec ? {
+        ok: rec.selectable === true, kind: rec.media ? rec.media.kind : (rec.evidence ? rec.evidence.kind : undefined), host: rec.media ? rec.media.url : (rec.evidence ? rec.evidence.url : undefined),
+        linkHost: rec.linkHref || undefined, type: target && target.tagName ? String(target.tagName).toLowerCase() : undefined
+      } : null));
     }
     notify(globalThis[KEY], event.type === 'mousedown' ? 'down' : 'menu', event.timeStamp);
   };

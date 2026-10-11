@@ -228,9 +228,11 @@ const fourcc = (bytes, at) => String.fromCharCode(...bytes.slice(at + 4, at + 8)
 
 function expectedSamples(res) {
   const out = [];
-  let dts = res.spec.dtsStart || 0;
+  // the output tables start every track at zero: a source that starts later is shifted, its start is presented by an empty edit (assertEdits)
+  const start = res.spec.dtsStart || 0;
+  let dts = 0;
   res.spec.samples.forEach((s, i) => {
-    out.push({ dts, cts: s.cts === undefined ? dts : s.cts, duration: s.duration, size: res.payloadOf(i, s.size).length, sync: res.spec.kind === 'video' ? s.sync !== false : true, payload: res.payloadOf(i, s.size) });
+    out.push({ dts, cts: s.cts === undefined ? dts : s.cts - start, duration: s.duration, size: res.payloadOf(i, s.size).length, sync: res.spec.kind === 'video' ? s.sync !== false : true, payload: res.payloadOf(i, s.size) });
     dts += s.duration;
   });
   return out;
@@ -256,12 +258,21 @@ function assertTrack(out, id, res, label) {
 }
 
 const mediaTimeOf = (spec) => (spec.noEdts ? 0 : (spec.edits ? spec.edits[0][1] : spec.mediaTime || 0));
+// against the source's absolute media time: the ticks before the first sample (an empty edit) and the media time the output edit keeps
+const leadOf = (spec) => Math.max(0, (spec.dtsStart || 0) - mediaTimeOf(spec));
+const skipOf = (spec) => Math.max(0, mediaTimeOf(spec) - (spec.dtsStart || 0));
+const hasEdit = (spec) => Math.round(leadOf(spec) / spec.timescale * 1000) > 0 || skipOf(spec) > 0;
 
 function assertEdits(trak, res, movieTs, label) {
-  const mt = mediaTimeOf(res.spec);
-  const entries = (trak.edts && trak.edts.elst && trak.edts.elst.entries) || [];
-  if (!mt) { assert.equal(entries.length, 0, `${label}: no edit when the source had none`); return; }
-  assert.equal(entries.length, 1, `${label}: one edit`);
+  const mt = skipOf(res.spec);
+  const lead = Math.round(leadOf(res.spec) / res.spec.timescale * movieTs);
+  let entries = (trak.edts && trak.edts.elst && trak.edts.elst.entries) || [];
+  if (!mt && !lead) { assert.equal(entries.length, 0, `${label}: no edit when the source had none`); return; }
+  if (lead) {
+    assert.equal(entries.length, 2, `${label}: an empty edit, then the media`);
+    assert.deepEqual([entries[0].segment_duration, entries[0].media_time, entries[0].media_rate_integer], [lead, -1, 1], `${label}: the start after zero is an empty edit of that length`);
+    entries = entries.slice(1);
+  } else assert.equal(entries.length, 1, `${label}: one edit`);
   assert.deepEqual([entries[0].media_time, entries[0].media_rate_integer, entries[0].media_rate_fraction], [mt, 1, 0], `${label}: the media time is the source's, in this track's own timescale`);
   const presentation = (res.ticks - mt) / res.spec.timescale;
   assert.ok(Math.abs(entries[0].segment_duration / movieTs - presentation) <= 1 / movieTs, `${label}: the edit lasts as long as the presentation (${entries[0].segment_duration} for ${presentation} s)`);
@@ -345,8 +356,8 @@ async function assertOutput(result, v, a, label = 'output') {
   assert.deepEqual([info.tracks[0].volume, info.tracks[1].volume], [0, 1], `${label}: volume`);
   assertEdits(vt, v, 1000, `${label} video`);
   assertEdits(at, a, 1000, `${label} audio`);
-  const pres = (r) => Math.max(0, r.ticks - mediaTimeOf(r.spec)) / r.spec.timescale;
-  const movie = Math.round(Math.max(pres(v), pres(a)) * 1000);
+  const pres = (r) => Math.round(leadOf(r.spec) / r.spec.timescale * 1000) + Math.round(Math.max(0, r.ticks - skipOf(r.spec)) / r.spec.timescale * 1000);
+  const movie = Math.max(pres(v), pres(a));
   assert.equal(file.moov.mvhd.duration, movie, `${label}: movie duration`);
   assert.equal(vt.mdia.mdhd.duration, v.ticks);
   assert.equal(at.mdia.mdhd.duration, a.ticks);
@@ -360,7 +371,7 @@ async function assertOutput(result, v, a, label = 'output') {
   const moovKids = boxesIn(bytes, moov.body, moov.end);
   assert.deepEqual(moovKids.map((b) => b.type), ['mvhd', 'trak', 'trak'], `${label}: mvhd leads the movie box; two tracks; no mvex`);
   const traks = moovKids.filter((b) => b.type === 'trak');
-  traks.forEach((trak, k) => assert.deepEqual(boxesIn(bytes, trak.body, trak.end).map((b) => b.type), (k === 0 ? mediaTimeOf(v.spec) : mediaTimeOf(a.spec)) ? ['tkhd', 'edts', 'mdia'] : ['tkhd', 'mdia'], `${label}: track box order (the edit box sits between the header and the media)`));
+  traks.forEach((trak, k) => assert.deepEqual(boxesIn(bytes, trak.body, trak.end).map((b) => b.type), hasEdit(k === 0 ? v.spec : a.spec) ? ['tkhd', 'edts', 'mdia'] : ['tkhd', 'mdia'], `${label}: track box order (the edit box sits between the header and the media)`));
   for (const trak of traks) assert.deepEqual(boxesIn(bytes, only(bytes, trak, 'mdia').body, only(bytes, trak, 'mdia').end).map((b) => b.type), ['mdhd', 'hdlr', 'minf'], `${label}: ordinary media box`);
   const tables = [v, a].map((res, k) => {
     const tb = rawTables(bytes, traks[k]);
@@ -476,6 +487,40 @@ test('timing across timescales: different edit lists (priming) are kept in each 
     const srcStart = (spec, firstOf) => (firstOf({ samples: spec.samples.map((s, i) => ({ cts: s.cts === undefined ? 0 : s.cts, dts: 0 })) }) - mediaTimeOf(spec)) / spec.timescale;
     assert.equal(startOf(1, v.spec, (t) => Math.min(...t.samples.map((s) => s.cts))), srcStart(v.spec, (t) => Math.min(...t.samples.map((s) => s.cts))), `${name}: the first picture's presentation start`);
     assert.equal(startOf(2, a.spec, (t) => t.samples[0].cts), (0 - mediaTimeOf(a.spec)) / a.spec.timescale, `${name}: the audio's presentation start`);
+  }
+});
+
+// BUGFIX-MULTISITE-01: the layout observed on v.redd.it/xbd04viqf9uh1 (r/SipsTea): video at 15360 ticks with an edit of media time 1024 and a first
+// decode time of 0; AAC at 48000 ticks WITHOUT an edit list whose first decode time is 48 (tfdt 48, sidx earliest presentation time 48). Before the fix
+// the assembly refused it as UNSUPPORTED_TIMING. Now the audio's start is presented exactly where the source puts it: an empty edit of 1 ms.
+test('a track that starts after zero (observed SipsTea layout): kept in sync by an initial empty edit, every sample and payload unchanged', async () => {
+  const cases = {
+    'observed: video edit 1024 @15360 from 0, audio from 48 @48000 without an edit': [videoSpec({ mediaTime: 1024 }), audioSpec({ noEdts: true, mediaTime: 0, dtsStart: 48 })],
+    'audio from 48 with its own priming edit 1024': [videoSpec({ mediaTime: 1024 }), audioSpec({ mediaTime: 1024, dtsStart: 48 })],
+    'video from 512 with an edit of 1024 (the edit lies inside the media)': [videoSpec({ mediaTime: 1024, dtsStart: 512, samples: videoSpec().samples.map((s) => ({ ...s, cts: s.cts + 512 })) }), audioSpec({ mediaTime: 1024 })],
+    'both tracks start late (video 0.5 s, audio 0.25 s)': [videoSpec({ noEdts: true, mediaTime: 0, dtsStart: 7680, samples: videoSpec().samples.map((s) => ({ ...s, cts: s.cts - 1024 + 7680 })) }), audioSpec({ noEdts: true, mediaTime: 0, dtsStart: 12000 })]
+  };
+  for (const [name, [vs, as]] of Object.entries(cases)) {
+    const v = buildFmp4(vs);
+    const a = buildFmp4(as);
+    const result = await H.assembleRedditHls({ masterUrl: MASTER_URL, fetchImpl: makeServer(standardFiles(v, a)).fetchImpl });
+    await assertOutput(result, v, a, name);
+    // presentation alignment against the source: a sample presented at (cts - edit media time) / timescale in the source is presented at the same time
+    const out = await reparse(result.blob);
+    const presentedAt = (trak, ts, cts) => {
+      const e = (trak.edts && trak.edts.elst.entries) || [];
+      const empty = e.length && e[0].media_time === -1 ? e[0].segment_duration / 1000 : 0;
+      const media = e.find((x) => x.media_time >= 0);
+      return empty + (cts - (media ? media.media_time : 0)) / ts;
+    };
+    const srcAt = (spec, cts) => (cts - mediaTimeOf(spec)) / spec.timescale;
+    const vt = out.file.getTrackById(1);
+    const at = out.file.getTrackById(2);
+    const vFirst = Math.min(...vt.samples.map((x) => x.cts));
+    const vSrcFirst = Math.min(...vs.samples.map((x) => x.cts));
+    assert.ok(Math.abs(presentedAt(vt, vs.timescale, vFirst) - srcAt(vs, vSrcFirst)) < 0.0005, `${name}: the first picture is presented where the source presents it`);
+    assert.ok(Math.abs(presentedAt(at, as.timescale, at.samples[0].cts) - srcAt(as, as.dtsStart || 0)) < 0.0005, `${name}: the first audio sample is presented where the source presents it (${presentedAt(at, as.timescale, at.samples[0].cts)} s)`);
+    assert.equal(at.samples.length, as.samples.length, `${name}: no audio sample dropped`);
   }
 });
 
@@ -656,7 +701,8 @@ test('resource refusals: truncated media, a missing fragment, foreign length, pr
   await refusal(cut, a, { vFile: { body: cutBytes, length: cutBytes.length }, vPlaylist: mediaPlaylist(cut, 'CMAF_720.mp4') }, 'INCOMPLETE', 'a truncated last fragment');
   // protection and unsupported content
   await refusal(buildFmp4(videoSpec({ pssh: true })), a, {}, 'UNSUPPORTED_ENCRYPTED', 'a protection system box');
-  await refusal(buildFmp4(videoSpec({ dtsStart: 512 })), a, {}, 'UNSUPPORTED_TIMING', 'a timeline that does not start at zero');
+  await refusal(buildFmp4(videoSpec({ dtsStart: 15360 * 2 })), a, {}, 'UNSUPPORTED_TIMING', 'a timeline that starts later than the tolerance (2 s)');
+  await refusal(v, buildFmp4(audioSpec({ dtsStart: 48000 + 48, noEdts: true, mediaTime: 0 })), {}, 'UNSUPPORTED_TIMING', 'an audio timeline that starts later than the tolerance');
   await refusal(buildFmp4(videoSpec({ edits: [[100, 1024, 1], [100, 2048, 1]] })), a, {}, 'UNSUPPORTED_TIMING', 'two edits');
   await refusal(buildFmp4(videoSpec({ edits: [[0, 1024, 2]] })), a, {}, 'UNSUPPORTED_TIMING', 'an edit with a rate that is not 1');
   await refusal(buildFmp4(videoSpec({ edits: [[0, 999999, 1]] })), a, {}, 'UNSUPPORTED_TIMING', 'an edit beyond the media');

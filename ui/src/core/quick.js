@@ -10,6 +10,7 @@
 // - `mount` identifies the current list mount: a superseded (hidden or disabled) mount is inert.
 import { createStore } from './store.js';
 import { pageUrl } from './nav.js';
+import { uiLog } from './debuglog.js';
 
 export const ENABLED_KEY = 'historyEnabled';
 export const DISMISSED_KEY = 'historyInviteDismissed';
@@ -48,8 +49,10 @@ export function createQuick(deps) {
     try {
       await chromeApi.tabs.create({ url: pageUrl(chromeApi, section) });
     } catch (_) {
+      uiLog('popup', 'settings', 'failed', 'TAB_NOT_OPENED', { section });
       return; // the tab did not open: the popup stays open
     }
+    uiLog('popup', 'settings', 'ok', undefined, { section });
     if (deps.window && typeof deps.window.close === 'function') deps.window.close();
   }
 
@@ -58,8 +61,10 @@ export function createQuick(deps) {
       await chromeApi.storage.local.set({ [ENABLED_KEY]: true });
     } catch (_) {
       store.setState({ inviteError: 'quick.error.enable' }); // a catalogue key (lib/i18n.js)
+      uiLog('popup', 'history', 'failed', 'STORAGE_WRITE');
       return; // history stays disabled
     }
+    uiLog('popup', 'history', 'ok', undefined, { enabled: true });
     touched[ENABLED_KEY] = true;
     store.setState({ enabled: true });
     sync();
@@ -70,8 +75,10 @@ export function createQuick(deps) {
       await chromeApi.storage.local.set({ [DISMISSED_KEY]: true });
     } catch (_) {
       store.setState({ inviteError: 'quick.error.dismiss' });
+      uiLog('popup', 'invite', 'failed', 'STORAGE_WRITE');
       return; // the invitation stays visible; nothing else is touched
     }
+    uiLog('popup', 'invite', 'ok', undefined, null);
     touched[DISMISSED_KEY] = true;
     store.setState({ dismissed: true });
     sync();

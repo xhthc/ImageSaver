@@ -1,4 +1,5 @@
 import { createStore } from './store.js';
+import { uiLog } from './debuglog.js';
 
 export const RELEASES_URL = 'https://github.com/xhthc/MediaLatch/releases';
 export const RELEASES_API = 'https://api.github.com/repos/xhthc/MediaLatch/releases?per_page=100';
@@ -112,6 +113,7 @@ export function createUpdates(deps) {
       const cache = { channel: state.channel, attemptedAt: now(), checkedAt, release, error };
       let notice = '';
       try { await chrome.storage.local.set({ [CACHE_KEY]: cache }); } catch (_) { notice = 'updates.notice.cache'; }
+      uiLog('updates', 'check', error ? 'failed' : 'ok', error ? String(error).toUpperCase() : undefined, { channel: state.channel, cached: notice === '' });
       if (!disposed) store.setState({ ...cache, error: ERRORS[error] || '', notice, checking: false });
     })();
     try { await pending; } finally { pending = null; controller = null; }
@@ -122,9 +124,11 @@ export function createUpdates(deps) {
     store.setState({ checking: true });
     try { await chrome.storage.local.set({ [CHANNEL_KEY]: channel }); } catch (_) {
       if (!disposed) store.setState({ checking: false, notice: 'updates.notice.channel' });
+      uiLog('updates', 'channel', 'failed', 'STORAGE_WRITE', { channel });
       return;
     }
     if (disposed) return;
+    uiLog('updates', 'channel', 'ok', undefined, { channel });
     store.setState({ channel, release: null, checkedAt: 0, attemptedAt: 0, error: '', notice: '', checking: false });
     await check(true);
   }

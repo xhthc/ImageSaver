@@ -33,7 +33,7 @@
         "http://*/*",
         "https://*/*"
       ],
-      "js": ["content_context_target.js"],
+      "js": ["lib/debug_journal.js", "content_context_target.js"],
       "all_frames": true,
       "run_at": "document_start"
     },
@@ -42,7 +42,7 @@
         "https://x.com/*",
         "https://twitter.com/*"
       ],
-      "js": ["lib/i18n.js", "content_x.js"],
+      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_x.js"],
       "run_at": "document_start"
     },
     {
@@ -50,7 +50,7 @@
         "https://*.reddit.com/*",
         "https://reddit.com/*"
       ],
-      "js": ["lib/i18n.js", "content_reddit.js"],
+      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_reddit.js"],
       "run_at": "document_start"
     },
     {
@@ -60,7 +60,7 @@
         "https://*.reddit.com/*",
         "https://reddit.com/*"
       ],
-      "js": ["lib/i18n.js", "content_redgifs.js"],
+      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_redgifs.js"],
       "all_frames": true,
       "run_at": "document_start"
     },
@@ -68,7 +68,7 @@
       "matches": [
         "*://*.donmai.us/*"
       ],
-      "js": ["content_booru.js"],
+      "js": ["lib/debug_journal.js", "content_booru.js"],
       "run_at": "document_start"
     },
     {
@@ -76,7 +76,7 @@
         "https://*.instagram.com/*",
         "https://instagram.com/*"
       ],
-      "js": ["lib/i18n.js", "content_instagram.js"],
+      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_instagram.js"],
       "run_at": "document_start"
     },
     {
@@ -84,7 +84,7 @@
         "https://*.tiktok.com/*",
         "https://tiktok.com/*"
       ],
-      "js": ["lib/i18n.js", "content_tiktok.js"],
+      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_tiktok.js"],
       "run_at": "document_start"
     },
     {
@@ -92,7 +92,7 @@
         "https://*.youtube.com/*",
         "https://youtube.com/*"
       ],
-      "js": ["lib/i18n.js", "content_youtube.js"],
+      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_youtube.js"],
       "run_at": "document_start"
     }
   ]

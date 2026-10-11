@@ -75,11 +75,22 @@ function makeChrome(state) {
           return { success: true, records: snapshot };
         }
         if (msg.action === 'FEEDBACK_MARK_SEEN' || msg.action === 'FEEDBACK_CLEAR') return { success: true, records: state.session.slice().reverse() };
+        if (msg.action === 'DEBUG_LIST' || msg.action === 'DEBUG_CLEAR') {
+          // DEBUG-MENU-01: the worker's private journal answer (the page re-sanitizes every event)
+          if (state.failDebug) return { success: false, error: 'DEBUG_UNAVAILABLE' };
+          const d = state.debug || (state.debug = { events: [] });
+          if (msg.action === 'DEBUG_CLEAR') { if (state.failDebugClear) return { success: false, error: 'DEBUG_CLEAR_FAILED' }; d.events = []; d.dropped = 0; d.expired = 0; }
+          return { success: true, events: d.events, retained: d.events.length, persisted: d.persisted ?? d.events.length, dropped: d.dropped || 0, expired: d.expired || 0, storageError: d.storageError || '' };
+        }
         if (msg.action === 'HISTORY_LIST' || msg.action === 'HISTORY_CLEAR') {
           if (msg.action === 'HISTORY_CLEAR') { if (state.failClear) return { success: false }; state.history = []; }
           return { success: true, records: state.history.slice().reverse() };
         }
         return undefined;
+      },
+      onMessage: {
+        addListener: (cb) => { (state.msgListeners = state.msgListeners || []).push(cb); },
+        removeListener: (cb) => { state.msgListeners = (state.msgListeners || []).filter((x) => x !== cb); },
       },
     },
     storage: {
@@ -333,10 +344,10 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const state = { session: [rec({ filename: 'ok-before.jpg' }), failedOne], history: [], local: {} };
     const p = await page('full', state, { hash: '#embed' });
     const tabs = p.tabs();
-    assert(tabs.length === 5 && tabs.map((t) => t.textContent.trim()).join('|') === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления' && p.q('[role="tablist"]'), 'R5a: five tabs in a tab list with the requested names');
+    assert(tabs.length === 6 && tabs.map((t) => t.textContent.trim()).join('|') === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления|Отладка' && p.q('[role="tablist"]'), 'R5a: six tabs (DEBUG-MENU-01 adds Debug) in a tab list with the requested names');
     const sel = () => tabs.filter((t) => t.getAttribute('aria-selected') === 'true').map((t) => t.textContent.trim());
     const shown = () => p.qa('[role="tabpanel"]').filter((x) => !x.hidden && !x.hasAttribute('hidden')).map((x) => x.id || x.getAttribute('aria-labelledby'));
-    assert(sel().join() === 'Embed' && p.qa('[role="tabpanel"]').length === 5 && shown().length === 1, 'R5b: the URL hash selects the section; exactly one panel is displayed');
+    assert(sel().join() === 'Embed' && p.qa('[role="tabpanel"]').length === 6 && shown().length === 1, 'R5b: the URL hash selects the section; exactly one panel is displayed');
     assert(p.qa('[role="tabpanel"]').every((panel) => panel.getAttribute('aria-labelledby') && p.doc.getElementById(panel.getAttribute('aria-labelledby'))), 'R5c: every panel is labelled by its tab');
     const tablist = p.q('[role="tablist"]');
     tablist.focus();
@@ -355,11 +366,11 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(sel().join() === 'Сохранение' && p.doc.activeElement === tabs[1], 'R5i: ArrowRight moves focus and selection to the next tab');
     await p.key(tabs[1], 'ArrowLeft');
     await p.key(p.doc.activeElement, 'ArrowLeft');
-    assert(sel().join() === 'Обновления', 'R5j: ArrowLeft wraps from the first tab to the last');
+    assert(sel().join() === 'Отладка', 'R5j: ArrowLeft wraps from the first tab to the last');
     await p.key(p.doc.activeElement, 'Home');
     assert(sel().join() === 'Статистика и история', 'R5k: Home selects the first tab');
     await p.key(p.doc.activeElement, 'End');
-    assert(sel().join() === 'Обновления', 'R5l: End selects the last tab');
+    assert(sel().join() === 'Отладка', 'R5l: End selects the last tab');
     p.win.history.replaceState(null, '', '#notifications');
     p.win.dispatchEvent(new p.win.HashChangeEvent('hashchange'));
     await p.settle(4);
@@ -737,7 +748,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const state = { session: [rec({ filename: 'Фото.jpg' }), failRec], history: [rec({ filename: 'old-entry.jpg' })], local: { historyEnabled: true } };
 
     const full = await page('full', state, { hash: '#saving' });
-    assert(tabNames(full) === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления' && full.doc.documentElement.lang === 'ru' && full.doc.title === 'MediaLatch: история и настройки', 'R13a: a Russian browser with no saved choice shows the Russian page (lang and title follow)');
+    assert(tabNames(full) === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления|Отладка' && full.doc.documentElement.lang === 'ru' && full.doc.title === 'MediaLatch: история и настройки', 'R13a: a Russian browser with no saved choice shows the Russian page (lang and title follow)');
     const langBox = full.q('#languageSelect');
     assert(langBox && langBox.getAttribute('role') === 'combobox' && full.q('label[for="languageSelect"]').textContent === 'Язык' && /Русский/.test(langBox.textContent), 'R13b: the language choice is a labelled combobox showing the current language');
     const quick = await page('quick', state);
@@ -747,7 +758,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await full.type(full.q('#subfolderInput'), 'Unsaved/Edit');
     const setsBefore = full.calls.localSets.length;
     assert(await chooseLanguage(full, 'English'), 'R13d: setup - English is offered by its own name');
-    assert(tabNames(full) === 'Statistics and history|Saving|Notifications|Embed|Updates' && full.doc.documentElement.lang === 'en' && full.doc.title === 'MediaLatch: history and settings', 'R13e: ru -> en switches the open page at once (tabs, lang, title)');
+    assert(tabNames(full) === 'Statistics and history|Saving|Notifications|Embed|Updates|Debug' && full.doc.documentElement.lang === 'en' && full.doc.title === 'MediaLatch: history and settings', 'R13e: ru -> en switches the open page at once (tabs, lang, title)');
     assert(full.q('#subfolderInput').value === 'Unsaved/Edit' && full.q('#folderPreviewPath').textContent === 'Downloads/Unsaved/Edit/photo.jpg' && JSON.stringify(full.calls.localSets.slice(setsBefore)) === JSON.stringify([{ uiLanguage: 'en' }]), 'R13f: the unsaved folder edit is kept and only uiLanguage is written');
     assert(/Save settings/.test(full.q('#saveButton').textContent) && /“MediaLatch: Save media”/.test(full.text()) && full.q('label[for="languageSelect"]').textContent === 'Language', 'R13g: buttons, labels and the fixed menu title follow');
     await quick.settle(6);
@@ -784,6 +795,72 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const invalid = await page('quick', { session: [], history: [], local: { uiLanguage: 'de' }, uiLanguage: 'ru-RU' });
     assert(invalid.q('#openSettingsButton').getAttribute('aria-label') === 'Настройки' && invalid.calls.localSets.length === 0, 'R13r: an invalid saved value falls back to the browser language and is not rewritten');
     await invalid.unmount();
+  }
+
+  // =================================================================================================
+  console.log('\n--- R20. Debug journal (DEBUG-MENU-01): loading, switch, filters, copy, export, clear, live, language ---');
+  {
+    const now = Date.now();
+    const ev = (i, over = {}) => ({ seq: i, t: now - 60000 + i * 1000, lvl: 'info', src: 'worker', comp: 'menu', act: 'click', out: 'start', cid: 'a1b2c3d4', ...over });
+    const events = [
+      ev(1),
+      ev(2, { src: 'content', comp: 'reddit.inline', act: 'click', out: 'refused', why: 'NOT_TRUSTED', lvl: 'warn', tab: 7, frame: 0, page: 'www.reddit.com', d: { which: 'this' } }),
+      ev(3, { comp: 'op', act: 'fail', out: 'failed', why: 'NO_MEDIA', op: 'op-abc123', d: { stage: 'resolve', http: 404, host: 'cdn.example.com' } }),
+      // a stored event with values the allowlist does not admit: they never reach the page
+      ev(4, { comp: 'plan', act: 'select', out: 'ok', why: 'free text reason', d: { host: 'https://cdn.example.com/a/secret.jpg?token=SIGNED', filename: 'secret.jpg', url: 'https://x.test/?q=1' } })
+    ];
+    const state = { session: [], history: [], local: { debugEnabled: false }, debug: { events: events.slice(), dropped: 2, expired: 1 } };
+    const texts = [];
+    let denyClipboard = false;
+    const clipboard = { writeText: async (t) => { if (denyClipboard) throw new Error('DENIED'); texts.push(t); } };
+    const p = await page('full', state, { hash: '#debug', clipboard });
+    const panel = () => p.q('[data-slot="debug"]');
+    const rows = () => p.qa('[data-slot="debug-event"]');
+    assert(panel() && /Журнал отладки/.test(panel().textContent) && p.tabs().find((t) => t.getAttribute('aria-selected') === 'true').textContent.trim() === 'Отладка', 'R20a: #debug opens the Debug section with the journal (Russian)');
+    assert(rows().length === 4 && /хранится 4 · отброшено 2 · устарело 1/.test(p.q('[data-slot="debug-counts"]').textContent) && /Запись выключена/.test(p.q('[data-slot="debug-recording"]').textContent), 'R20b: events newest first, retained/dropped/expired counters and the recording state are shown');
+    assert(/NOT_TRUSTED/.test(rows()[2].textContent) && /reddit\.inline\.click/.test(rows()[2].textContent) && !/secret|token=|SIGNED|free text|x\.test/.test(panel().textContent) && /cdn\.example\.com/.test(panel().textContent), 'R20c: rows show codes and hosts only; a full URL, a filename and free text from storage are not shown');
+    const sw = p.q('#debugEnabledSwitch');
+    await p.click(sw);
+    assert(p.calls.localSets.some((v) => v.debugEnabled === true) && /Запись идёт/.test(p.q('[data-slot="debug-recording"]').textContent), 'R20d: the switch saves debugEnabled and shows that recording is on');
+    await p.type(p.q('#debugSearch'), 'not_trusted');
+    assert(rows().length === 1 && /NOT_TRUSTED/.test(rows()[0].textContent), 'R20e: search filters by codes (case-insensitive)');
+    await p.type(p.q('#debugSearch'), 'zzz-no-such');
+    assert(rows().length === 0 && p.q('[data-slot="debug-nomatch"]'), 'R20f: no match is shown as such');
+    await p.type(p.q('#debugSearch'), '');
+    const copy = p.byText('button', /Скопировать отчёт/);
+    await p.click(copy);
+    assert(texts.length === 1 && /Отчёт отладки MediaLatch/.test(texts[0]) && /reddit\.inline\.click \| refused NOT_TRUSTED/.test(texts[0]) && !/secret|token=/.test(texts[0]) && /Отчёт скопирован \(событий: 4\)/.test(p.q('[data-slot="debug-notice"]').textContent), 'R20g: the readable report is copied (oldest first, codes only) and success is shown only after the write');
+    denyClipboard = true;
+    await p.click(copy);
+    assert(texts.length === 1 && /Не удалось скопировать/.test(p.q('[data-slot="debug-notice"]').textContent), 'R20h: a refused clipboard is reported as a failure');
+    const blobs = [];
+    p.win.URL.createObjectURL = (b) => { blobs.push(b); return 'blob:chrome-extension://testid/debug'; };
+    p.win.URL.revokeObjectURL = () => {};
+    p.win.HTMLAnchorElement.prototype.click = function () { (p.downloads = p.downloads || []).push(this.getAttribute('download')); };
+    await p.click(p.byText('button', /Скачать JSON/));
+    const json = blobs.length ? JSON.parse(await blobs[0].text()) : null;
+    assert(json && json.kind === 'MediaLatch debug journal' && json.events.length === 4 && json.dropped === 2 && !JSON.stringify(json).includes('secret') && /^medialatch-debug-.*\.json$/.test(p.downloads[0]) && /Файл JSON \(событий: 4\)/.test(p.q('[data-slot="debug-notice"]').textContent), 'R20i: JSON export holds the re-sanitized events and counters; a local file is offered');
+    delete p.win.URL.createObjectURL;
+    await p.click(p.byText('button', /Скачать JSON/));
+    assert(/Не удалось подготовить файл JSON/.test(p.q('[data-slot="debug-notice"]').textContent), 'R20j: an export that cannot be prepared is reported as a failure');
+    state.debug.events.push(ev(5, { comp: 'download', act: 'complete', out: 'ok', d: { downloadId: 42 } }));
+    for (const cb of state.msgListeners || []) cb({ action: 'DEBUG_CHANGED' }, { id: 'testid' });
+    await p.settle(6);
+    assert(rows().length === 5 && /download\.complete/.test(rows()[0].textContent), 'R20k: a DEBUG_CHANGED notice from the extension reloads the list live');
+    for (const cb of state.msgListeners || []) cb({ action: 'DEBUG_CHANGED' }, { id: 'other', tab: { id: 1 } });
+    state.failDebugClear = true;
+    await p.click(p.byText('button', /Очистить журнал/));
+    assert(rows().length === 5 && /Не удалось очистить журнал/.test(p.q('[data-slot="debug-notice"]').textContent), 'R20l: a failed clear keeps every event and says nothing was deleted');
+    state.failDebugClear = false;
+    await p.click(p.byText('button', /Очистить журнал/));
+    assert(rows().length === 0 && p.q('[data-slot="debug-empty"]') && /Журнал отладки очищен/.test(p.q('[data-slot="debug-notice"]').textContent) && p.calls.messages.filter((m) => m === 'DEBUG_CLEAR').length === 2, 'R20m: a successful clear empties the journal and says so');
+    await p.unmount();
+    const failing = await page('full', { session: [], history: [], local: {}, failDebug: true }, { hash: '#debug' });
+    assert(/Не удалось загрузить журнал/.test(failing.q('[data-slot="debug"]').textContent), 'R20n: an unavailable journal is reported');
+    await failing.unmount();
+    const en = await page('full', { session: [], history: [], local: { uiLanguage: 'en', debugEnabled: true }, debug: { events: [ev(1)] } }, { hash: '#debug' });
+    assert(/Debug journal/.test(en.q('[data-slot="debug"]').textContent) && /Recording/.test(en.q('[data-slot="debug-recording"]').textContent) && /1 kept · 0 dropped · 0 expired/.test(en.q('[data-slot="debug-counts"]').textContent) && /Background/.test(en.q('[data-slot="debug-event"]').textContent), 'R20o: the English page renders the journal in English');
+    await en.unmount();
   }
 
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);
