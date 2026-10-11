@@ -10354,7 +10354,6 @@ let offscreenOwnershipKnown = false;    // the persisted live records were read 
 let offscreenCreationPromise = null;
 let offscreenClosingPromise = null;
 const activeOffscreenOwners = new Map(); // ownerKey -> blobUrl
-const releasedOffscreenKeys = new Set();
 const activeRevokedBlobs = new Set();
 
 /**
@@ -10403,9 +10402,6 @@ async function ensureOffscreenDocument() {
  */
 function acquireOffscreenTask(ownerKey = null, blobUrl = null) {
   const key = ownerKey || (blobUrl ? `blob_${blobUrl}` : `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
-  if (releasedOffscreenKeys.has(key)) {
-    releasedOffscreenKeys.delete(key);
-  }
   activeOffscreenOwners.set(key, blobUrl || null);
   activeOffscreenTasks = activeOffscreenOwners.size;
   return key;
@@ -10418,12 +10414,8 @@ function acquireOffscreenTask(ownerKey = null, blobUrl = null) {
 function transferOffscreenTask(oldOwnerKey, newOwnerKey, blobUrl) {
   if (oldOwnerKey && activeOffscreenOwners.has(oldOwnerKey)) {
     activeOffscreenOwners.delete(oldOwnerKey);
-    releasedOffscreenKeys.add(oldOwnerKey);
   }
   if (newOwnerKey) {
-    if (releasedOffscreenKeys.has(newOwnerKey)) {
-      releasedOffscreenKeys.delete(newOwnerKey);
-    }
     activeOffscreenOwners.set(newOwnerKey, blobUrl || null);
   }
   activeOffscreenTasks = activeOffscreenOwners.size;
@@ -10917,17 +10909,21 @@ async function releaseOffscreenTask(ownerOrBlob = null, blobToRevoke = null) {
   }
 
   // Idempotency & validity check: if this key was already released, or was never an active task/blob, immediate NO-OP
-  const isKeyReleased = targetKey && releasedOffscreenKeys.has(targetKey);
+  // A late cleanup from the old task must not revoke a Blob transferred to a live download.
+  if (!targetKey && targetBlob) {
+    for (const ownedBlob of activeOffscreenOwners.values()) {
+      if (ownedBlob === targetBlob) return;
+    }
+  }
   const isBlobRevoked = targetBlob && activeRevokedBlobs.has(targetBlob);
   const isUnacquiredKey = ownerOrBlob && !targetKey && !targetBlob;
 
-  if (isKeyReleased || isBlobRevoked || isUnacquiredKey) {
+  if (isBlobRevoked || isUnacquiredKey) {
     return;
   }
 
   if (targetKey) {
     activeOffscreenOwners.delete(targetKey);
-    releasedOffscreenKeys.add(targetKey);
   }
 
   if (targetBlob && !activeRevokedBlobs.has(targetBlob)) {
@@ -12640,7 +12636,6 @@ if (typeof globalThis !== 'undefined') {
   globalThis.reconcileActiveOffscreenDownloads = reconcileActiveOffscreenDownloads;
   globalThis.hasActiveProtectedDownloads = hasActiveProtectedDownloads;
   globalThis.activeOffscreenOwners = activeOffscreenOwners;
-  globalThis.releasedOffscreenKeys = releasedOffscreenKeys;
   globalThis.executeMediaPlan = executeMediaPlan;
   globalThis.executeMediaDownload = executeMediaDownload;
   globalThis.sniffMediaMagicBytes = sniffMediaMagicBytes;

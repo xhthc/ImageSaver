@@ -84,7 +84,6 @@ globalThis.resetActiveOffscreenTasks = (val = 0) => {
   activeOffscreenTasks = val;
   if (val === 0) {
     if (typeof activeOffscreenOwners !== 'undefined' && activeOffscreenOwners?.clear) activeOffscreenOwners.clear();
-    if (typeof releasedOffscreenKeys !== 'undefined' && releasedOffscreenKeys?.clear) releasedOffscreenKeys.clear();
     if (typeof activeRevokedBlobs !== 'undefined' && activeRevokedBlobs?.clear) activeRevokedBlobs.clear();
     if (typeof activeProtectedBlobsByDownloadId !== 'undefined' && activeProtectedBlobsByDownloadId?.clear) activeProtectedBlobsByDownloadId.clear();
   }
@@ -97,7 +96,6 @@ globalThis.reconcileActiveOffscreenDownloads = reconcileActiveOffscreenDownloads
 globalThis.forgetOffscreenOwnership = () => { offscreenOwnershipKnown = false; };
 globalThis.hasActiveProtectedDownloads = hasActiveProtectedDownloads;
 globalThis.activeOffscreenOwners = activeOffscreenOwners;
-globalThis.releasedOffscreenKeys = releasedOffscreenKeys;
 globalThis.getSafeUrlExtension = getSafeUrlExtension;
 globalThis.SAFE_MEDIA_EXTENSIONS = SAFE_MEDIA_EXTENSIONS;
 globalThis.isAllowedRedGifsHost = isAllowedRedGifsHost;
@@ -8697,6 +8695,17 @@ async function runTests() {
       const testBlob = 'blob:chrome-extension://mock-id/transfer_test_blob';
       const oldKey = sandbox.acquireOffscreenTask('mime_probe_transfer_19916', testBlob);
 
+      for (let i = 0; i < 128; i++) {
+        const completedKey = sandbox.acquireOffscreenTask('completed_owner_19916_' + i);
+        await sandbox.releaseOffscreenTask(completedKey);
+      }
+      assert(
+        sandbox.activeOffscreenOwners.size === 1 &&
+        sandbox.getActiveOffscreenTasks() === 1 &&
+        (sandbox.releasedOffscreenKeys?.size || 0) === 0,
+        '199.16a: completed task keys are not retained while an unrelated owner remains live'
+      );
+
       let revoked = false;
       mockChrome.runtime._msgHandler = async (msg) => {
         if (msg.action === 'REVOKE_BLOB_URL') revoked = true;
@@ -8715,7 +8724,22 @@ async function runTests() {
         'Тест 199.16: transferOffscreenTask атомарно переносит владение с probeTaskKey на downloadId без отзыва Blob'
       );
 
+      await sandbox.releaseOffscreenTask(oldKey, testBlob);
+      assert(
+        revoked === false && sandbox.activeOffscreenOwners.get(newKey) === testBlob && sandbox.getActiveOffscreenTasks() === 1,
+        '199.16b: late cleanup by the transferred task cannot revoke the live download Blob'
+      );
+      await sandbox.releaseOffscreenTask('unrelated_owner_19916', testBlob);
+      assert(
+        revoked === false && sandbox.activeOffscreenOwners.get(newKey) === testBlob && sandbox.getActiveOffscreenTasks() === 1,
+        '199.16c: an unknown task cannot revoke another active owner Blob'
+      );
+
       await sandbox.releaseOffscreenTask(newKey, testBlob);
+      assert(
+        revoked === true && !sandbox.activeOffscreenOwners.has(newKey) && sandbox.getActiveOffscreenTasks() === 0,
+        '199.16d: the current download owner still releases its Blob and task'
+      );
     }
 
     // Восстанавливаем окружение
