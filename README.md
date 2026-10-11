@@ -79,8 +79,6 @@ Plans below are **not implemented in this preview**. They describe direction, no
 | Area | Planned result | Status |
 |---|---|---|
 | Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Next compatibility work |
-| VK groups | Save selected photos, albums and accessible videos from group posts; verify ownership, sessions and rate limits | Planned; examples and feasibility first |
-| Telegram channels | Save accessible channel media/albums from Telegram Web or public post pages; verify player/blob and session boundaries | Planned; examples and feasibility first |
 | Controls and selection | Small universal inline controls and optional post/media multi-selection | Planned |
 | Download manager | Persisted queue, truthful file/batch progress, cancellation, supported pause/resume, paced requests and 429 cooldowns | Planned |
 | Complete-file staging | Disk-backed acquisition/validation before export, bounded memory and restart cleanup; no second remote download at export | Feasibility before implementation |
@@ -90,7 +88,7 @@ Plans below are **not implemented in this preview**. They describe direction, no
 | Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
 | Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Planned; security/privacy gates first |
 
-The older Telegram/VK ideas concerned **publishing**, not downloading. Both directions are listed separately. Hosting remains deferred; this preview does not require or install a bot, backend or native helper.
+The Telegram/VK roadmap concerns **publishing**.
 
 ## Security before store submission
 
@@ -99,6 +97,8 @@ RCE (remote code execution) is a vulnerability to prevent. Executable extension 
 Priorities before Chrome Web Store submission: packaged-code/CSP checks, complete sender/action/frame validation, URL and redirect restrictions including private-network targets, a minimum-permission review, and dependency/release integrity. Keep page/API data out of executable code and unsafe HTML rendering; test malformed media and resource exhaustion. These are planned gates, **not a completed security audit or store approval**. Current broad HTTP/HTTPS access needs particular review.
 
 See [Security and store readiness](docs/SECURITY.md), [Privacy](docs/PRIVACY.md) and [Release preparation](docs/RELEASE.md).
+
+Beyond RCE, review XSS, forged runtime messages, SSRF/private-network access, unsafe download paths, resource exhaustion, data leaks and dependency/publisher-account compromise. Add defenses where the boundary review demonstrates a need; existing safeguards and remaining gaps are documented separately.
 
 ## Development
 
