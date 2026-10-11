@@ -187,8 +187,8 @@ function makeChrome(state) {
       && full.includes('t(`tab.${name}`)') && /role|Tabs/.test(full), '21k: the five sections have their names in both languages (Radix Tabs provides the tab/tabpanel roles)');
     const ids = ['subfolderInput', 'folderModeSingle', 'folderModeBySiteType', 'xShareHostSelect', 'igShareHostSelect', 'ttShareHostSelect', 'youtubeShareHostSelect', 'saveButton', 'statusMessage', 'folderPreviewPath'];
     assert(ids.every((id) => (pan + read('ui/src/components/app/settings-panels.tsx')).includes(`"${id}"`) || pan.includes(`id="${id}"`)), '21l: every existing settings element ID is preserved on the full page');
-    assert(/меняют только ссылки/.test(I18n.t('ru', 'embed.desc')) && /Ошибки сохранения остаются видимыми всегда/.test(I18n.t('ru', 'notify.hintErrors')) && /Настройка применяется сразу/.test(I18n.t('ru', 'notify.hint'))
-      && /change only the links/.test(I18n.t('en', 'embed.desc')) && ['"embed.desc"', '"notify.hintErrors"', '"notify.hint"'].every((k) => pan.includes(k)), '21m: Embed explains that it changes copied links; Notifications explain immediate saving and always-visible failures');
+    assert(/Копировать ссылку/.test(I18n.t('ru', 'embed.desc')) && /Скачивание медиа не меняется/.test(I18n.t('ru', 'embed.services')) && /Ошибки сохранения остаются видимыми всегда/.test(I18n.t('ru', 'notify.hintErrors')) && /Настройка применяется сразу/.test(I18n.t('ru', 'notify.hint'))
+      && /Copy link/.test(I18n.t('en', 'embed.desc')) && /Media downloads are unchanged/.test(I18n.t('en', 'embed.services')) && ['"embed.desc"', '"embed.services"', '"notify.hintErrors"', '"notify.hint"'].every((k) => pan.includes(k)), '21m: concise Embed copy and disclosure preserve scope; Notifications explain immediate saving and always-visible failures');
     assert(!/gear-button/.test(full) && /openSettingsButton/.test(read('ui/src/components/app/quick-app.tsx')) && !/openSettingsButton/.test(full), '21n: the settings gear exists only in the compact popup');
     const css = read('ui/src/index.css');
     assert(/prefers-reduced-motion:\s*reduce/.test(css) && /:focus-visible/.test(css), '21o: reduced motion and visible keyboard focus are global rules');
@@ -1006,7 +1006,7 @@ function makeChrome(state) {
     assert(enKeys.every((k) => placeholders(I18n.STRINGS.en[k]) === placeholders(I18n.STRINGS.ru[k])), '33b: every key has the same placeholders in both languages');
     assert(enKeys.every((k) => I18n.STRINGS.en[k].trim() && I18n.STRINGS.ru[k].trim() && !/<[a-z/!]/i.test(I18n.STRINGS.en[k] + I18n.STRINGS.ru[k])), '33c: no empty text and no markup in the catalogue (texts are rendered as text)');
     const same = enKeys.filter((k) => I18n.STRINGS.en[k] === I18n.STRINGS.ru[k]);
-    assert(JSON.stringify(same) === JSON.stringify(['stats.type.gif', 'tab.embed', 'type.gif']), '33d: every text is translated except names that are the same in both languages: ' + same.join(', '));
+    assert(JSON.stringify(same) === JSON.stringify(['embed.ig.label', 'embed.tt.label', 'embed.x.label', 'embed.yt.label', 'stats.type.gif', 'tab.embed', 'type.gif']), '33d: every text is translated except names that are the same in both languages: ' + same.join(', '));
     assert(I18n.MENU_TITLE === 'MediaLatch: Save media' && !enKeys.some((k) => /Save (image|video|GIF)\b/.test(I18n.STRINGS.en[k]) && /^menu/.test(k)), '33e: the native menu title is the fixed "MediaLatch: Save media" in both languages (no per-type titles)');
     // keys used by the sources exist in the catalogue
     const uiSrc = ['ui/src/components/app', 'ui/src/core', 'ui/src/hooks'].flatMap((d) => fs.readdirSync(path.resolve(ROOT, d)).map((f) => read(`${d}/${f}`))).join('\n')

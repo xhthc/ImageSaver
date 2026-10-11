@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react"
-import { CheckCircle2, FolderOpen, Save, TriangleAlert } from "lucide-react"
+import { CheckCircle2, ChevronDown, FolderOpen, Save, TriangleAlert } from "lucide-react"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -238,16 +239,17 @@ export function EmbedPanel({ settings }: { settings: SettingsController }) {
   return (
     <Card data-slot="embed">
       <CardHeader>
-        <CardTitle className="text-base">{t("tab.embed")}</CardTitle>
+        <CardTitle className="text-base">{t("embed.title")}</CardTitle>
         <CardDescription className="text-xs leading-relaxed">{t("embed.desc")}</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
+      <CardContent>
+        <div className="divide-y">
         {EMBED_FIELDS.map((f) => (
-          <div key={f.key} className="space-y-1.5">
+          <div key={f.key} className="grid items-center gap-2 py-3 first:pt-0 sm:grid-cols-[1fr_18rem]">
             <Label htmlFor={f.id}>{t(f.label)}</Label>
             <Select value={s[f.key]} onValueChange={(v) => settings.setField(f.key, v)} disabled={!s.loaded}>
               <SelectTrigger id={f.id} className="w-full">
-                <SelectValue />
+                <SelectValue>{s[f.key]}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {f.options.map(([value, text]) => (
@@ -257,9 +259,26 @@ export function EmbedPanel({ settings }: { settings: SettingsController }) {
                 ))}
               </SelectContent>
             </Select>
-            <Hint>{t(f.hint)}</Hint>
           </div>
         ))}
+        </div>
+        <Collapsible className="mt-2 border-t pt-3">
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="group -ml-2 text-muted-foreground">
+              {t("embed.help")}
+              <ChevronDown className="size-4 transition-transform group-data-[state=open]:rotate-180" aria-hidden="true" />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-3 pt-3">
+            <Hint>{t("embed.services")}</Hint>
+            {EMBED_FIELDS.map((f) => (
+              <div key={f.key} className="space-y-1">
+                <p className="text-xs font-medium">{t(f.label)}</p>
+                <Hint>{t(f.hint)}</Hint>
+              </div>
+            ))}
+          </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
   )
