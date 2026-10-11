@@ -82,8 +82,8 @@ export function statsView(FB, records, state, enabled, lang = 'ru') {
   const view = { note: t('stats.scope'), disabledNote: '', state: 'ok', message: '', tiles: [], types: [], sizeText: '' };
   if (!enabled) view.disabledNote = t('stats.disabled');
   if (state === 'loading') { view.state = 'loading'; view.message = t('stats.loading'); return view; }
-  if (state === 'error' || !Array.isArray(records)) { view.state = 'error'; view.message = t('stats.error'); return view; }
-  const s = FB.computeStats(records);
+  if (state === 'error' || !records) { view.state = 'error'; view.message = t('stats.error'); return view; }
+  const s = Array.isArray(records) ? FB.computeStats(records) : records;
   if (!s.total) {
     view.state = 'empty';
     view.message = t(enabled ? 'stats.emptyOn' : 'stats.emptyOff');

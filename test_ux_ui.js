@@ -182,8 +182,8 @@ function makeChrome(state) {
     assert(!/dangerouslySetInnerHTML|innerHTML|insertAdjacentHTML|eval\(|new Function|document\.write|XMLHttpRequest|sendBeacon|WebSocket/.test(srcText) && !/\bfetch\b/.test(nonUpdateSrc), '21j: UI has no HTML injection, eval or telemetry; release-check controller is the only network boundary');
     const full = read('ui/src/components/app/full-app.tsx');
     const pan = read('ui/src/components/app/settings-panels.tsx');
-    assert(['history', 'saving', 'notifications', 'embed', 'updates'].map((n) => I18n.t('ru', `tab.${n}`)).join('|') === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления'
-      && ['history', 'saving', 'notifications', 'embed', 'updates'].map((n) => I18n.t('en', `tab.${n}`)).join('|') === 'Statistics and history|Saving|Notifications|Embed|Updates'
+    assert(['history', 'saving', 'notifications', 'embed', 'updates'].map((n) => I18n.t('ru', `tab.${n}`)).join('|') === 'Статистика|Сохранение|Уведомления|Embed|Обновления'
+      && ['history', 'saving', 'notifications', 'embed', 'updates'].map((n) => I18n.t('en', `tab.${n}`)).join('|') === 'Statistics|Saving|Notifications|Embed|Updates'
       && full.includes('t(`tab.${name}`)') && /role|Tabs/.test(full), '21k: the five sections have their names in both languages (Radix Tabs provides the tab/tabpanel roles)');
     const ids = ['subfolderInput', 'folderModeSingle', 'folderModeBySiteType', 'xShareHostSelect', 'igShareHostSelect', 'ttShareHostSelect', 'youtubeShareHostSelect', 'saveButton', 'statusMessage', 'folderPreviewPath'];
     assert(ids.every((id) => (pan + read('ui/src/components/app/settings-panels.tsx')).includes(`"${id}"`) || pan.includes(`id="${id}"`)), '21l: every existing settings element ID is preserved on the full page');
@@ -201,9 +201,9 @@ function makeChrome(state) {
     const S = nav.sectionFromLocation;
     assert(S({ search: '', hash: '' }) === 'history' && S({ search: '', hash: '#saving' }) === 'saving' && S({ search: '', hash: '#notifications' }) === 'notifications' && S({ search: '', hash: '#embed' }) === 'embed', '22a: hash selects the section');
     assert(S({ search: '?section=embed', hash: '' }) === 'embed' && S({ search: '?section=embed', hash: '#saving' }) === 'embed', '22b: ?section= selects a section and wins over the hash');
-    assert(S({ search: '?op=op-ui-0001', hash: '#embed' }) === 'history' && S({ search: '?op=op-ui-0001&section=saving', hash: '' }) === 'history', '22c: an operation deep link always opens the history section');
+    assert(S({ search: '?op=op-ui-0001', hash: '#embed' }) === 'downloads' && S({ search: '?op=op-ui-0001&section=saving', hash: '' }) === 'downloads', '22c: an operation deep link always opens the history section');
     assert(['#<img src=x onerror=alert(1)>', '#constructor', '#__proto__', '#HISTORY', '#saving%20', '#'].every((h) => S({ search: '', hash: h }) === 'history') && S({ search: '?section=../x', hash: '' }) === 'history' && S(null) === 'history', '22d: unknown or hostile values fall back to the default section');
-    assert(JSON.stringify(nav.SECTIONS) === JSON.stringify(['history', 'saving', 'notifications', 'embed', 'updates', 'debug']) && JSON.stringify(nav.SETTINGS_SECTIONS) === JSON.stringify(['saving', 'embed']) && nav.DEFAULT_SECTION === 'history', '22e: six sections (DEBUG-MENU-01 adds Debug); only Saving and Embed use the explicit save action');
+    assert(JSON.stringify(nav.SECTIONS) === JSON.stringify(['history', 'saving', 'notifications', 'embed', 'updates', 'debug', 'downloads']) && JSON.stringify(nav.SETTINGS_SECTIONS) === JSON.stringify(['saving', 'embed']) && nav.DEFAULT_SECTION === 'history', '22e: six sections (DEBUG-MENU-01 adds Debug); only Saving and Embed use the explicit save action');
     const chrome = makeChrome({}).chrome;
     assert(nav.pageUrl(chrome, '<script>') === 'chrome-extension://testid/popup/popup.html#history' && nav.pageUrl(chrome, 'saving') === 'chrome-extension://testid/popup/popup.html#saving' && nav.pageUrl(chrome, '__proto__') === 'chrome-extension://testid/popup/popup.html#history', '22f: page URLs are built only for known sections');
     assert(nav.operationUrl(chrome, 'op-ui-0001') === 'chrome-extension://testid/popup/popup.html?op=op-ui-0001#history' && nav.operationUrl(chrome, 'a&b#c') === 'chrome-extension://testid/popup/popup.html?op=a%26b%23c#history', '22g: operation deep links encode the identity');
@@ -479,7 +479,7 @@ function makeChrome(state) {
 
     const e = await mountQuick({});
     await e.quick.enableHistory();
-    assert(JSON.stringify(e.calls.localSets) === JSON.stringify([{ historyEnabled: true }]) && e.state.local.historyInviteDismissed === undefined, '27j: "Включить историю" writes only historyEnabled (the dismissal preference is untouched)');
+    assert(JSON.stringify(e.calls.localSets) === JSON.stringify([{ historyEnabled: true }]) && e.state.local.historyInviteDismissed === undefined, '27j: "Вести статистику" writes only historyEnabled (the dismissal preference is untouched)');
     assert(!e.showInvite() && e.showList() && e.showMain() && e.st().mounted === true && e.st().mount === 1, '27k: after a successful write the list (mounted once) appears and the invitation goes away');
     const mountId = e.st().mount;
     const list = createFeedbackList({ chrome: e.chrome, FB }, { limit: 5, openFull: true, isActive: () => e.quick.isActive(mountId) });
@@ -488,7 +488,7 @@ function makeChrome(state) {
 
     const f = await mountQuick({}, { failSet: true });
     await f.quick.enableHistory();
-    assert(f.state.local.historyEnabled === undefined && f.showInvite() && !f.showList() && f.st().mounted === false && /Не удалось включить историю: настройка не сохранена/.test(ru(f.st().inviteError)), '27m: a failed write leaves history disabled and shows a truthful error');
+    assert(f.state.local.historyEnabled === undefined && f.showInvite() && !f.showList() && f.st().mounted === false && /Не удалось включить статистику: настройка не сохранена/.test(ru(f.st().inviteError)), '27m: a failed write leaves history disabled and shows a truthful error');
     await f.quick.dismissInvite();
     assert(f.state.local.historyInviteDismissed === undefined && f.showInvite() && /Не удалось запомнить выбор/.test(ru(f.st().inviteError)), '27n: a failed dismissal write keeps the invitation and says so');
     const g = await mountQuick({}, { failGet: true });
@@ -630,7 +630,7 @@ function makeChrome(state) {
       const started = list.start();
       return { state, calls, list, started, seen: () => calls.messages.filter((m) => m === 'FEEDBACK_MARK_SEEN').length, rows: () => list.store.getState().records.length };
     };
-    assert(/visible=\{section === "history"\}/.test(read('ui/src/components/app/full-app.tsx')) && /forceMount/.test(read('ui/src/components/app/full-app.tsx')), '29a0: the full-page results list is told whether the History panel is displayed, and the panels stay mounted');
+    assert(/visible=\{section === "downloads"\}/.test(read('ui/src/components/app/full-app.tsx')) && /forceMount/.test(read('ui/src/components/app/full-app.tsx')), '29a0: the full-page results list is told whether the History panel is displayed, and the panels stay mounted');
 
     // hidden panel: a pending response arrives while another section is displayed
     const gate = deferred();
@@ -1125,7 +1125,7 @@ function makeChrome(state) {
 
     // 32zp: Navigation deep link resolution and parameter precedence
     assert(
-      nav.sectionFromLocation({ search: '?op=op-999&section=saving', hash: '#embed' }) === 'history',
+      nav.sectionFromLocation({ search: '?op=op-999&section=saving', hash: '#embed' }) === 'downloads',
       '32zp: ?op= query overrides ?section= and hash'
     );
     assert(

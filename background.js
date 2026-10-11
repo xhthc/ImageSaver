@@ -9,6 +9,7 @@ if (typeof importScripts === 'function') importScripts('lib/i18n.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback_tracker.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback_history.js');
+if (typeof importScripts === 'function') importScripts('lib/statistics.js');
 if (typeof importScripts === 'function') importScripts('lib/debug_journal.js');
 const FeedbackLib = globalThis.ImageSaverFeedback;
 
@@ -9269,7 +9270,14 @@ var feedbackHistory = (typeof globalThis.ImageSaverFeedbackHistory?.createHistor
     })
   : null;
 // Persistent retention cleanup at service-worker start (also runs on every list/record); best effort.
-if (feedbackHistory) feedbackHistory.prune().catch(() => {});
+// The old bounded history remains readable for migration; never prune it before importing.
+var statistics = globalThis.MediaLatchStatistics && typeof indexedDB !== 'undefined'
+  ? globalThis.MediaLatchStatistics.createStatistics({
+      indexedDB,
+      legacy: async () => (await chrome.storage.local.get('imageSaverHistoryV1')).imageSaverHistoryV1,
+      isEnabled: async () => (await chrome.storage.local.get('historyEnabled')).historyEnabled === true,
+      changed: () => { try { chrome.runtime.sendMessage({ action: 'STATISTICS_CHANGED' }).catch(() => {}); } catch (_) {} },
+    }) : null;
 
 if (typeof globalThis.ImageSaverFeedbackTracker?.createTracker === 'function') {
   feedbackTracker =globalThis.ImageSaverFeedbackTracker.createTracker({
@@ -9294,7 +9302,7 @@ if (typeof globalThis.ImageSaverFeedbackTracker?.createTracker === 'function') {
     },
     peekEarlyTerminal: (id) => earlyTerminalDownloadStates.get(id),
     notify: (record, ...rest) => { dbg('notify', 'show', 'info', undefined, () => ({ state: record && record.state }), { op: record && record.id }); return feedbackNotifyRecord(record, ...rest); },
-    onFinished: (record) => (feedbackHistory ? feedbackHistory.record(record) : false),
+    onFinished: (record) => (statistics ? statistics.record(record) : false),
     onChange: () => { if (!flashBadgeTimeout) restoreOrClearBadge(); },
     log: (...args) => console.warn('[MediaLatch] feedback:', ...args)
   });
@@ -9441,6 +9449,17 @@ function buildFeedbackOutput({ finalPath, structuredResult, group, isFallback = 
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const action = message?.action;
+    if (action === 'STATISTICS_LIST' || action === 'STATISTICS_CLEAR') {
+      const base = chrome.runtime.getURL('');
+      if (!statistics || sender?.id !== chrome.runtime.id || typeof sender?.url !== 'string' || !sender.url.startsWith(base)) {
+        sendResponse({ success: false, error: 'FORBIDDEN' }); return false;
+      }
+      (async () => {
+        try { sendResponse({ success: true, ...(action === 'STATISTICS_CLEAR' ? await statistics.clear() : await statistics.list()) }); }
+        catch (_) { sendResponse({ success: false, error: 'STATISTICS_UNAVAILABLE' }); }
+      })();
+      return true;
+    }
     const isHistory = action === 'HISTORY_LIST' || action === 'HISTORY_CLEAR';
     if (action !== 'FEEDBACK_LIST' && action !== 'FEEDBACK_MARK_SEEN' && action !== 'FEEDBACK_CLEAR' && !isHistory) return false;
     const base = chrome.runtime.getURL('');

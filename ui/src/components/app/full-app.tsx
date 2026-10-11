@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react"
-import { Bell, Bug, FolderOpen, History, Share2, RefreshCw } from "lucide-react"
+import { Bell, Bug, FolderOpen, History, Download, Share2, RefreshCw } from "lucide-react"
 
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { BrandMark } from "@/components/app/brand"
 import { DebugPanel } from "@/components/app/debug-panel"
-import { HistoryPanel } from "@/components/app/history-panel"
+import { StatisticsPanel } from "@/components/app/statistics-panel"
 import { LanguageSelect } from "@/components/app/language-select"
 import { ThemeSelect } from "@/components/app/theme-select"
 import { ResultsList } from "@/components/app/results-list"
@@ -25,7 +25,7 @@ import { useI18n } from "@/hooks/use-i18n"
 import { useTheme } from "@/hooks/use-theme"
 import { getEnv } from "@/lib/env"
 
-const TAB_ICONS: Record<string, typeof History> = { history: History, saving: FolderOpen, notifications: Bell, embed: Share2, updates: RefreshCw, debug: Bug }
+const TAB_ICONS: Record<string, typeof History> = { history: History, downloads: Download, saving: FolderOpen, notifications: Bell, embed: Share2, updates: RefreshCw, debug: Bug }
 
 /**
  * The full extension page. Six sections as an accessible tab list. Deep links: popup.html#<section>,
@@ -97,12 +97,15 @@ export function FullApp({ settings }: { settings: SettingsController }) {
 
           <TabsContent value="history" forceMount hidden={section !== "history"} className="space-y-4 data-[state=inactive]:hidden" tabIndex={-1}>
             <h2 className="sr-only">{t("tab.history")}</h2>
+            <StatisticsPanel />
+          </TabsContent>
+          <TabsContent value="downloads" forceMount hidden={section !== "downloads"} className="space-y-4 data-[state=inactive]:hidden" tabIndex={-1}>
+            <h2 className="sr-only">{t("tab.downloads")}</h2>
             <Card data-slot="recent">
               <CardContent>
-                <ResultsList compact={false} focusId={focusId} visible={section === "history"} />
+                <ResultsList compact={false} focusId={focusId} visible={section === "downloads"} />
               </CardContent>
             </Card>
-            <HistoryPanel />
           </TabsContent>
           <TabsContent value="saving" forceMount hidden={section !== "saving"} className="data-[state=inactive]:hidden" tabIndex={-1}>
             <h2 className="sr-only">{t("tab.saving")}</h2>

@@ -1,7 +1,7 @@
 // Section navigation of the full extension page. Deep links: popup.html#<section>, popup.html?section=<section>,
 // popup.html?op=<operation id> (opens the history section; the results list expands that operation).
 
-export const SECTIONS = Object.freeze(['history', 'saving', 'notifications', 'embed', 'updates', 'debug']);
+export const SECTIONS = Object.freeze(['history', 'saving', 'notifications', 'embed', 'updates', 'debug', 'downloads']);
 // Sections served by the explicit "Save settings" button; the others apply immediately.
 export const SETTINGS_SECTIONS = Object.freeze(['saving', 'embed']);
 export const DEFAULT_SECTION = 'history';
@@ -13,7 +13,7 @@ export const DEFAULT_SECTION = 'history';
 export function sectionFromLocation(loc) {
   try {
     const params = new URLSearchParams((loc && loc.search) || '');
-    if (params.get('op')) return 'history';
+    if (params.get('op')) return 'downloads';
     const q = String(params.get('section'));
     if (SECTIONS.includes(q)) return q;
     const h = String((loc && loc.hash) || '').replace(/^#/, '');

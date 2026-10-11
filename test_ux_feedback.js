@@ -7,6 +7,7 @@ const path = require('path');
 const vm = require('vm');
 const { pathToFileURL } = require('url');
 
+const idbDouble = require('./tests/helpers/idb.cjs');
 const ROOT = __dirname;
 const read = (p) => fs.readFileSync(path.resolve(ROOT, p), 'utf8');
 const bgCode = read('background.js') + `
@@ -24,7 +25,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 // ---------------------------------------------------------------------------------------------------
 // Environment: production background.js + mocked Chrome
 // ---------------------------------------------------------------------------------------------------
-function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications = false } = {}) {
+function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications = false, legacySink = false, indexedDB = idbDouble() } = {}) {
   const env = {
     downloadCalls: [],
     searchCalls: [],
@@ -146,7 +147,7 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
   env.chrome = chrome;
 
   const sandbox = {
-    chrome,
+    chrome, indexedDB, structuredClone,
     console: { log() {}, warn() {}, error() {} },
     URL, URLSearchParams, setTimeout, clearTimeout, AbortController,
     fetch: async (url) => {
@@ -160,6 +161,9 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
   sandbox.importScripts = (file) => vm.runInContext(read(file), sandbox);
   vm.createContext(sandbox);
   vm.runInContext(bgCode, sandbox);
+  // Archived history/controller regressions inject their legacy sink explicitly;
+  // section17 exercises the production statistics sink without this override.
+  if (legacySink) sandbox.statistics = { record: record => sandbox.feedbackHistory.record(record) };
   env.sandbox = sandbox;
   env.x = sandbox.__exports;
   env.tracker = sandbox.feedbackTracker;
@@ -818,316 +822,33 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   }
 
   // =================================================================================================
-  console.log('\n--- 17. UX-03 history: recording, bounds, restart, clearing, post links, UI ---');
+  console.log('\n--- 17. All-time statistics production integration ---');
   {
-    const hEnv = (o = {}) => makeEnv({ ...o, local: { historyEnabled: true, ...(o.local || {}) } });
-    const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
-    const ask = (env, action, sender = extSender) => new Promise((resolve) => {
-      let responded = false;
-      for (const l of env.messageListeners) { const keep = l({ action }, sender, (r) => { responded = true; resolve(r); }); if (keep === true || responded) break; }
-      if (!responded) setTimeout(() => resolve(undefined), 0);
-    });
-    const hist = async (env) => (await ask(env, 'HISTORY_LIST')).records;
-    const synth = (n, extra = {}) => ({ id: `op-hist${String(n).padStart(4, '0')}`, createdAt: Date.now() - 1000, updatedAt: Date.now() - 1000 + n, state: 'complete', ...extra });
-
-    // pure post-link validation
-    const P = FBLib.safePostUrl;
-    assert(P('https://x.com/user_1/status/123456?s=20&t=abc#frag') === 'https://x.com/user_1/status/123456' && P('https://twitter.com/a/status/9/photo/1') === 'https://x.com/a/status/9' && P('https://x.com/i/status/77') === 'https://x.com/i/status/77', '17a: owning-post link is canonicalised (query, fragment and extra path dropped)');
-    assert(['http://x.com/a/status/1', 'https://x.com.evil.com/a/status/1', 'https://evil.com/x.com/a/status/1', 'https://user:pw@x.com/a/status/1', 'https://x.com:444/a/status/1', 'javascript:alert(1)', 'https://x.com/a', 'https://x.com/home', 'https://example.com/post/1', '', null, 5].every((u) => P(u) === ''), '17b: unknown providers, lookalike hosts, credentials, non-status pages and junk give no link (never guessed)');
-
-    // recording from the real handlers
-    const env = hEnv();
-    await env.ready();
-    await env.click(imageClick('h1'));
-    const first = await env.last();
-    assert((await hist(env)).length === 0, '17c: an in-progress (saving) operation is not in history');
-    await env.finish(first.downloadId);
-    env.fetchImpl = async () => ({ ok: false, status: 403, headers: { get: () => '' } });
-    await env.click(imageClick('h2'));
-    env.fetchImpl = null;
-    await env.click(imageClick('h3'));
-    const third = (await env.records()).find((r) => r.state === 'saving');
-    await env.finish(third.downloadId, { state: 'interrupted', error: 'USER_CANCELED' });
-    await env.tracker.flush();
-    const h = await hist(env);
-    assert(h.length === 3 && h[0].state === 'cancelled' && h[1].state === 'failed' && h[2].state === 'complete', '17d: complete, failed and cancelled operations are recorded newest-first');
-    assert(h[2].output.sizeBytes === 12345 && h[1].failure.category === 'auth' && h[1].failure.status === 403, '17e: entries keep measured size and the observed failure evidence');
-    assert(JSON.stringify(env.local.imageSaverHistoryV1).indexOf('http') === -1 && JSON.stringify(env.local.imageSaverHistoryV1).indexOf('.jpg?') === -1, '17f: persisted history holds no URLs (source/signed/blob)');
-    const before = (await hist(env)).length;
-    await env.emitDownload({ id: third.downloadId, state: { current: 'complete' } });
-    await env.tracker.flush();
-    assert((await hist(env)).length === before, '17g: repeated terminal events do not duplicate an entry');
-
-    // restart recovery without duplicates and without re-download
-    const env2 = hEnv({ local: env.local, session: env.session, downloadsDb: env.downloadsDb });
-    await env2.ready();
-    assert((await hist(env2)).length === 3 && env2.downloadCalls.length === 0, '17h: history survives a worker restart without re-downloading');
-    const envR = hEnv();
-    await envR.ready();
-    await envR.click(imageClick('r1'));
-    const pend = await envR.last();
-    envR.downloadsDb.get(pend.downloadId).state = 'complete';
-    envR.downloadsDb.get(pend.downloadId).fileSize = 4242;
-    const envR2 = hEnv({ local: envR.local, session: envR.session, downloadsDb: envR.downloadsDb });
-    await envR2.ready();
-    const hr = await hist(envR2);
-    assert(hr.length === 1 && hr[0].state === 'complete' && hr[0].output.sizeBytes === 4242 && envR2.downloadCalls.length === 0, '17i: an operation finished while the worker was down is recorded once after reconciliation');
-    const envR3 = hEnv({ local: envR2.local, session: envR2.session, downloadsDb: envR2.downloadsDb });
-    await envR3.ready();
-    assert((await hist(envR3)).length === 1, '17j: a second restart does not duplicate it');
-
-    // bounds, retention, concurrency
-    const envB = hEnv();
-    await envB.ready();
-    for (let i = 0; i < 60; i++) await envB.sandbox.feedbackHistory.record(synth(i));
-    const hb = await hist(envB);
-    assert(hb.length === 50 && hb[0].id === 'op-hist0059' && hb[49].id === 'op-hist0010', '17k: history is capped at 50 entries (oldest evicted first)');
-    const old = synth(900, { updatedAt: Date.now() - 8 * 24 * 3600 * 1000, createdAt: Date.now() - 9 * 24 * 3600 * 1000 });
-    envB.local.imageSaverHistoryV1.entries.push(JSON.parse(JSON.stringify(old)));
-    assert(!(await hist(envB)).some((e) => e.id === 'op-hist0900'), '17l: entries older than 7 days are not returned');
-    const envC = hEnv();
-    await envC.ready();
-    await Promise.all(Array.from({ length: 12 }, (_, i) => envC.sandbox.feedbackHistory.record(synth(100 + i))));
-    assert((await hist(envC)).length === 12, '17m: concurrent updates lose no entries');
-    await envC.sandbox.feedbackHistory.record(synth(100, { state: 'failed', failure: { stage: 'download', category: 'network', code: '', status: null, downloadError: '' } }));
-    const hc = await hist(envC);
-    assert(hc.length === 12 && hc.find((e) => e.id === 'op-hist0100').state === 'failed', '17n: re-recording the same operation updates it instead of adding another');
-    assert(!(await envC.sandbox.feedbackHistory.record({ id: 'op-hist9999', createdAt: 5, state: 'saving' })) && !(await envC.sandbox.feedbackHistory.record({ evil: true })), '17o: non-terminal and malformed records are rejected');
-
-    // enable/disable
-    const envD = hEnv({ local: { historyEnabled: false } });
-    await envD.ready();
-    await envD.click(imageClick('d1'));
-    await envD.finish((await envD.last()).downloadId);
-    assert((await hist(envD)).length === 0 && (await envD.last()).state === 'complete' && envD.notifications.length === 1, '17p: with history disabled nothing is recorded; the save and its notification are unaffected');
-    envD.local.historyEnabled = true;
-    await envD.click(imageClick('d2'));
-    await envD.finish((await envD.last()).downloadId);
-    assert((await hist(envD)).length === 1, '17q: re-enabling resumes recording (earlier saves are not back-filled)');
-    envD.local.historyEnabled = false;
-    assert((await hist(envD)).length === 1, '17r: disabling keeps the existing entries until the user clears them');
-
-    // clearing
-    const envK = hEnv();
-    await envK.ready();
-    for (let i = 0; i < 5; i++) await envK.sandbox.feedbackHistory.record(synth(200 + i));
-    envK.failLocalWrite = true;
-    const failedClear = await ask(envK, 'HISTORY_CLEAR');
-    envK.failLocalWrite = false;
-    assert(failedClear.success === false && (await hist(envK)).length === 5, '17s: a failed clear is reported as failure and nothing is claimed deleted');
-    const okClear = await ask(envK, 'HISTORY_CLEAR');
-    assert(okClear.success === true && okClear.records.length === 0 && envK.local.imageSaverHistoryV1.entries.length === 0, '17t: clearing empties the store');
-
-    // history storage failure never changes the download
-    const envF = hEnv();
-    await envF.ready();
-    envF.failLocalWrite = true;
-    await envF.click(imageClick('f1'));
-    await envF.finish((await envF.last()).downloadId);
-    assert((await envF.last()).state === 'complete' && envF.downloadCalls.length === 1 && envF.notifications.length === 1, '17u: a history write failure does not affect the download or its notification');
-
-    // message boundary
-    const forged = await ask(env, 'HISTORY_LIST', { id: 'testid', url: 'https://x.com/home' });
-    const foreign = await ask(env, 'HISTORY_CLEAR', { id: 'other', url: 'chrome-extension://other/x.html' });
-    assert(forged.success === false && forged.error === 'FORBIDDEN' && foreign.success === false && (await hist(env)).length === 3, '17v: history messages are accepted from extension pages only; a forged clear deletes nothing');
-
-    // owning-post link through the X handler
-    const envX = hEnv();
-    await envX.ready();
-    envX.tabsMsgHandler = async () => ({ type: 'image', url: 'https://pbs.twimg.com/media/PX1?format=jpg&name=orig', postUrl: 'https://x.com/someone/status/5550001?s=20#x' });
-    const xi = { menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/home' };
-    await envX.contextMenuHandler(xi, { id: 8, url: xi.pageUrl });
-    await envX.tracker.flush();
-    await envX.finish((await envX.last()).downloadId);
-    const hx = await hist(envX);
-    assert(hx.length === 1 && hx[0].postUrl === 'https://x.com/someone/status/5550001', '17w: the X handler records the verified owning-post link (canonical, no query/fragment)');
-    assert(!/media\/|format=/.test(JSON.stringify(envX.local.imageSaverHistoryV1)), '17x: the media URL is still not stored');
-    const envX2 = hEnv();
-    await envX2.ready();
-    envX2.tabsMsgHandler = async () => ({ type: 'image', url: 'https://pbs.twimg.com/media/PX2?format=jpg&name=orig', postUrl: 'https://evil.example/x.com/a/status/1' });
-    await envX2.contextMenuHandler(xi, { id: 8, url: xi.pageUrl });
-    await envX2.tracker.flush();
-    await envX2.finish((await envX2.last()).downloadId);
-    assert((await hist(envX2))[0].postUrl === '' && (await hist(env))[0].postUrl === '', '17y: an unverifiable post reference leaves the link unknown (also for generic saves)');
-
-    // UI boundary (the controller of ui/src/core; the React rendering is covered by test_ui_render.js)
-    const clipboard = { texts: [], fail: false, writeText: async (t) => { if (clipboard.fail) throw new Error('DENIED'); clipboard.texts.push(t); } };
-    const sent = [];
-    const uiChrome = {
-      runtime: {
-        getManifest: () => ({ version: '2.0.0' }),
-        sendMessage: (msg) => { sent.push(msg.action); return ask(envX, msg.action); }
-      },
-      storage: { local: { get: async (d) => ({ ...d, ...envX.local }), set: async (v) => { if (envX.failUiSet) throw new Error('QUOTA'); Object.assign(envX.local, v); } } }
-    };
-    envX.fetchImpl = async () => ({ ok: false, status: 429, headers: { get: () => '' } });
-    await envX.click(imageClick('ui429'));
-    await envX.tracker.flush();
-    const navi = { clipboard, userAgentData: { brands: [{ brand: 'Chromium', version: '126' }] } };
-    const hctl = createHistory({ chrome: uiChrome, FB: FBLib });
-    await hctl.start();
-    const hs = () => hctl.store.getState();
-    assert(hs().status === 'ready' && hs().records.length === 2 && sent.includes('HISTORY_LIST'), '17z: the history section lists recorded operations');
-    const uiSrc17 = read('ui/src/components/app/history-panel.tsx') + read('ui/src/components/app/result-details.tsx') + read('ui/src/core/history.js');
-    assert(!/dangerouslySetInnerHTML|innerHTML/.test(uiSrc17), '17aa: history UI renders through text nodes only (no HTML injection)');
-    const okRec = hs().records.find((r) => r.state === 'complete');
-    const postHref = present.postUrlOf(FBLib, okRec);
-    assert(postHref === 'https://x.com/someone/status/5550001' && /rel="noopener noreferrer"/.test(read('ui/src/components/app/result-details.tsx')) && /target="_blank"/.test(read('ui/src/components/app/result-details.tsx')), '17ab: the post link is a validated https anchor (noopener, rendered only from the validated URL)');
-    await present.copyText(postHref, navi);
-    assert(clipboard.texts[0] === 'https://x.com/someone/status/5550001', '17ac: copy-link writes exactly the validated link');
-    clipboard.fail = true;
-    let linkCopyFailed = false;
-    try { await present.copyText(postHref, navi); } catch (_) { linkCopyFailed = true; }
-    assert(linkCopyFailed && /Не удалось скопировать ссылку/.test(I18n.t('ru', 'post.copyFailed')) && /"post\.copyFailed"/.test(read('ui/src/components/app/result-details.tsx')), '17ad: a clipboard failure propagates and the UI reports it truthfully');
-    const failRec = hs().records.find((r) => r !== okRec);
-    assert(present.postUrlOf(FBLib, failRec) === '' && /неизвестна/.test(I18n.t('ru', 'post.unknown')) && /"post\.unknown"/.test(read('ui/src/components/app/result-details.tsx')) && present.hasReport(failRec), '17ae: unknown post says so (no invented link) and a failed entry still offers the bug report');
-    await hctl.setEnabled(false);
-    assert(envX.local.historyEnabled === false, '17af: the history preference is persisted');
-    envX.failUiSet = true;
-    await hctl.setEnabled(true);
-    assert(hs().enabled === false && /Не удалось сохранить настройку/.test(ru(hs().prefError)), '17ag: a preference save failure reverts the switch and says so');
-    envX.failUiSet = false;
-    envX.failLocalWrite = true;
-    await hctl.clear();
-    assert(/данные не удалены/.test(ru(hs().error)) && hs().records.length === 2, '17ah: a failed clear leaves the list and says nothing was deleted');
-    envX.failLocalWrite = false;
-    await hctl.clear();
-    assert(ru(hs().clearStatus) === 'История очищена.' && hs().records.length === 0, '17ai: a successful clear empties the list');
-
-    // static contract
-    const detailsHtml = read('popup/popup.html');
-    const historySrc = (read('ui/src/core/history.js') + read('ui/src/components/app/history-panel.tsx')).replace(/\/\/.*$/gm, '');
-    assert(/id="root"/.test(detailsHtml) && /<HistoryPanel \/>/.test(read('ui/src/components/app/full-app.tsx')) && !/innerHTML|eval\(|fetch\(|sendBeacon/.test(historySrc), '17aj: history is mounted on the details page; no innerHTML/network use');
-    const manifest = JSON.parse(read('manifest.json'));
-    assert(JSON.stringify([...manifest.permissions].sort()) === JSON.stringify(['contextMenus', 'declarativeNetRequest', 'downloads', 'notifications', 'offscreen', 'scripting', 'storage']), '17ak: history adds no permission (unchanged from UX-02/UX-04)');
+    const idb = idbDouble();
+    const env = makeEnv({local:{historyEnabled:true},indexedDB:idb});await env.ready();
+    const sender={id:'testid',url:'chrome-extension://testid/popup/popup.html'};
+    const ask=(env,action,who=sender)=>new Promise(resolve=>{for(const l of env.messageListeners){let replied=false;const keep=l({action},who,r=>{replied=true;resolve(r)});if(keep||replied)return;}resolve(null);});
+    const stats=async e=>(await ask(e,'STATISTICS_LIST')).stats;
+    await env.click(imageClick('stat1'));const a=await env.last();assert((await stats(env)).total===0,'17a: in-flight operations are not counted');
+    await env.finish(a.downloadId);assert((await stats(env)).success===1 && (await stats(env)).size.knownBytes===12345,'17b: native completion reaches aggregate counters with measured size');
+    await env.emitDownload({id:a.downloadId,state:{current:'complete'}});await env.tracker.flush();assert((await stats(env)).total===1,'17c: duplicate completion does not count twice');
+    env.fetchImpl=async()=>({ok:false,status:403,headers:{get:()=>''}});await env.click(imageClick('stat2'));env.fetchImpl=null;
+    assert((await stats(env)).failed===1,'17d: source refusal counts a failure');
+    await env.click(imageClick('stat3'));const b=await env.last();await env.finish(b.downloadId,{state:'interrupted',error:'USER_CANCELED'});
+    assert((await stats(env)).cancelled===1 && (await stats(env)).total===3,'17e: cancellation is separate');
+    assert(!env.local.imageSaverHistoryV1,'17f: new saves do not create legacy history');
+    for(const who of [{id:'evil',url:sender.url},{id:'testid',url:'https://evil.example/'},{id:'testid',url:'https://www.reddit.com/'}])for(const action of ['STATISTICS_LIST','STATISTICS_CLEAR'])assert((await ask(env,action,who)).error==='FORBIDDEN','17g: page/foreign senders cannot read or clear statistics');
+    env.local.historyEnabled=false;await env.click(imageClick('stat4'));await env.finish((await env.last()).downloadId);assert((await stats(env)).total===3,'17h: opt-out retains totals and excludes new completions');
+    const restarted=makeEnv({local:env.local,session:env.session,downloadsDb:env.downloadsDb,indexedDB:idb});await restarted.ready();assert((await stats(restarted)).total===3 && restarted.downloadCalls.length===0,'17i: worker restart retains counters without replay or redownload');
+    idb.fail=true;assert((await ask(restarted,'STATISTICS_CLEAR')).success===false && (await stats(restarted)).total===3,'17j: transaction abort keeps counters and returns failure');
+    assert((await ask(restarted,'STATISTICS_CLEAR')).stats.total===0,'17k: clear is acknowledged only after transaction commit');
+    const brokenIdb=idbDouble(), broken=makeEnv({local:{historyEnabled:true},indexedDB:brokenIdb});await broken.ready();await stats(broken);
+    await broken.click(imageClick('stat-retry'));const pending=await broken.last();brokenIdb.failAll=true;await broken.finish(pending.downloadId);
+    assert((await broken.tracker.get(pending.id)).historyPending===true,'17m: aborted statistics commit retains durable tracker delivery');
+    brokenIdb.failAll=false;const recovered=makeEnv({local:broken.local,session:broken.session,downloadsDb:broken.downloadsDb,indexedDB:brokenIdb});await recovered.ready();await recovered.tracker.flush();assert((await stats(recovered)).success===1 && !(await recovered.tracker.get(pending.id)).historyPending,'17n: retry acknowledges exactly one committed completion');
+    assert(/<StatisticsPanel \/>/.test(read('ui/src/components/app/full-app.tsx')) && !/<HistoryPanel \/>/.test(read('ui/src/components/app/full-app.tsx')),'17l: settings mounts clean Statistics');
   }
 
-  // =================================================================================================
-  console.log('\n--- 18. UX-03 corrections: explicit opt-in, 7-day retention, durable clear boundary, persistent pruning ---');
-  {
-    const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
-    const ask = (env, action) => new Promise((resolve) => {
-      let responded = false;
-      for (const l of env.messageListeners) { const keep = l({ action }, extSender, (r) => { responded = true; resolve(r); }); if (keep === true || responded) break; }
-      if (!responded) setTimeout(() => resolve(undefined), 0);
-    });
-    const hist = async (env) => (await ask(env, 'HISTORY_LIST')).records;
-    const stored = (env) => (env.local.imageSaverHistoryV1 && env.local.imageSaverHistoryV1.entries) || [];
-    const DAY = 24 * 3600 * 1000;
-    const synth = (n, extra = {}) => ({ id: `op-corr${String(n).padStart(4, '0')}`, createdAt: Date.now() - 2000, updatedAt: Date.now() - 1000, state: 'complete', ...extra });
-    const saveOne = async (env, n) => { await env.click(imageClick(n)); const r = await env.last(); await env.finish(r.downloadId); return env.last(); };
-
-    // 1. explicit opt-in
-    const eMissing = makeEnv();
-    await eMissing.ready();
-    const rm = await saveOne(eMissing, 'o1');
-    assert(rm.state === 'complete' && eMissing.notifications.length === 1 && (await hist(eMissing)).length === 0 && !eMissing.local.imageSaverHistoryV1, '18a: a missing preference records nothing (history is opt-in) while the save and notification work');
-    for (const bad of ['true', 1, null, {}, 'yes']) {
-      const e = makeEnv({ local: { historyEnabled: bad } });
-      await e.ready();
-      await saveOne(e, 'o2');
-      assert((await hist(e)).length === 0, `18b: malformed preference ${JSON.stringify(bad)} does not authorize recording`);
-    }
-    const eUnread = makeEnv({ local: { historyEnabled: true } });
-    await eUnread.ready();
-    await eUnread.click(imageClick('o3'));
-    eUnread.failLocalGet = true;
-    await eUnread.finish((await eUnread.last()).downloadId);
-    eUnread.failLocalGet = false;
-    assert((await eUnread.last()).state === 'complete' && eUnread.downloadCalls.length === 1 && (await hist(eUnread)).length === 0, '18c: an unreadable preference does not authorize recording; the download is unaffected');
-    const eOn = makeEnv({ local: { historyEnabled: true } });
-    await eOn.ready();
-    await saveOne(eOn, 'o4');
-    eOn.local.historyEnabled = false;
-    await saveOne(eOn, 'o5');
-    const ho = await hist(eOn);
-    assert(ho.length === 1, '18d: explicit opt-in records; after switching off new saves are not recorded and the existing entry stays accessible');
-    assert(JSON.stringify(FBLib && 1) && read('ui/src/core/history.js').indexOf('=== true') !== -1 && /\{ \[ENABLED_KEY\]: false \}/.test(read('ui/src/core/history.js')), '18e: the UI default and the enabled test are opt-in (false by default, === true)');
-    const mkUi = async (env, getFails) => {
-      const chromeApi = {
-        runtime: { getManifest: () => ({ version: '2.0.0' }), sendMessage: (m) => ask(env, m.action) },
-        storage: { local: { get: async (d) => { if (getFails) throw new Error('UNREADABLE'); return { ...d, ...env.local }; }, set: async (v) => { Object.assign(env.local, v); } } }
-      };
-      const ctl = createHistory({ chrome: chromeApi, FB: FBLib });
-      await ctl.start();
-      return ctl;
-    };
-    const domDefault = await mkUi(makeEnv());
-    assert(domDefault.store.getState().enabled === false, '18f: with no stored preference the UI shows history as off');
-    const domBroken = await mkUi(makeEnv(), true);
-    assert(domBroken.store.getState().enabled === false && /считается выключенной/.test(ru(domBroken.store.getState().prefError)), '18g: an unreadable preference is not shown as enabled and the user is told');
-
-    // 2 + 4. seven-day retention, persistent pruning
-    const eR = makeEnv({ local: { historyEnabled: true } });
-    await eR.ready();
-    eR.local.imageSaverHistoryV1 = { v: 1, entries: [
-      synth(1, { updatedAt: Date.now() - (7 * DAY - 60000), createdAt: Date.now() - 7 * DAY }),
-      synth(2, { updatedAt: Date.now() - (7 * DAY + 60000), createdAt: Date.now() - 8 * DAY }),
-      synth(3, { updatedAt: Date.now() - 6 * DAY, createdAt: Date.now() - 6 * DAY })
-    ], clearedAt: 0 };
-    const ids = (await hist(eR)).map((e) => e.id).sort();
-    assert(ids.join() === 'op-corr0001,op-corr0003', '18h: the 7-day boundary keeps an entry 1 minute inside and drops one 1 minute outside');
-    assert(stored(eR).every((e) => e.id !== 'op-corr0002') && stored(eR).length === 2, '18i: the expired entry is physically removed from storage by list()');
-    const eI = makeEnv({ local: { historyEnabled: true, imageSaverHistoryV1: { v: 1, entries: [synth(10, { updatedAt: Date.now() - 9 * DAY, createdAt: Date.now() - 9 * DAY }), ...Array.from({ length: 55 }, (_, i) => synth(100 + i, { updatedAt: Date.now() - 1000 + i }))], clearedAt: 0 } } });
-    for (let i = 0; i < 12; i++) await tick();
-    assert(stored(eI).length === 50 && !stored(eI).some((e) => e.id === 'op-corr0010'), '18j: worker start prunes expired and surplus entries in storage without any new download');
-    const eP = makeEnv({ local: { historyEnabled: true, imageSaverHistoryV1: { v: 1, entries: [synth(20, { updatedAt: Date.now() - 9 * DAY, createdAt: Date.now() - 9 * DAY })], clearedAt: 0 } } });
-    eP.failLocalWrite = true;
-    const listed = await ask(eP, 'HISTORY_LIST');
-    assert(listed.success === true && listed.records.length === 0 && listed.pruneFailed === true && stored(eP).length === 1, '18k: a failed cleanup is reported (pruneFailed) while expired data stays hidden');
-    eP.failLocalWrite = false;
-    const rp = await saveOne(eP, 'p1');
-    assert(rp.state === 'complete' && stored(eP).every((e) => e.id !== 'op-corr0020') && stored(eP).length === 1, '18l: a later successful write also removes the expired entry; saving was never affected');
-    assert(/7 дней/.test(I18n.t('ru', 'history.desc')) && /7 days/.test(I18n.t('en', 'history.desc')) && /"history\.desc"/.test(read('ui/src/components/app/history-panel.tsx')) && /7 дней/.test(present.STATS_SCOPE_NOTE) && /7 days/.test(I18n.t('en', 'stats.scope')) && !/30/.test(read('lib/feedback_history.js').replace(/\/\/.*$/gm, '')) && /RETENTION_MS = 7 \*/.test(read('lib/feedback_history.js')), '18m: retention is 7 days in code and UI text');
-
-    // 3. durable clear boundary
-    const eC = makeEnv({ local: { historyEnabled: true } });
-    await eC.ready();
-    await eC.click(imageClick('c1'));
-    const c1 = await eC.last();
-    eC.failSessionSet = true;
-    await eC.finish(c1.downloadId);
-    eC.failSessionSet = false;
-    assert((await hist(eC)).length === 1 && eC.session.imageSaverFeedbackV1.ops.some((o) => o.state === 'saving'), '18n: setup - history recorded the result while the persisted session record is still "saving"');
-    const clr = await ask(eC, 'HISTORY_CLEAR');
-    assert(clr.success === true && clr.records.length === 0 && eC.local.imageSaverHistoryV1.clearedAt > 0, '18o: clear succeeds and persists a clear boundary');
-    const eC2 = makeEnv({ local: eC.local, session: eC.session, downloadsDb: eC.downloadsDb });
-    await eC2.ready();
-    assert((await hist(eC2)).length === 0 && eC2.downloadCalls.length === 0 && stored(eC2).length === 0, '18p: after a restart the stale session record cannot resurrect the cleared operation (no re-download)');
-    assert(eC2.session.imageSaverFeedbackV1.ops.some((o) => o.id === c1.id && o.state === 'complete'), '18q: session feedback is still reconciled (not erased) and the download state is unchanged');
-    await new Promise((r) => setTimeout(r, 5));
-    await saveOne(eC2, 'c2');
-    const eC3 = makeEnv({ local: eC2.local, session: eC2.session, downloadsDb: eC2.downloadsDb });
-    await eC3.ready();
-    assert((await hist(eC3)).length === 1 && (await hist(eC3))[0].id !== c1.id, '18r: an operation started after the clear is recorded and survives restarts');
-
-    // pending writes around a clear
-    const eQ = makeEnv({ local: { historyEnabled: true } });
-    await eQ.ready();
-    const before = Array.from({ length: 5 }, (_, i) => eQ.sandbox.feedbackHistory.record(synth(300 + i)));
-    const clearing = eQ.sandbox.feedbackHistory.clear();
-    const lateOld = eQ.sandbox.feedbackHistory.record(synth(310)); // started before the clear, finishes after it
-    await Promise.all([...before, clearing, lateOld]);
-    assert((await hist(eQ)).length === 0 && (await lateOld) === false, '18s: writes queued before the clear are wiped and a pre-clear operation finishing later is rejected');
-    await new Promise((r) => setTimeout(r, 5));
-    assert((await eQ.sandbox.feedbackHistory.record(synth(320, { createdAt: Date.now(), updatedAt: Date.now() }))) === true && (await hist(eQ)).length === 1, '18t: an operation created after the clear is recorded');
-
-    // failed boundary persistence
-    const eF = makeEnv({ local: { historyEnabled: true } });
-    await eF.ready();
-    await saveOne(eF, 'f1');
-    eF.failLocalWrite = true;
-    const bad = await ask(eF, 'HISTORY_CLEAR');
-    eF.failLocalWrite = false;
-    assert(bad.success === false && (await hist(eF)).length === 1 && !eF.local.imageSaverHistoryV1.clearedAt, '18u: if the clear boundary cannot be persisted the clear fails, nothing is claimed cleared and entries remain');
-    const dom = await mkUi(eF);
-    eF.failLocalWrite = true;
-    await dom.clear();
-    eF.failLocalWrite = false;
-    assert(/данные не удалены/.test(ru(dom.store.getState().error)) && dom.store.getState().records.length === 1, '18v: the UI reports the failed clear truthfully');
-  }
-
-  // =================================================================================================
   console.log('\n--- 19. Identifiable file names in results and history ---');
   {
     const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
@@ -1136,7 +857,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       for (const l of env.messageListeners) { const keep = l({ action }, extSender, (r) => { responded = true; resolve(r); }); if (keep === true || responded) break; }
       if (!responded) setTimeout(() => resolve(undefined), 0);
     });
-    const hEnv = (o = {}) => makeEnv({ ...o, local: { historyEnabled: true, ...(o.local || {}) } });
+    const hEnv = (o = {}) => makeEnv({ ...o, legacySink: true, local: { historyEnabled: true, ...(o.local || {}) } });
     const baseOf = (p) => String(p).split(/[\\/]/).pop();
     const B = FBLib.safeBasename;
 
@@ -1274,7 +995,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       if (!responded) setTimeout(() => resolve(undefined), 0);
     });
     const B = FBLib.safeBasename;
-    const hEnv = (o = {}) => makeEnv({ ...o, local: { historyEnabled: true, ...(o.local || {}) } });
+    const hEnv = (o = {}) => makeEnv({ ...o, legacySink: true, local: { historyEnabled: true, ...(o.local || {}) } });
     const urls = [
       'https://cdn.example.com/image.jpg?token=SECRET#fragment',
       'http://cdn.example.com/a/b/image.jpg?X-Amz-Signature=SIGSECRET',
@@ -1345,9 +1066,9 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   }
 
   // =================================================================================================
-  console.log('\n--- 21. UX-06: an open page follows the production tracker and history (completion, failure, cancellation) ---');
+  console.log('\n--- 21. Legacy controller/tracker compatibility (explicit legacy sink) ---');
   {
-    const env = makeEnv({ local: { historyEnabled: true } });
+    const env = makeEnv({ legacySink:true, local: { historyEnabled: true } });
     await env.ready();
     // The mock storage areas do not emit change events; chrome.storage.onChanged does in a browser. Emit them from the real writes.
     const listeners = [];
@@ -2385,7 +2106,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   // =================================================================================================
   console.log('\n--- 28. F5: recover transient failed delivery to enabled history ---');
   {
-    const hEnv = (o = {}) => makeEnv({ ...o, local: { historyEnabled: true, ...(o.local || {}) } });
+    const hEnv = (o = {}) => makeEnv({ ...o, legacySink: true, local: { historyEnabled: true, ...(o.local || {}) } });
     const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
     const ask = (env, action, sender = extSender) => new Promise((resolve) => {
       let responded = false;

@@ -47,12 +47,14 @@
   var listeners = [];
   var tabs = [];
 
+  var stats = null;
   function reply(action) {
     if (scenario === 'error') throw new Error('MESSAGING_DOWN');
     if (action === 'FEEDBACK_LIST' || action === 'FEEDBACK_MARK_SEEN' || action === 'FEEDBACK_CLEAR' || action === 'HISTORY_LIST' || action === 'HISTORY_CLEAR') {
       if (action === 'FEEDBACK_MARK_SEEN') records.forEach(function (r) { r.seen = true; });
       return { success: true, records: records.slice() };
     }
+    if (action === 'STATISTICS_LIST' || action === 'STATISTICS_CLEAR') { if (!stats || action === 'STATISTICS_CLEAR') stats = window.ImageSaverFeedback.computeStats(action === 'STATISTICS_CLEAR' ? [] : records); return {success:true, stats:stats, imported:0}; }
     return undefined;
   }
 

@@ -22,11 +22,11 @@ Copy-link settings may produce links to third-party preview services. Copying su
 
 - **Preferences and release-check cache:** local browser extension storage, until changed or the extension's data is removed. Preferences include the optional interface language (`en` or `ru`); it is read from the browser's language setting only when no choice is saved and is never sent anywhere.
 - **Recent save feedback:** session storage, targeting 20 recent operations and a 24-hour retention window for finished operations. Active operations are retained while pending and can exceed that count. Browser session storage clears when the browser session ends.
-- **Optional history:** off by default. When enabled, retains up to 50 finished saves for seven days on this device. Records contain bounded metadata such as site/host, output type/size, timestamps, state, filename basename and a validated owning-post link where supported (currently X). This is not general browsing history.
+- **Optional statistics:** off by default, preserving the previous recording preference. Private extension IndexedDB holds aggregate outcomes, output types and measured byte totals, plus compact per-operation contributions for duplicate prevention. There is no entry/time retention limit; browser storage capacity still applies. Statistics do not retain media addresses, filenames or paths. Available legacy history is imported once; already removed entries cannot be recovered. Legacy history metadata from older versions remains in local storage for compatibility; new saves do not append to it.
 - **Optional Debug journal:** recording is off by default. Local extension storage retains at most 2,000 events, 1 MiB and 24 hours. Events include allowlisted action/error codes, timestamps, numerical/boolean details, hosts and validated post/media/job identifiers for correlating extension actions. Full URLs, queries, tokens, cookies, headers, raw errors/stacks, page or React data, page text, filenames, folders, local paths and clipboard contents are excluded. Turning recording off preserves the existing journal; Clear removes it. Retention is enforced when the journal is accessed or updated.
 - **Active work:** memory and session bookkeeping can hold job/download IDs and local blob handles for lifecycle recovery. Media source URLs and binary data are processed as needed for an active save; the browser's own downloads system also maintains its normal download records.
 
-History has explicit off and Clear history controls. These controls do not delete downloaded files. Removing extension storage/uninstalling removes extension-local data; browser downloads and saved files are managed separately.
+Statistics has recording and Clear statistics controls. Turning recording off preserves totals. Clear statistics removes its counters and duplicate-prevention ledger; pre-clear operations cannot restore them. It does not remove legacy history metadata or downloaded files. Removing extension storage/uninstalling removes extension-local data; browser downloads and saved files are managed separately.
 
 ## Reports and diagnostics
 
@@ -42,7 +42,7 @@ Debug events can be filtered, copied or exported only by user action. Exports co
 |---|---|
 | `contextMenus` | Native save action and supported link actions |
 | `downloads` | Start and monitor extension-owned downloads, show actual saved filenames and eligible native resume |
-| `storage` | Preferences, optional history, release cache and session lifecycle records |
+| `storage` | Preferences, statistics, legacy metadata, release cache and session lifecycle records |
 | `scripting` | Selected-frame provider discovery/recovery and content-script injection |
 | `declarativeNetRequest` | Scoped provider request-header adjustments, including required image referrers |
 | `offscreen` | Local binary processing, GIF encoding, supported HLS assembly and owned blob lifecycle |

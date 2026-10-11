@@ -16,7 +16,8 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 - Compact inline save controls on X, Reddit and RedGIFs, with bounded post batches on X and Reddit.
 - All distinct declared original media from a Pawchive feed preview, including the original cover. Selecting an individual attachment saves that attachment.
 - A Downloads subfolder, optional site/type organization, save results and copyable redacted error reports.
-- Opt-in local history: up to 50 finished saves for seven days, with statistics for that retained history.
+- Blue, Dark and Light interface themes, saved across the popup and settings page.
+- Opt-in local statistics without an entry count or time limit, with recording and clear controls. Available old history is imported once; expired or removed records cannot be reconstructed.
 - Opt-in local Debug journal with filters, copy/export and clear controls: up to 2,000 events, 1 MiB and 24 hours. Full URLs, tokens, page text and local paths are excluded.
 - Supported post-link copying on X, Instagram, TikTok and YouTube Shorts, with optional preview-link hosts.
 - GitHub release checks manually or on opening Updates, at most daily. Downloaded extension code is not installed automatically.
@@ -54,7 +55,7 @@ The committed `popup/` pages are ready to use. Node/npm are needed only for deve
 
 Right-click an image, video or supported post preview and select **MediaLatch: Save media**. On X, Shift + right-click can open the browser menu when the site handles right-click itself.
 
-The toolbar popup shows recent results. Its full page contains history, saving preferences, notifications, link settings and release checks. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
+The toolbar popup shows recent results. Its full page contains statistics and Downloads, saving preferences, notifications, link settings and release checks. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
 
 Choose **Language** at the top of the full page to switch between English and Russian. The saved choice applies immediately to extension pages, notifications and inline buttons. With no saved choice, a Russian browser uses Russian; other browsers use English. The menu title stays **MediaLatch: Save media** in both languages. Renaming preserves existing preferences and save folders.
 
@@ -70,7 +71,7 @@ DRM, access bypass, arbitrary blob/MSE players and general HLS/DASH downloads ar
 
 GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output, 15 MiB encoded output and 45 seconds of processing. Buffered Pixiv images have a 50 MiB ceiling. These are limits of specific processing paths, not every direct browser download.
 
-There is no telemetry or extension backend. History and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
+There is no telemetry or extension backend. Statistics and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
 
 ## Roadmap
 

@@ -82,6 +82,10 @@ function makeChrome(state) {
           if (msg.action === 'DEBUG_CLEAR') { if (state.failDebugClear) return { success: false, error: 'DEBUG_CLEAR_FAILED' }; d.events = []; d.dropped = 0; d.expired = 0; }
           return { success: true, events: d.events, retained: d.events.length, persisted: d.persisted ?? d.events.length, dropped: d.dropped || 0, expired: d.expired || 0, storageError: d.storageError || '' };
         }
+        if (msg.action === 'STATISTICS_LIST' || msg.action === 'STATISTICS_CLEAR') {
+          if (msg.action === 'STATISTICS_CLEAR') { if (state.failClear) return { success: false }; state.history = []; }
+          return { success: true, stats: FB.computeStats(state.history), imported: 0 };
+        }
         if (msg.action === 'HISTORY_LIST' || msg.action === 'HISTORY_CLEAR') {
           if (msg.action === 'HISTORY_CLEAR') { if (state.failClear) return { success: false }; state.history = []; }
           return { success: true, records: state.history.slice().reverse() };
@@ -263,7 +267,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(invite && p.rows().length === 0 && !p.text().includes('Последние сохранения') && !state.session.length === false && !p.calls.messages.includes('FEEDBACK_LIST'), 'R2c: history off -> the invitation is shown, no list, subtitle or request');
     const enable = p.q('#enableHistoryButton');
     const dismiss = p.q('#dismissHistoryInviteButton');
-    assert(enable.getAttribute('aria-label') === 'Включить историю' && dismiss.getAttribute('aria-label') === 'Скрыть предложение включить историю' && enable.type === 'button' && dismiss.type === 'button', 'R2d: the invitation buttons are real buttons with accessible names');
+    assert(enable.getAttribute('aria-label') === 'Вести статистику' && dismiss.getAttribute('aria-label') === 'Скрыть предложение вести статистику' && enable.type === 'button' && dismiss.type === 'button', 'R2d: the invitation buttons are real buttons with accessible names');
     await p.click(dismiss);
     assert(JSON.stringify(p.calls.localSets) === JSON.stringify([{ historyInviteDismissed: true }]) && !p.q('#historyInvite') && !p.q('main') && p.q('[data-popup="quick"]').getAttribute('data-empty') === 'true' && p.q('#openSettingsButton'), 'R2e: dismissing writes only the dismissal; only the header and gear remain');
     await p.unmount();
@@ -277,7 +281,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p3.unmount();
     const p4 = await page('quick', { session: [], history: [], local: {}, failSet: true });
     await p4.click(p4.q('#enableHistoryButton'));
-    assert(p4.q('#historyInvite') && p4.q('[role="alert"]') && /Не удалось включить историю/.test(p4.q('[role="alert"]').textContent) && p4.rows().length === 0, 'R2h: a failed write keeps the invitation and shows a truthful alert');
+    assert(p4.q('#historyInvite') && p4.q('[role="alert"]') && /Не удалось включить статистику/.test(p4.q('[role="alert"]').textContent) && p4.rows().length === 0, 'R2h: a failed write keeps the invitation and shows a truthful alert');
     await p4.click(p4.q('#dismissHistoryInviteButton'));
     assert(/Не удалось запомнить выбор/.test(p4.q('[role="alert"]').textContent), 'R2i: a failed dismissal write is reported');
     await p4.unmount();
@@ -356,10 +360,10 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const state = { session: [rec({ filename: 'ok-before.jpg' }), failedOne], history: [], local: {} };
     const p = await page('full', state, { hash: '#embed' });
     const tabs = p.tabs();
-    assert(tabs.length === 6 && tabs.map((t) => t.textContent.trim()).join('|') === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления|Отладка' && p.q('[role="tablist"]'), 'R5a: six tabs (DEBUG-MENU-01 adds Debug) in a tab list with the requested names');
+    assert(tabs.length === 7 && tabs.map((t) => t.textContent.trim()).join('|') === 'Статистика|Сохранение|Уведомления|Embed|Обновления|Отладка|Загрузки' && p.q('[role="tablist"]'), 'R5a: six tabs (DEBUG-MENU-01 adds Debug) in a tab list with the requested names');
     const sel = () => tabs.filter((t) => t.getAttribute('aria-selected') === 'true').map((t) => t.textContent.trim());
     const shown = () => p.qa('[role="tabpanel"]').filter((x) => !x.hidden && !x.hasAttribute('hidden')).map((x) => x.id || x.getAttribute('aria-labelledby'));
-    assert(sel().join() === 'Embed' && p.qa('[role="tabpanel"]').length === 6 && shown().length === 1, 'R5b: the URL hash selects the section; exactly one panel is displayed');
+    assert(sel().join() === 'Embed' && p.qa('[role="tabpanel"]').length === 7 && shown().length === 1, 'R5b: the URL hash selects the section; exactly one panel is displayed');
     assert(p.qa('[role="tabpanel"]').every((panel) => panel.getAttribute('aria-labelledby') && p.doc.getElementById(panel.getAttribute('aria-labelledby'))), 'R5c: every panel is labelled by its tab');
     const tablist = p.q('[role="tablist"]');
     tablist.focus();
@@ -367,7 +371,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(tablist.getAttribute('tabindex') === '0' && p.doc.activeElement === tabs[3] && tabs.filter((t) => t.getAttribute('tabindex') === '0').length === 1 && tabs[3].getAttribute('tabindex') === '0', 'R5d: the tab list is one tab stop and hands focus to the selected tab (roving focus)');
     assert(p.q('#settingsSaveBar') !== null, 'R5e: the settings save bar is visible for Embed');
     await p.mousedown(tabs[0]);
-    assert(sel().join() === 'Статистика и история' && !p.q('#settingsSaveBar') && p.win.location.hash === '#history', 'R5f: choosing a tab shows its panel, hides the save bar and updates the hash');
+    assert(sel().join() === 'Статистика' && !p.q('#settingsSaveBar') && p.win.location.hash === '#history', 'R5f: choosing a tab shows its panel, hides the save bar and updates the hash');
     await p.mousedown(tabs[2]);
     assert(!p.q('#settingsSaveBar'), 'R5g: no save bar for Notifications (its preference applies immediately)');
     await p.mousedown(tabs[1]);
@@ -378,11 +382,11 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(sel().join() === 'Сохранение' && p.doc.activeElement === tabs[1], 'R5i: ArrowRight moves focus and selection to the next tab');
     await p.key(tabs[1], 'ArrowLeft');
     await p.key(p.doc.activeElement, 'ArrowLeft');
-    assert(sel().join() === 'Отладка', 'R5j: ArrowLeft wraps from the first tab to the last');
+    assert(sel().join() === 'Загрузки', 'R5j: ArrowLeft wraps from the first tab to the last');
     await p.key(p.doc.activeElement, 'Home');
-    assert(sel().join() === 'Статистика и история', 'R5k: Home selects the first tab');
+    assert(sel().join() === 'Статистика', 'R5k: Home selects the first tab');
     await p.key(p.doc.activeElement, 'End');
-    assert(sel().join() === 'Отладка', 'R5l: End selects the last tab');
+    assert(sel().join() === 'Загрузки', 'R5l: End selects the last tab');
     p.win.history.replaceState(null, '', '#notifications');
     p.win.dispatchEvent(new p.win.HashChangeEvent('hashchange'));
     await p.settle(4);
@@ -390,12 +394,12 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     p.win.history.replaceState(null, '', '#nonsense');
     p.win.dispatchEvent(new p.win.HashChangeEvent('hashchange'));
     await p.settle(4);
-    assert(sel().join() === 'Статистика и история', 'R5n: an invalid hash falls back to the default section');
+    assert(sel().join() === 'Статистика', 'R5n: an invalid hash falls back to the default section');
     await p.unmount();
 
     const deep = await page('full', { session: [rec({ filename: 'a.jpg' }), failedOne], history: [], local: {} }, { hash: '#embed', search: '?op=' + encodeURIComponent(failedOne.id) });
     const open = deep.rows().filter((r) => r.querySelector('button').getAttribute('aria-expanded') === 'true');
-    assert(deep.tabs().find((t) => t.getAttribute('aria-selected') === 'true').textContent.includes('Статистика') && open.length === 1 && /Не удалось определить медиа/.test(open[0].textContent) && deep.scrolled.includes('result-item'), 'R5o: ?op= opens the history section, expands exactly that operation and scrolls to it');
+    assert(deep.tabs().find((t) => t.getAttribute('aria-selected') === 'true').textContent.includes('Загрузки') && open.length === 1 && /Не удалось определить медиа/.test(open[0].textContent) && deep.scrolled.includes('result-item'), 'R5o: ?op= opens the history section, expands exactly that operation and scrolls to it');
     assert(!deep.q('input[type="checkbox"]#notifyHistoryDup') && deep.qa('[data-slot="results-section"] [role="switch"]').length === 0, 'R5p: the results list does not duplicate the notification preference');
     await deep.unmount();
   }
@@ -407,10 +411,10 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const p = await page('full', state, { hash: '#saving' });
     const seen = () => p.calls.messages.filter((m) => m === 'FEEDBACK_MARK_SEEN').length;
     assert(p.rows().length === 2 && seen() === 0, 'R6a: the results were rendered while another section is displayed, nothing was acknowledged');
-    await p.mousedown(p.tabs()[0]);
+    await p.mousedown(p.tabs()[6]);
     await p.settle(6);
     assert(seen() === 1, 'R6b: opening History acknowledges the displayed failure exactly once');
-    await p.mousedown(p.tabs()[1]); await p.mousedown(p.tabs()[0]); await p.settle(4);
+    await p.mousedown(p.tabs()[1]); await p.mousedown(p.tabs()[6]); await p.settle(4);
     assert(seen() === 1, 'R6c: switching away and back does not acknowledge again');
     await p.unmount();
   }
@@ -480,61 +484,29 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
   }
 
   // =================================================================================================
-  console.log('\n--- R8. Full page: statistics and history ---');
+  console.log('\n--- R8. Clean all-time statistics ---');
   {
-    const okX = rec({ filename: 'x-image.jpg', postUrl: 'https://x.com/someone/status/5550001', output: { type: 'pic', ext: '.jpg', evidence: 'verified_mime', mime: 'image/jpeg', sizeBytes: 2048, sizeKind: 'measured' } });
-    const bad = unnamedFailure();
-    const state = { session: [], history: [okX, bad], local: { historyEnabled: true } };
-    const texts = [];
-    let deny = false;
-    const clipboard = { writeText: async (t) => { if (deny) throw new Error('DENIED'); texts.push(t); } };
-    const p = await page('full', state, { clipboard });
-    const stats = p.q('[data-slot="stats"]');
-    const val = (k) => p.q(`[data-stat="${k}"] [data-slot="value"]`).textContent;
-    assert(val('total') === '2' && val('success') === '1' && val('failed') === '1' && /Результат неизвестен/.test(p.q('[data-stat="unknown"] [data-slot="label"]').textContent), 'R8a: the statistics tiles count outcomes separately');
-    assert(/не более 50 операций за последние 7 дней/.test(p.q('[data-slot="scope-note"]').textContent) && /не итоги за всё время/.test(p.q('[data-slot="scope-note"]').textContent), 'R8b: the scope note states the bounds of the statistics');
-    assert(/не менее 2,0 КБ/.test(p.q('[data-slot="size-text"]').textContent) && p.q('[data-type="pic"]').textContent.includes('тип подтверждён: 1'), 'R8c: size and type evidence are stated with their coverage');
-    const consent = p.q('#historyEnabledSwitch');
-    assert(consent.getAttribute('role') === 'switch' && consent.getAttribute('aria-checked') === 'true' && p.q('label[for="historyEnabledSwitch"]'), 'R8d: history recording is a labelled switch (opt-in, shown as stored)');
-    await p.click(consent);
-    assert(state.local.historyEnabled === false && /Запись истории выключена/.test(p.q('[data-slot="disabled-note"]').textContent) && val('total') === '2', 'R8e: switching recording off explains it and keeps the statistics of existing entries');
-    state.failSet = true;
-    await p.click(consent);
-    assert(consent.getAttribute('aria-checked') === 'false' && /Не удалось сохранить настройку истории/.test(p.text()), 'R8f: a failed write reverts the switch and says so');
-    state.failSet = false;
-    const historyRows = p.qa('[data-slot="history"] [data-slot="result-item"]');
-    assert(historyRows.length === 2, 'R8g: the history lists both retained operations');
-    await p.click(historyRows.find((r) => /x-image\.jpg/.test(r.textContent)).querySelector('button'));
-    const link = p.q('[data-slot="post"] a');
-    assert(link && link.getAttribute('href') === 'https://x.com/someone/status/5550001' && link.getAttribute('rel') === 'noopener noreferrer' && link.getAttribute('target') === '_blank', 'R8h: the post link is a validated https anchor with noopener');
-    const copyLink = p.byText('button', /Копировать ссылку на пост/);
-    await p.click(copyLink);
-    assert(texts[0] === 'https://x.com/someone/status/5550001' && /Ссылка скопирована/.test(p.q('[data-slot="post"] [role="status"]').textContent), 'R8i: copy-link reports success only after the write resolved');
-    deny = true;
-    await p.click(copyLink);
-    assert(/Не удалось скопировать ссылку автоматически/.test(p.q('[data-slot="post"] [role="status"]').textContent), 'R8j: a clipboard failure is reported truthfully');
-    await p.click(historyRows.find((r) => !/x-image\.jpg/.test(r.textContent)).querySelector('button'));
-    assert(/Ссылка на пост: неизвестна/.test(p.text()) && p.qa('[data-slot="report"]').length >= 1, 'R8k: an unknown post says so and a failed entry still offers the report');
-    state.failClear = true;
-    await p.click(p.byText('button', /Очистить историю/));
-    assert(/данные не удалены/.test(p.text()) && p.qa('[data-slot="history"] [data-slot="result-item"]').length === 2, 'R8l: a failed clear says nothing was deleted and keeps the list');
-    state.failClear = false;
-    await p.click(p.byText('button', /Очистить историю/));
-    assert(/История очищена/.test(p.text()) && /История пуста/.test(p.q('[data-slot="history"]').textContent) && p.q('[data-slot="stats-message"]'), 'R8m: a successful clear empties the history and the statistics');
+    const ok = rec({ output: { type:'pic', ext:'.jpg', evidence:'verified_mime', mime:'image/jpeg', sizeBytes:2048, sizeKind:'measured' } });
+    const state = { session: [], history:[ok,unnamedFailure()], local:{historyEnabled:true} };
+    const p = await page('full',state);
+    const value = k => p.q('[data-stat="'+k+'"] [data-slot="value"]')?.textContent;
+    assert(value('total') === '2' && value('success') === '1' && value('failed') === '1','R8a: aggregate outcome tiles');
+    assert(!p.q('[data-slot="history"]') && !p.q('[data-slot="recent"]').closest('[role="tabpanel"]').hidden === false && /Без ограничения/.test(p.q('[data-slot="scope-note"]').textContent),'R8b: clean Statistics; download results live in another section');
+    assert(/не менее 2,0 КБ/.test(p.q('[data-slot="size-text"]').textContent),'R8c: measured-size evidence retained');
+    const sw=p.q('#statisticsEnabled');
+    assert(sw && p.q('label[for="statisticsEnabled"]'),'R8d: labelled recording switch');
+    await p.click(sw); assert(state.local.historyEnabled === false && value('total')==='2','R8e: turning recording off retains totals');
+    state.failSet=true; await p.click(sw); assert(sw.getAttribute('aria-checked')==='false' && /Не удалось сохранить настройку учёта/.test(p.text()),'R8f: failed preference write is truthful');
+    state.failSet=false;state.failClear=true;await p.click(p.byText('button',/Очистить статистику/));assert(value('total')==='2' && /итоги сохранены/.test(p.text()),'R8g: failed clear retains totals');
+    state.failClear=false;await p.click(p.byText('button',/Очистить статистику/));assert(p.q('[data-slot="stats-message"]') && /Статистика очищена/.test(p.text()),'R8h: successful durable clear');
     await p.unmount();
-    const off = await page('full', { session: [], history: [okX], local: {} });
-    assert(off.q('#historyEnabledSwitch').getAttribute('aria-checked') === 'false' && /Запись истории выключена/.test(off.q('[data-slot="disabled-note"]').textContent) && off.q('[data-stat="total"] [data-slot="value"]').textContent === '1', 'R8n: with recording off the retained records and statistics are still shown, with the explanation');
-    await off.unmount();
-    const err = await page('full', { session: [], history: [], local: {}, failMessages: true });
-    assert(/Статистика недоступна/.test(err.text()) && /Не удалось загрузить историю/.test(err.text()), 'R8o: a messaging failure shows loading errors instead of statistics');
-    await err.unmount();
   }
 
   // =================================================================================================
   console.log('\n--- R9. Long names, accessibility of names and identifiers ---');
   {
     const long = rec({ filename: `${'очень-длинное-имя-'.repeat(20)}.png`, site: 'a-very-long-subdomain.example-gallery-site.com' });
-    const p = await page('full', { session: [long], history: [long], local: { historyEnabled: true } });
+    const p = await page('full', { session: [long], history: [long], local: { historyEnabled: true } }, {hash:'#downloads'});
     const name = p.q('[data-slot="name"]');
     assert(name.textContent === long.filename && name.className.includes('truncate') && name.parentElement.className.includes('min-w-0'), 'R9a: a long file name is the row name, truncated by CSS and allowed to shrink');
     await p.click(name.closest('button'));
@@ -601,12 +573,13 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const fstate = { session: [rec({ filename: 'a.jpg' })], history: [rec({ filename: 'h1.jpg' })], local: { historyEnabled: true } };
     const f = await page('full', fstate, { hash: '#history' });
     const val = (k) => f.q('[data-stat="' + k + '"] [data-slot="value"]').textContent;
-    assert(val('total') === '1' && val('success') === '1' && f.qa('[data-slot="history"] [data-slot="result-item"]').length === 1, 'R10l: the full page starts with one result and one history entry');
+    assert(val('total') === '1' && val('success') === '1' && !f.q('[data-slot="history"]'), 'R10l: the full page starts with one result and one history entry');
     fstate.history.push(rec({ state: 'failed', output: {}, failure: failure('download', 'network') }));
     fstate.session.push(unnamedFailure());
     for (const cb of (fstate.changeListeners || []).slice()) { cb({ imageSaverHistoryV1: { newValue: {} } }, 'local'); cb({ imageSaverFeedbackV1: { newValue: {} } }, 'session'); }
+    for (const cb of fstate.msgListeners || []) cb({action:'STATISTICS_CHANGED'});
     await f.settle(10);
-    assert(val('total') === '2' && val('failed') === '1' && f.qa('[data-slot="history"] [data-slot="result-item"]').length === 2 && f.qa('[data-slot="results-section"] [data-slot="result-item"]').length === 2, 'R10m: the open full page shows the new failure in the results and in the history, and updates the statistics');
+    assert(val('total') === '2' && val('failed') === '1' && !f.q('[data-slot="history"]') && f.qa('[data-slot="results-section"] [data-slot="result-item"]').length === 2, 'R10m: the open full page shows the new failure in the results and in the history, and updates the statistics');
     await f.unmount();
     assert((fstate.changeListeners || []).length === 1, 'R10n: closing the page removes the subscriptions of the results list and the history (only the page-lifetime language controller remains)');
   }
@@ -760,7 +733,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const state = { session: [rec({ filename: 'Фото.jpg' }), failRec], history: [rec({ filename: 'old-entry.jpg' })], local: { historyEnabled: true } };
 
     const full = await page('full', state, { hash: '#saving' });
-    assert(tabNames(full) === 'Статистика и история|Сохранение|Уведомления|Embed|Обновления|Отладка' && full.doc.documentElement.lang === 'ru' && full.doc.title === 'MediaLatch: история и настройки', 'R13a: a Russian browser with no saved choice shows the Russian page (lang and title follow)');
+    assert(tabNames(full) === 'Статистика|Сохранение|Уведомления|Embed|Обновления|Отладка|Загрузки' && full.doc.documentElement.lang === 'ru' && full.doc.title === 'MediaLatch: загрузки и настройки', 'R13a: a Russian browser with no saved choice shows the Russian page (lang and title follow)');
     const langBox = full.q('#languageSelect');
     assert(langBox && langBox.getAttribute('role') === 'combobox' && full.q('label[for="languageSelect"]').textContent === 'Язык' && /Русский/.test(langBox.textContent), 'R13b: the language choice is a labelled combobox showing the current language');
     const quick = await page('quick', state);
@@ -770,16 +743,16 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await full.type(full.q('#subfolderInput'), 'Unsaved/Edit');
     const setsBefore = full.calls.localSets.length;
     assert(await chooseLanguage(full, 'English'), 'R13d: setup - English is offered by its own name');
-    assert(tabNames(full) === 'Statistics and history|Saving|Notifications|Embed|Updates|Debug' && full.doc.documentElement.lang === 'en' && full.doc.title === 'MediaLatch: history and settings', 'R13e: ru -> en switches the open page at once (tabs, lang, title)');
+    assert(tabNames(full) === 'Statistics|Saving|Notifications|Embed|Updates|Debug|Downloads' && full.doc.documentElement.lang === 'en' && full.doc.title === 'MediaLatch: downloads and settings', 'R13e: ru -> en switches the open page at once (tabs, lang, title)');
     assert(full.q('#subfolderInput').value === 'Unsaved/Edit' && full.q('#folderPreviewPath').textContent === 'Downloads/Unsaved/Edit/photo.jpg' && JSON.stringify(full.calls.localSets.slice(setsBefore)) === JSON.stringify([{ uiLanguage: 'en' }]), 'R13f: the unsaved folder edit is kept and only uiLanguage is written');
     assert(/Save settings/.test(full.q('#saveButton').textContent) && /“MediaLatch: Save media”/.test(full.text()) && full.q('label[for="languageSelect"]').textContent === 'Language', 'R13g: buttons, labels and the fixed menu title follow');
     await quick.settle(6);
     assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && quick.doc.documentElement.lang === 'en' && /Saved/.test(quick.rows()[1].textContent) && /new/.test(quick.rows()[0].textContent), 'R13h: the open compact popup follows the change made on the full page (rows and accessible names)');
     assert(quick.q('[data-slot="name"]').textContent === 'clip <img src=x onerror=1> & co.mp4' && quick.doc.querySelectorAll('img').length === 0, 'R13i: an original file name is shown as text in every language, never as markup');
-    assert(await chooseLanguage(full, 'Русский') && tabNames(full).startsWith('Статистика и история') && full.q('#subfolderInput').value === 'Unsaved/Edit', 'R13j: en -> ru keeps the edit');
-    assert(await chooseLanguage(full, 'English') && tabNames(full).startsWith('Statistics and history') && full.q('#subfolderInput').value === 'Unsaved/Edit' && state.local.uiLanguage === 'en' && state.local.subfolder === undefined, 'R13k: ru -> en again; the folder edit is still unsaved');
+    assert(await chooseLanguage(full, 'Русский') && tabNames(full).startsWith('Статистика') && full.q('#subfolderInput').value === 'Unsaved/Edit', 'R13j: en -> ru keeps the edit');
+    assert(await chooseLanguage(full, 'English') && tabNames(full).startsWith('Statistics') && full.q('#subfolderInput').value === 'Unsaved/Edit' && state.local.uiLanguage === 'en' && state.local.subfolder === undefined, 'R13k: ru -> en again; the folder edit is still unsaved');
     await full.mousedown(full.tabs()[0]);
-    assert(/Operations in history/.test(full.text()) && /Save history/.test(full.text()) && /Clear finished/.test(full.text()), 'R13l: statistics, history and results are English');
+    assert(/Statistics/.test(full.text()) && /Record statistics/.test(full.text()) && !/Save history/.test(full.text()), 'R13l: statistics, history and results are English');
     const failRow = full.qa('[data-slot="results-section"] [data-slot="result-item"]').find((r) => r.getAttribute('data-state-kind') === 'failed');
     await full.click(failRow.querySelector('button'));
     assert(/Download interrupted/.test(failRow.textContent) && /Chrome code: NETWORK_FAILED/.test(failRow.textContent) && /Copy report/.test(failRow.textContent) && /MediaLatch bug report/.test(failRow.querySelector('textarea[readonly]').value), 'R13m: an older record is shown in English; diagnostic codes and the report format stay intact');
@@ -788,21 +761,21 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await quick.unmount();
     await full.unmount();
     const reopened = await page('full', state);
-    assert(tabNames(reopened).startsWith('Statistics and history') && reopened.doc.documentElement.lang === 'en', 'R13n: a reopened page uses the saved English choice over the Russian browser');
+    assert(tabNames(reopened).startsWith('Statistics') && reopened.doc.documentElement.lang === 'en', 'R13n: a reopened page uses the saved English choice over the Russian browser');
 
     // a failed write keeps the language and says so
     state.failSet = true;
     await chooseLanguage(reopened, 'Русский');
-    assert(tabNames(reopened).startsWith('Statistics and history') && state.local.uiLanguage === 'en' && /Could not save the language/.test(reopened.q('[data-slot="language-status"]').textContent), 'R13o: a failed write keeps English and reports the failure (no success state)');
+    assert(tabNames(reopened).startsWith('Statistics') && state.local.uiLanguage === 'en' && /Could not save the language/.test(reopened.q('[data-slot="language-status"]').textContent), 'R13o: a failed write keeps English and reports the failure (no success state)');
     state.failSet = false;
     await reopened.unmount();
 
     // an unreadable preference shows the browser language and says so; an English browser defaults to English
     const unreadable = await page('full', { session: [], history: [], local: { uiLanguage: 'en' }, failGet: true });
-    assert(tabNames(unreadable).startsWith('Статистика и история') && /Не удалось прочитать сохранённый язык/.test(unreadable.q('[data-slot="language-status"]').textContent), 'R13p: an unreadable preference shows the browser language with a message');
+    assert(tabNames(unreadable).startsWith('Статистика') && /Не удалось прочитать сохранённый язык/.test(unreadable.q('[data-slot="language-status"]').textContent), 'R13p: an unreadable preference shows the browser language with a message');
     await unreadable.unmount();
     const enBrowser = await page('quick', { session: [], history: [], local: {}, uiLanguage: 'en-US' });
-    assert(enBrowser.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && /Enable history/.test(enBrowser.q('#enableHistoryButton').textContent), 'R13q: an English browser with no saved choice gets the English compact popup');
+    assert(enBrowser.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && /Record statistics/.test(enBrowser.q('#enableHistoryButton').textContent), 'R13q: an English browser with no saved choice gets the English compact popup');
     await enBrowser.unmount();
     const invalid = await page('quick', { session: [], history: [], local: { uiLanguage: 'de' }, uiLanguage: 'ru-RU' });
     assert(invalid.q('#openSettingsButton').getAttribute('aria-label') === 'Настройки' && invalid.calls.localSets.length === 0, 'R13r: an invalid saved value falls back to the browser language and is not rewritten');
