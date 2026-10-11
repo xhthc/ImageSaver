@@ -444,183 +444,24 @@ function makeChrome(state) {
   }
 
   // =================================================================================================
-  console.log('\n--- 27. Compact popup while history is disabled: invitation, dismissal, preference changes ---');
+  console.log('\n--- 27. Manager controller: storage-independent visibility and truthful actions ---');
   {
-    const sessionRecords = () => Array.from({ length: 7 }, (_, i) => rec({ filename: `quick-${i + 1}.jpg` }));
-    const mountQuick = async (local = {}, over = {}) => {
-      const state = { session: sessionRecords(), history: [], local: { notifySuccess: false, ...local }, ...over };
-      const { chrome, calls } = makeChrome(state);
-      const closed = [];
-      const quick = createQuick({ chrome, window: { close: () => closed.push(1) } });
-      await quick.ready;
-      const q = { state, calls, quick, closed, chrome, st: () => quick.store.getState() };
-      // what the page shows: the list is mounted exactly while history is enabled
-      q.showList = () => q.st().ready && q.st().enabled;
-      q.showInvite = () => q.st().ready && !q.st().enabled && !q.st().dismissed;
-      q.showMain = () => q.showList() || q.showInvite();
-      return q;
-    };
-
-    const a = await mountQuick({});
-    assert(a.showInvite() && a.showMain() && !a.showList(), '27a: history missing -> list and subtitle hidden, invitation shown');
-    assert(a.st().mounted === false && !a.calls.messages.includes('FEEDBACK_LIST'), '27b: no list is mounted and the list is not even requested');
-    for (const bad of ['true', 1, null, {}, 'yes', false]) {
-      const q = await mountQuick({ historyEnabled: bad });
-      assert(q.showInvite() && !q.showList() && q.st().mounted === false, `27d: historyEnabled ${JSON.stringify(bad)} is treated as disabled`);
-    }
-
-    const sessionBefore = JSON.stringify(a.state.session);
-    await a.quick.dismissInvite();
-    assert(JSON.stringify(a.calls.localSets) === JSON.stringify([{ historyInviteDismissed: true }]), '27e: dismissing writes only the separate dismissal preference');
-    assert(a.state.local.historyEnabled === undefined && a.state.local.notifySuccess === false && JSON.stringify(a.state.session) === sessionBefore && !a.calls.messages.includes('FEEDBACK_CLEAR') && !a.calls.messages.includes('HISTORY_CLEAR'), '27f: dismissing does not enable history, clear records or change the notification preference');
-    assert(!a.showInvite() && !a.showMain() && !a.showList(), '27g: after dismissal only the header remains (no blank container)');
-    const restarted = await mountQuick(a.state.local); // reopening / browser restart: the same stored preferences
-    assert(!restarted.showInvite() && !restarted.showMain() && restarted.st().mounted === false, '27i: the dismissal survives reopening the popup and a browser restart (persisted in storage.local)');
-
-    const e = await mountQuick({});
-    await e.quick.enableHistory();
-    assert(JSON.stringify(e.calls.localSets) === JSON.stringify([{ historyEnabled: true }]) && e.state.local.historyInviteDismissed === undefined, '27j: "Вести статистику" writes only historyEnabled (the dismissal preference is untouched)');
-    assert(!e.showInvite() && e.showList() && e.showMain() && e.st().mounted === true && e.st().mount === 1, '27k: after a successful write the list (mounted once) appears and the invitation goes away');
-    const mountId = e.st().mount;
-    const list = createFeedbackList({ chrome: e.chrome, FB }, { limit: 5, openFull: true, isActive: () => e.quick.isActive(mountId) });
-    await list.start();
-    assert(list.store.getState().records.length === 5 && list.canOpenFull, '27l: the restored list keeps five results and their operation links');
-
-    const f = await mountQuick({}, { failSet: true });
-    await f.quick.enableHistory();
-    assert(f.state.local.historyEnabled === undefined && f.showInvite() && !f.showList() && f.st().mounted === false && /Не удалось включить статистику: настройка не сохранена/.test(ru(f.st().inviteError)), '27m: a failed write leaves history disabled and shows a truthful error');
-    await f.quick.dismissInvite();
-    assert(f.state.local.historyInviteDismissed === undefined && f.showInvite() && /Не удалось запомнить выбор/.test(ru(f.st().inviteError)), '27n: a failed dismissal write keeps the invitation and says so');
-    const g = await mountQuick({}, { failGet: true });
-    assert(g.showInvite() && !g.showList() && g.st().ready === true, '27o: an unreadable preference means disabled (the invitation is shown, no list)');
-
-    const h = await mountQuick({ historyEnabled: true });
-    assert(h.showList() && !h.showInvite() && h.st().mounted === true, '27p: with history enabled the existing compact list is shown');
-    const h2 = await mountQuick({ historyEnabled: true, historyInviteDismissed: true });
-    assert(h2.showList() && !h2.showInvite(), '27q: a stored dismissal does not hide the list once history is enabled');
-
-    const p = await mountQuick({ historyInviteDismissed: true });
-    assert(!p.showMain() && p.st().mounted === false, '27r: start state - disabled and dismissed (header only)');
-    await p.chrome.storage.local.set({ historyEnabled: true }); // changed elsewhere (full page)
-    assert(p.showList() && p.st().mounted === true, '27s: enabling history elsewhere shows the list in the open popup');
-    const m1 = p.st().mount;
-    await p.chrome.storage.local.set({ historyEnabled: false });
-    assert(!p.showList() && !p.showMain() && p.st().mounted === false && p.st().mount === m1 + 1 && p.quick.isActive(m1) === false, '27t: disabling history elsewhere hides the list again (dismissal respected) and supersedes its mount');
-    await p.chrome.storage.local.set({ historyInviteDismissed: false });
-    assert(p.showInvite() && p.showMain(), '27u: clearing the dismissal elsewhere brings the invitation back');
-    assert(!p.state.local.notifySuccess && p.state.local.historyEnabled === false, '27v: none of this touched the notification preference');
-    await p.chrome.storage.local.set({ otherKey: 1 });
-    assert(p.showInvite() && p.st().mount === m1 + 1, '27v2: an unrelated storage change does not touch the view');
-
-    const quickSrc = read('ui/src/core/quick.js').replace(/\/\/.*$/gm, '');
-    assert(!/notifySuccess|FEEDBACK_CLEAR|FEEDBACK_MARK_SEEN|HISTORY_CLEAR|downloads|notifications\./.test(quickSrc), '27w: the popup logic never touches notifications, the error badge, the tracker or the history records');
-    assert(/data-popup="quick"/.test(read('ui/src/components/app/quick-app.tsx')) && /ResultsList[\s\S]*key=\{s\.mount\}/.test(read('ui/src/components/app/quick-app.tsx')) && /<ResultsList compact=\{false\}/.test(read('ui/src/components/app/full-app.tsx')), '27y: the full page keeps its own results list, independent of the popup preference');
+    const {createDownloads}=await core('downloads.js');
+    const listeners=[];let replies={success:true,jobs:[{id:'job-test',filename:'file.png',state:'receiving',received:5,total:null}],paused:false},fail=false,calls=[];
+    const chrome={runtime:{onMessage:{addListener:cb=>listeners.push(cb),removeListener:cb=>listeners.splice(listeners.indexOf(cb),1)},sendMessage:async m=>{calls.push(m);if(fail)throw Error('FAILED');return replies;}}};
+    const c=createDownloads({chrome});await c.load();
+    assert(c.store.getState().jobs.length===1 && c.store.getState().jobs[0].total===null,'manager-ui-1: operational jobs visible without a statistics preference');
+    replies={success:true,jobs:[],paused:true};listeners[0]({action:'DOWNLOADS_CHANGED'});await settle();
+    assert(c.store.getState().paused && !c.store.getState().jobs.length,'manager-ui-2: worker events refresh queue');
+    await c.command('retry','job-test');assert(calls.some(m=>m.action==='DOWNLOADS_COMMAND' && m.command==='retry' && m.id==='job-test'),'manager-ui-3: retry sends exactly the selected job');
+    fail=true;await c.command('pause');assert(c.store.getState().error==='downloads.commandFailed' && !c.store.getState().busy,'manager-ui-4: a refused action is truthful and releases buttons');
+    fail=false;listeners[0]({action:'DOWNLOADS_CHANGED'});await settle();
+    assert(c.store.getState().error==='downloads.commandFailed','manager-ui-4a: automatic progress does not erase a refused action');
+    await c.command('pause');assert(!c.store.getState().error,'manager-ui-4b: the next successful explicit action clears the error');
+    c.dispose();assert(!listeners.length,'manager-ui-5: closed pages remove subscriptions');
+    await c.load();assert(!listeners.length,'manager-ui-6: disposed controller is inert');
   }
 
-  // =================================================================================================
-  console.log('\n--- 28. Compact popup races: stale preference read, superseded list mount ---');
-  {
-    const sessionWithUnread = () => [rec({ filename: 'older-1.jpg' }), unnamedFailure()];
-    const mount = async (local, over = {}) => {
-      const state = { session: sessionWithUnread(), history: [], local: { ...local }, ...over };
-      const { chrome, calls } = makeChrome(state);
-      const quick = createQuick({ chrome, window: { close() {} } });
-      return { state, calls, quick, chrome, st: () => quick.store.getState() };
-    };
-
-    // 1. an older initial preference response must not overwrite a newer event
-    const g1 = deferred();
-    const a = await mount({ historyEnabled: true }, { getGate: g1.promise });
-    await settle();
-    assert(a.st().ready === false && a.st().mounted === false, '28a: until the initial read resolves nothing is shown');
-    await a.chrome.storage.local.set({ historyEnabled: false }); // real storage.onChanged delivery while get() is pending
-    g1.resolve();
-    await settle();
-    assert(a.state.local.historyEnabled === false && a.st().enabled === false && a.st().mounted === false && !a.calls.messages.includes('FEEDBACK_LIST'), '28b: the stale "enabled" response does not show the list (persisted false stays authoritative, list never requested)');
-    assert(a.st().ready && !a.st().enabled && !a.st().dismissed, '28c: the view matches the persisted preference (invitation shown)');
-
-    const g2 = deferred();
-    const b = await mount({ historyEnabled: true, historyInviteDismissed: true }, { getGate: g2.promise });
-    await b.chrome.storage.local.set({ historyEnabled: false });
-    g2.resolve();
-    await settle();
-    assert(b.st().enabled === false && b.st().dismissed === true && b.st().mounted === false, '28d: an unaffected key (dismissal) is still initialised from the initial read while the changed key keeps the newer value');
-
-    const g3 = deferred();
-    const c = await mount({}, { getGate: g3.promise });
-    await c.chrome.storage.local.set({ historyInviteDismissed: true });
-    g3.resolve();
-    await settle();
-    assert(c.st().dismissed === true && c.st().enabled === false, '28e: a newer dismissal is not overwritten by the older "not dismissed" response');
-
-    const g4 = deferred();
-    const d = await mount({ historyEnabled: false }, { getGate: g4.promise });
-    await d.chrome.storage.local.set({ historyEnabled: true });
-    g4.resolve();
-    await settle();
-    assert(d.st().enabled === true && d.st().mounted === true, '28f: the opposite order works too: a newer "enabled" event wins over an older "disabled" response');
-
-    const g5 = deferred();
-    const e = await mount({ historyEnabled: true, historyInviteDismissed: false }, { getGate: g5.promise });
-    g5.resolve();
-    await settle();
-    assert(e.st().enabled === true && e.st().dismissed === false && e.st().mounted === true, '28g: without events the initial response initialises both keys as before');
-
-    // 2. a superseded list mount must not acknowledge unseen failures
-    const l1 = deferred();
-    const f = await mount({ historyEnabled: true }, { listGates: [l1.promise] });
-    await f.quick.ready;
-    const mountF = f.st().mount;
-    const listF = createFeedbackList({ chrome: f.chrome, FB }, { limit: 5, isActive: () => f.quick.isActive(mountF) });
-    const startedF = listF.start();
-    await settle();
-    assert(f.calls.messages.includes('FEEDBACK_LIST') && !f.calls.messages.includes('FEEDBACK_MARK_SEEN'), '28h: setup - the list request is pending and nothing was acknowledged');
-    await f.chrome.storage.local.set({ historyEnabled: false });
-    assert(f.st().mounted === false && f.quick.isActive(mountF) === false, '28i: disabling supersedes the mount while the response is pending');
-    l1.resolve();
-    const resF = await startedF;
-    await settle();
-    assert(resF.cancelled === true && !f.calls.messages.includes('FEEDBACK_MARK_SEEN') && !f.calls.messages.includes('FEEDBACK_CLEAR'), '28j: the late response of the cancelled list does not acknowledge the unread failure');
-    assert(listF.store.getState().status === 'loading' && listF.store.getState().records.length === 0, '28k: the cancelled list renders nothing');
-
-    const control = await mount({ historyEnabled: true });
-    await control.quick.ready;
-    const ctl = createFeedbackList({ chrome: control.chrome, FB }, { limit: 5, isActive: () => control.quick.isActive(control.st().mount) });
-    await ctl.start();
-    assert(control.calls.messages.filter((m) => m === 'FEEDBACK_MARK_SEEN').length === 1, '28l: control - a visible, current list still acknowledges unseen failures exactly once');
-
-    // 3. re-enabling creates a valid current mount without stale side effects
-    const l2 = deferred();
-    const h = await mount({ historyEnabled: true }, { listGates: [l2.promise] });
-    await h.quick.ready;
-    const m1 = h.st().mount;
-    const stale = createFeedbackList({ chrome: h.chrome, FB }, { limit: 5, isActive: () => h.quick.isActive(m1) });
-    const staleStart = stale.start(); // its request waits on the gate
-    await settle();
-    await h.chrome.storage.local.set({ historyEnabled: false });
-    h.state.session.push(rec({ filename: 'newer-after-reenable.jpg' }));
-    await h.chrome.storage.local.set({ historyEnabled: true }); // a fresh mount; its own request is answered at once
-    const m2 = h.st().mount;
-    assert(m2 > m1 && h.quick.isActive(m1) === false && h.quick.isActive(m2) === true, '28m: the re-enabled mount is a new current mount; the old one stays superseded');
-    const fresh = createFeedbackList({ chrome: h.chrome, FB }, { limit: 5, isActive: () => h.quick.isActive(m2) });
-    await fresh.start();
-    const seenAfterCurrent = h.calls.messages.filter((m) => m === 'FEEDBACK_MARK_SEEN').length;
-    assert(fresh.store.getState().records.length === 3, '28n: the re-enabled mount rendered its own list');
-    assert(fresh.store.getState().records[0].filename === 'newer-after-reenable.jpg' && seenAfterCurrent === 1, '28o: the current mount shows its newest data and acknowledged the failure once');
-    l2.resolve(); // the stale first request finally answers
-    await staleStart;
-    await settle();
-    assert(h.calls.messages.filter((m) => m === 'FEEDBACK_MARK_SEEN').length === 1 && stale.store.getState().records.length === 0, '28p: the stale response adds no second acknowledgement and does not render');
-
-    // 4. the full page keeps acknowledging as before (no isActive supplied)
-    const stateFull = { session: sessionWithUnread(), history: [], local: {} };
-    const fullCalls = makeChrome(stateFull);
-    const fullList = createFeedbackList({ chrome: fullCalls.chrome, FB }, {});
-    await fullList.start();
-    assert(fullCalls.calls.messages.includes('FEEDBACK_MARK_SEEN'), '28q: the full page (no lifecycle guard) still acknowledges unseen failures when its list is viewed');
-  }
-
-  // =================================================================================================
   console.log('\n--- 29. Full page: failures are acknowledged only when the History panel is displayed ---');
   {
     const mountFull = async (visible, over = {}) => {

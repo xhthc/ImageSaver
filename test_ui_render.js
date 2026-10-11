@@ -68,6 +68,10 @@ function makeChrome(state) {
       sendMessage: async (msg) => {
         calls.messages.push(msg.action);
         if (state.failMessages) throw new Error('MESSAGING_DOWN');
+        if(msg.action === 'DOWNLOADS_LIST' || msg.action === 'DOWNLOADS_COMMAND') {
+          if(msg.command==='remove' && state.jobs){const op=state.jobs.find(j=>j.id===msg.id)?.op;state.jobs=state.jobs.filter(j=>j.id!==msg.id);state.session=state.session.filter(r=>r.id!==op);}
+          return {success:true,jobs:state.jobs || state.session.map(r=>({id:r.id,op:r.id,managed:false,filename:r.filename || 'media',state:r.state==='saving'?'receiving':r.state==='interrupted'?'failed':r.state,received:1024,total:r.state==='saving'?null:2048,speed:0,error:'',ready:false})).reverse(),paused:false};
+        }
         if (msg.action === 'FEEDBACK_LIST') {
           const snapshot = state.session.slice().reverse();
           const gate = state.listGates && state.listGates.shift();
@@ -207,111 +211,50 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
   const sessionRecords = (n = 7) => Array.from({ length: n }, (_, i) => rec({ filename: `file-number-${i + 1}.jpg` }));
 
   // =================================================================================================
-  console.log('\n--- R1. Compact popup: structure, rows, expansion, gear ---');
+  console.log('\n--- R1. Native-style download manager popup independent of statistics ---');
   {
-    const session = [...sessionRecords(7), unnamedFailure()];
-    const state = { session, history: [], local: { historyEnabled: true } };
-    const p = await page('quick', state);
-    assert(p.q('h1').textContent === 'MediaLatch' && p.q('[data-popup="quick"]') && p.text().includes('Последние сохранения'), 'R1a: the popup has an MediaLatch heading and the recent-results subtitle');
-    assert(p.rows().length === 5, 'R1b: exactly five recent results are rendered');
-    const names = p.qa('[data-slot="name"]').map((n) => n.textContent);
-    assert(names[0] === 'file-number-7.jpg' && names.length === 4, 'R1c: file names are the main row text (newest first); an unnamed failure keeps a summary row');
-    assert(/Не удалось определить медиа — example\.com/.test(p.q('[data-slot="legacy"]').textContent), 'R1d: an unnamed failure row shows its title and site');
-    const gear = p.q('#openSettingsButton');
-    assert(gear && gear.tagName === 'BUTTON' && gear.getAttribute('aria-label') === 'Настройки' && gear.getAttribute('type') === 'button' && p.qa('svg', gear).every((s) => s.getAttribute('aria-hidden') === 'true'), 'R1e: the gear is a real button named "Настройки" with a decorative icon');
-    assert(!p.byText('button', /Очистить/) && !p.q('input[type="checkbox"]') && !p.q('[role="switch"]'), 'R1f: the compact popup has no clear action and no preference control');
-    const trigger = p.q('[data-slot="result-item"] button');
-    assert(trigger.getAttribute('aria-expanded') === 'false' && /Не удалось определить медиа — example\.com/.test(trigger.getAttribute('aria-label')) && /file-number-7\.jpg/.test(p.qa('[data-slot="result-item"] button')[1].getAttribute('aria-label')), 'R1g: a row is a disclosure button, collapsed, with the full text as its accessible name');
-    await p.click(trigger);
-    assert(trigger.getAttribute('aria-expanded') === 'true' && p.q('[data-slot="result-details"]') && /Ресурс: example\.com/.test(p.q('[data-slot="result-details"]').textContent), 'R1h: activating a row expands its details');
-    const open = p.byText('button', /Открыть на странице истории/);
-    assert(open, 'R1i: an expanded result offers a direct link to its details on the full page');
-    await p.click(open);
-    assert(p.calls.tabsCreate[p.calls.tabsCreate.length - 1] === `chrome-extension://testid/popup/popup.html?op=${encodeURIComponent(session[session.length - 1].id === 'x' ? '' : state.session.slice().reverse()[0].id)}#history`, 'R1j: the details action deep-links to that operation');
-    await p.click(trigger);
-    assert(trigger.getAttribute('aria-expanded') === 'false' && !p.q('[data-slot="result-details"]'), 'R1k: activating the row again collapses it');
-    await p.click(gear);
-    assert(p.calls.tabsCreate[p.calls.tabsCreate.length - 1] === 'chrome-extension://testid/popup/popup.html#saving' && p.closed.length === 1, 'R1l: the gear opens the Saving settings and closes the popup');
-    state.failTabs = true;
-    await p.click(gear);
-    assert(p.closed.length === 1, 'R1m: a failed tab creation keeps the popup open');
-    assert(!p.q('[dangerouslysetinnerhtml]') && p.qa('script').length === 0, 'R1n: no injected markup');
-    await p.unmount();
+    const jobs=[{id:'job-known',filename:'photo.png',state:'receiving',received:1024,total:4096,speed:1024},{id:'job-unknown',filename:'movie.mp4',state:'receiving',received:1024,total:null,speed:512},{id:'job-local',filename:'ready.png',state:'failed',received:2048,total:2048,ready:true,error:'EXPORT_FAILED'}];
+    for(const enabled of [true,false]) {
+      const p=await page('quick',{session:[],history:[],jobs,local:{historyEnabled:enabled}});
+      assert(p.q('h1').textContent==='MediaLatch' && p.qa('[data-job]').length===3,'manager-render-1: jobs show with either statistics setting');
+      assert(!p.q('#historyInvite') && !p.q('#enableHistoryButton'),'manager-render-2: no statistics gate or invitation');
+      const bars=p.qa('progress');assert(bars.length===2 && bars[0].getAttribute('max')==='4096' && bars[0].getAttribute('value')==='1024' && !bars[1].hasAttribute('value'),'manager-render-3: measured total and unknown total remain distinct');
+      assert(p.text().includes('размер неизвестен') && p.text().includes('Готовый файл сохранён для повтора'),'manager-render-4: unknown sizes and prepared-file retry are explicit');
+      assert(p.q('button[aria-label="Отменить загрузку"]') && p.q('button[aria-label="Сохранить готовый файл снова"]'),'manager-render-5: cancel and local-file retry are accessible');
+      await p.click(p.q('#openSettingsButton'));assert(p.calls.tabsCreate[0].endsWith('#saving') && p.closed.length===1,'manager-render-6: settings navigation closes only after opening');
+      await p.unmount();
+    }
+    const p=await page('quick',{session:[],history:[],local:{},failMessages:true});assert(p.q('[role="alert"]')?.textContent.includes('Не удалось загрузить список'),'manager-render-7: manager loading failure is visible');await p.unmount();
+    const preparation=await page('quick',{session:[],history:[],local:{},jobs:[{id:'op-preparation',managed:false,filename:'',state:'converting',received:0,total:null}]});
+    assert(preparation.text().includes('Обработка медиа') && preparation.text().includes('Выбранное медиа') && preparation.text().includes('после подготовки'),'manager-render-8: processing is visible without invented byte progress or controls');
+    assert(!preparation.q('button[aria-label="Отменить загрузку"]') && !preparation.q('progress').hasAttribute('value'),'manager-render-9: preparation does not promise transport cancellation');await preparation.unmount();
   }
 
-  // =================================================================================================
-  console.log('\n--- R2. Compact popup: loading, history invitation, empty and error states ---');
-  {
-    let release;
-    const gate = new Promise((r) => { release = r; });
-    const state = { session: sessionRecords(3), history: [], local: { historyEnabled: true }, getGate: gate };
-    const { chrome } = makeChrome(state);
-    const dom = new JSDOM('<!doctype html><body><div id="root"></div></body>', { url: 'chrome-extension://testid/popup/quick.html', runScripts: 'outside-only', pretendToBeVisual: true });
-    dom.window.eval(libFeedback); dom.window.chrome = chrome; dom.window.MessageChannel = MessageChannel; dom.window.eval(bundle); dom.window.IS_REACT_ACT_ENVIRONMENT = true;
-    const U = dom.window.__ui;
-    const quick = U.createQuick({ chrome, window: dom.window });
-    const language = U.createLanguage({ chrome, navigator: dom.window.navigator });
-    const root = U.createRoot(dom.window.document.getElementById('root'));
-    await U.act(async () => { root.render(U.React.createElement(U.I18nProvider, { language }, U.React.createElement(U.QuickApp, { quick }))); });
-    assert(dom.window.document.querySelector('h1') && !dom.window.document.querySelector('main') && !dom.window.document.querySelector('[data-slot="result-item"]'), 'R2a: until the preferences were read only the header is shown (no flash of the wrong view)');
-    release();
-    await quick.ready;
-    await U.act(async () => { await sleep(10); });
-    assert(dom.window.document.querySelector('main#quickMain') && dom.window.document.querySelectorAll('[data-slot="result-item"]').length === 3, 'R2b: after the read the list appears');
-    await U.act(async () => { root.unmount(); });
-  }
-  {
-    const state = { session: sessionRecords(7), history: [], local: { notifySuccess: false } };
-    const p = await page('quick', state);
-    const invite = p.q('#historyInvite');
-    assert(invite && p.rows().length === 0 && !p.text().includes('Последние сохранения') && !state.session.length === false && !p.calls.messages.includes('FEEDBACK_LIST'), 'R2c: history off -> the invitation is shown, no list, subtitle or request');
-    const enable = p.q('#enableHistoryButton');
-    const dismiss = p.q('#dismissHistoryInviteButton');
-    assert(enable.getAttribute('aria-label') === 'Вести статистику' && dismiss.getAttribute('aria-label') === 'Скрыть предложение вести статистику' && enable.type === 'button' && dismiss.type === 'button', 'R2d: the invitation buttons are real buttons with accessible names');
-    await p.click(dismiss);
-    assert(JSON.stringify(p.calls.localSets) === JSON.stringify([{ historyInviteDismissed: true }]) && !p.q('#historyInvite') && !p.q('main') && p.q('[data-popup="quick"]').getAttribute('data-empty') === 'true' && p.q('#openSettingsButton'), 'R2e: dismissing writes only the dismissal; only the header and gear remain');
-    await p.unmount();
-    const p2 = await page('quick', { session: sessionRecords(7), history: [], local: { historyInviteDismissed: true } });
-    assert(!p2.q('main') && p2.q('[data-popup="quick"]').getAttribute('data-empty') === 'true', 'R2f: a stored dismissal survives reopening the popup');
-    await p2.unmount();
-    const p3 = await page('quick', { session: sessionRecords(7), history: [], local: {} });
-    await p3.click(p3.q('#enableHistoryButton'));
-    await p3.settle(8);
-    assert(JSON.stringify(p3.calls.localSets) === JSON.stringify([{ historyEnabled: true }]) && !p3.q('#historyInvite') && p3.rows().length === 5 && p3.text().includes('Последние сохранения'), 'R2g: enabling history writes only historyEnabled and shows the list of five');
-    await p3.unmount();
-    const p4 = await page('quick', { session: [], history: [], local: {}, failSet: true });
-    await p4.click(p4.q('#enableHistoryButton'));
-    assert(p4.q('#historyInvite') && p4.q('[role="alert"]') && /Не удалось включить статистику/.test(p4.q('[role="alert"]').textContent) && p4.rows().length === 0, 'R2h: a failed write keeps the invitation and shows a truthful alert');
-    await p4.click(p4.q('#dismissHistoryInviteButton'));
-    assert(/Не удалось запомнить выбор/.test(p4.q('[role="alert"]').textContent), 'R2i: a failed dismissal write is reported');
-    await p4.unmount();
-  }
-  {
-    const p = await page('quick', { session: [], history: [], local: { historyEnabled: true } });
-    assert(/Пока нет результатов сохранения\./.test(p.q('[data-slot="empty"]').textContent) && p.rows().length === 0, 'R2j: an empty list says so');
-    await p.unmount();
-    const pe = await page('quick', { session: sessionRecords(2), history: [], local: { historyEnabled: true }, failMessages: true });
-    assert(/Не удалось загрузить результаты сохранения\./.test(pe.q('[role="alert"]').textContent) && pe.rows().length === 0, 'R2k: a messaging failure is shown as an alert, the page keeps working');
-    await pe.unmount();
-    const live = { session: sessionRecords(2), history: [], local: { historyEnabled: true } };
-    const pl = await page('quick', live);
-    assert(pl.rows().length === 2, 'R2l: setup - two results');
-    await pl.chrome.storage.local.set({ historyEnabled: false });
-    await pl.settle(6);
-    assert(pl.rows().length === 0 && pl.q('#historyInvite') && !pl.q('[data-slot="results-section"]'), 'R2m: disabling history elsewhere replaces the list with the invitation in the open popup');
-    await pl.chrome.storage.local.set({ historyEnabled: true });
-    await pl.settle(8);
-    assert(pl.rows().length === 2 && !pl.q('#historyInvite'), 'R2n: enabling history elsewhere shows the list again');
-    await pl.unmount();
-  }
-
-  // =================================================================================================
   console.log('\n--- R3. Unread failures, acknowledgement and states ---');
+  {
+    const saved=rec({filename:'one-file.mp4'}),failed=unnamedFailure();
+    const state={session:[saved,failed],history:[],local:{},jobs:[{id:'job-one',op:saved.id,filename:saved.filename,state:'complete',received:2048,total:2048},{id:'job-failed',op:failed.id,filename:'',state:'failed',received:0,error:'NO_MEDIA'}]};
+    const p=await page('full',state,{hash:'#downloads'});
+    assert(p.qa('[data-job]').length===2 && p.rows().length===2 && !p.text().includes('Результаты сохранения') && !p.q('[data-slot="results"]'),'manager-unified-1: one card per job, no separate results list or heading');
+    const card=p.q('[data-job="job-one"]');
+    assert(card.textContent.includes('2.0 KB / 2.0 KB') && card.querySelector('[data-slot="name"]').textContent===saved.filename,'manager-unified-2: byte progress and result summary share one card');
+    assert(!card.querySelector('button button'),'manager-unified-3: action buttons are siblings of the details trigger');
+    await p.click(card.querySelector('button[aria-expanded]'));
+    assert(card.querySelector('[data-slot="result-details"]') && card.querySelector('[data-slot="filename-line"]'),'manager-unified-4: expanding the download retains complete result details');
+    await p.click(p.q('[data-job="job-failed"] button[aria-expanded]'));
+    assert(p.q('[data-job="job-failed"] [data-slot="report"]'),'manager-unified-5: failed download retains the copyable report');
+    await p.click(card.querySelector('button[aria-label="Удалить запись и временный файл"]'));
+    assert(!p.q('[data-job="job-one"]') && !state.session.some(r=>r.id===saved.id) && state.session.some(r=>r.id===failed.id),'manager-unified-6: removing a card clears only its diagnostic record, without resurrecting a duplicate');
+    await p.unmount();
+    const deep=await page('full',{session:[saved],history:[],local:{},jobs:[]},{search:`?op=${saved.id}`});
+    assert(deep.rows().length===1 && deep.rows()[0].querySelector('button[aria-expanded="true"]') && !deep.q('button[aria-label="Удалить запись и временный файл"]'),'manager-unified-7: an old notification deep link still opens retained details without a fabricated queue action');
+    await deep.unmount();
+  }
   {
     const fail = unnamedFailure();
     const interrupted = rec({ state: 'interrupted', filename: 'part.webm', filenameKind: 'intended', output: { type: 'video', ext: '.webm', evidence: 'filename_hint' }, failure: failure('download', 'download_interrupted', { downloadError: 'NETWORK_FAILED' }) });
     const state = { session: [rec(), fail, interrupted, rec({ state: 'cancelled', output: {}, failure: failure('save', 'cancelled') }), rec({ state: 'saving', filename: 'now.jpg', filenameKind: 'intended', output: {} })], history: [], local: { historyEnabled: true } };
-    const p = await page('quick', state);
+    const p = await page('full', state, {hash:'#downloads'});
     const kinds = p.rows().map((r) => r.getAttribute('data-state-kind'));
     assert(kinds.join() === 'saving,cancelled,interrupted,failed,complete' || kinds.length === 5, 'R3a: every state has its row');
     assert(p.rows().filter((r) => r.getAttribute('data-unread') === 'true').length === 2 && p.qa('[data-slot="result-item"] .bg-destructive, [data-slot="badge"]').length >= 2, 'R3b: the two unread failures are marked "новое"');
@@ -334,7 +277,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     let denyClipboard = false;
     const clipboard = { writeText: async (t) => { if (denyClipboard) throw new Error('DENIED'); texts.push(t); } };
     const state = { session: [unnamedFailure()], history: [], local: { historyEnabled: true } };
-    const p = await page('quick', state, { clipboard });
+    const p = await page('full', state, {hash:'#downloads', clipboard});
     await p.click(p.rows()[0].querySelector('button'));
     const notes = p.q('textarea[aria-label="Что вы делали (необязательно)"]');
     const preview = p.q('textarea[aria-label="Предпросмотр отчёта"]');
@@ -525,12 +468,12 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
   // =================================================================================================
   console.log('\n--- R10. UX-06: an open page follows the tracker (completion, failure, cancellation) ---');
   {
-    const emit = (state, area = 'session') => { for (const cb of (state.changeListeners || []).slice()) cb({ imageSaverFeedbackV1: { newValue: {} } }, area); };
+    const emit = (state, area = 'session') => { for (const cb of (state.changeListeners || []).slice()) cb({ imageSaverFeedbackV1: { newValue: {} } }, area); for(const cb of (state.msgListeners || []).slice())cb({action:'DOWNLOADS_CHANGED'}); };
     const state = { session: [rec({ filename: 'first.jpg' })], history: [], local: { historyEnabled: true } };
-    const p = await page('quick', state);
+    const p = await page('full', state, {hash:'#downloads'});
     const rows = () => p.rows().map((r) => ({ name: (r.querySelector('[data-slot="name"]') || r.querySelector('[data-slot="legacy"]')).textContent, kind: r.getAttribute('data-state-kind'), unread: r.getAttribute('data-unread') }));
     assert(rows().length === 1 && rows()[0].name === 'first.jpg', 'R10a: the popup opens with one result');
-    assert((state.changeListeners || []).length === 4, 'R10b: the popup holds preferences, language, theme and results subscriptions');
+    assert((state.changeListeners || []).length >= 3, 'R10b: the full page retains independent language/theme/results subscriptions');
 
     state.session.push(rec({ state: 'saving', filename: 'moving.jpg', filenameKind: 'intended', output: {} }));
     emit(state);
@@ -551,18 +494,18 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p.settle(8);
     assert(rows()[0].kind === 'cancelled' && /Сохранение отменено/.test(p.rows()[0].textContent), 'R10f: a cancellation appears');
     for (let i = 0; i < 4; i++) { state.session.push(rec({ filename: 'bulk-' + i + '.jpg' })); emit(state); await p.settle(4); }
-    assert(rows().length === 5 && rows()[0].name === 'bulk-3.jpg', 'R10g: the compact list stays at five newest results');
+    assert(rows().length === 8 && rows()[0].name === 'bulk-3.jpg', 'R10g: the full Downloads page retains all eight recent results');
     const trigger = p.rows()[0].querySelector('button');
     await p.click(trigger);
     emit(state);
     await p.settle(8);
-    assert(p.rows()[0].querySelector('button').getAttribute('aria-expanded') === 'true' && p.rows().length === 5, 'R10h: a refresh does not collapse an opened row or duplicate rows');
+    assert(p.rows()[0].querySelector('button').getAttribute('aria-expanded') === 'true' && p.rows().length === 8, 'R10h: a refresh does not collapse an opened row or duplicate rows');
     state.session.length = 0;
     emit(state);
     await p.settle(8);
-    assert(p.rows().length === 0 && /Пока нет результатов сохранения\./.test(p.q('[data-slot="empty"]').textContent), 'R10i: a clear elsewhere empties the open popup');
+    assert(p.rows().length === 0 && /Загрузок пока нет\./.test(p.q('[data-slot="empty"]').textContent), 'R10i: a clear elsewhere empties the open popup');
     await p.unmount();
-    assert((state.changeListeners || []).length === 2, 'R10j: closing the popup removes the results subscription (the preferences and language controllers of the page remain until the page is gone)');
+    assert((state.changeListeners || []).length === 1, 'R10j: closing the page removes results/statistics/theme subscriptions; only the page-lifetime language controller remains');
     const requests = p.calls.messages.length;
     state.session.push(rec());
     emit(state);
@@ -577,7 +520,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     fstate.history.push(rec({ state: 'failed', output: {}, failure: failure('download', 'network') }));
     fstate.session.push(unnamedFailure());
     for (const cb of (fstate.changeListeners || []).slice()) { cb({ imageSaverHistoryV1: { newValue: {} } }, 'local'); cb({ imageSaverFeedbackV1: { newValue: {} } }, 'session'); }
-    for (const cb of fstate.msgListeners || []) cb({action:'STATISTICS_CHANGED'});
+    for (const cb of fstate.msgListeners || []) { cb({action:'STATISTICS_CHANGED'}); cb({action:'DOWNLOADS_CHANGED'}); }
     await f.settle(10);
     assert(val('total') === '2' && val('failed') === '1' && !f.q('[data-slot="history"]') && f.qa('[data-slot="results-section"] [data-slot="result-item"]').length === 2, 'R10m: the open full page shows the new failure in the results and in the history, and updates the statistics');
     await f.unmount();
@@ -589,7 +532,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
   {
     // Case 1: Activation of disclosure button toggling aria-expanded
     const singleRec = rec({ filename: 'keyboard-test.jpg', site: 'example.com' });
-    const pQuick = await page('quick', { session: [singleRec], history: [], local: { historyEnabled: true } });
+    const pQuick = await page('full', { session: [singleRec], history: [], local: { historyEnabled: true } }, {hash:'#downloads'});
     const trigger = pQuick.q('[data-slot="result-item"] button');
     assert(trigger.getAttribute('aria-expanded') === 'false', 'R11a: row disclosure button starts collapsed');
 
@@ -709,7 +652,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(p.calls.releaseRequests.length === 2, 'R12h: manual button bypasses the cache');
     fail = true; await p.click(p.q('#checkUpdatesButton'));
     assert(/ограничил запросы/.test(p.q('[data-slot="update-status"]').textContent) && /Последняя успешная проверка/.test(p.text()) && !p.q('#checkUpdatesButton').disabled, 'R12i: rate limit is visible; previous success stays dated and retry remains available');
-    assert(p.calls.messages.every((m) => !/DOWNLOAD|SAVE_MEDIA/.test(m)), 'R12j: update flow never sends a media-download command');
+    assert(p.calls.messages.every((m) => m!=='DOWNLOADS_COMMAND' && !/SAVE_MEDIA/.test(m)), 'R12j: update flow never sends a media-download command');
     await p.unmount();
     const empty = await page('full', { session: [], history: [], local: {} }, { hash: '#updates' });
     assert(/пока нет/.test(empty.q('[data-slot="update-status"]').textContent) && empty.calls.releaseRequests.length === 1, 'R12k: Updates deep link handles an empty published-release list');
@@ -747,8 +690,8 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(full.q('#subfolderInput').value === 'Unsaved/Edit' && full.q('#folderPreviewPath').textContent === 'Downloads/Unsaved/Edit/photo.jpg' && JSON.stringify(full.calls.localSets.slice(setsBefore)) === JSON.stringify([{ uiLanguage: 'en' }]), 'R13f: the unsaved folder edit is kept and only uiLanguage is written');
     assert(/Save settings/.test(full.q('#saveButton').textContent) && /“MediaLatch: Save media”/.test(full.text()) && full.q('label[for="languageSelect"]').textContent === 'Language', 'R13g: buttons, labels and the fixed menu title follow');
     await quick.settle(6);
-    assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && quick.doc.documentElement.lang === 'en' && /Saved/.test(quick.rows()[1].textContent) && /new/.test(quick.rows()[0].textContent), 'R13h: the open compact popup follows the change made on the full page (rows and accessible names)');
-    assert(quick.q('[data-slot="name"]').textContent === 'clip <img src=x onerror=1> & co.mp4' && quick.doc.querySelectorAll('img').length === 0, 'R13i: an original file name is shown as text in every language, never as markup');
+    assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && quick.doc.documentElement.lang === 'en' && /Saved/.test(quick.qa('[data-job]')[1].textContent), 'R13h: the open compact popup follows the change made on the full page (rows and accessible names)');
+    assert(quick.qa('[data-job]')[0].textContent.includes('clip <img src=x onerror=1> & co.mp4') && quick.doc.querySelectorAll('img').length === 0, 'R13i: an original file name is shown as text in every language, never as markup');
     assert(await chooseLanguage(full, 'Русский') && tabNames(full).startsWith('Статистика') && full.q('#subfolderInput').value === 'Unsaved/Edit', 'R13j: en -> ru keeps the edit');
     assert(await chooseLanguage(full, 'English') && tabNames(full).startsWith('Statistics') && full.q('#subfolderInput').value === 'Unsaved/Edit' && state.local.uiLanguage === 'en' && state.local.subfolder === undefined, 'R13k: ru -> en again; the folder edit is still unsaved');
     await full.mousedown(full.tabs()[0]);
@@ -775,7 +718,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(tabNames(unreadable).startsWith('Статистика') && /Не удалось прочитать сохранённый язык/.test(unreadable.q('[data-slot="language-status"]').textContent), 'R13p: an unreadable preference shows the browser language with a message');
     await unreadable.unmount();
     const enBrowser = await page('quick', { session: [], history: [], local: {}, uiLanguage: 'en-US' });
-    assert(enBrowser.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && /Record statistics/.test(enBrowser.q('#enableHistoryButton').textContent), 'R13q: an English browser with no saved choice gets the English compact popup');
+    assert(enBrowser.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && /Downloads/.test(enBrowser.text()) && !enBrowser.q('#enableHistoryButton'), 'R13q: an English browser with no saved choice gets the English compact popup');
     await enBrowser.unmount();
     const invalid = await page('quick', { session: [], history: [], local: { uiLanguage: 'de' }, uiLanguage: 'ru-RU' });
     assert(invalid.q('#openSettingsButton').getAttribute('aria-label') === 'Настройки' && invalid.calls.localSets.length === 0, 'R13r: an invalid saved value falls back to the browser language and is not rewritten');

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — themes, Statistics and download manager
+
+- Add persistent Blue, Dark and Light themes across extension pages.
+- Replace retained-history totals with configurable, clearable aggregate Statistics; import only legacy records still available locally.
+- Stage and validate complete files in private disk-backed browser storage before exporting prepared bytes. Show stages, received/total, speed and approximate time when measurable, queue pause, cancellation and explicit retry.
+- Merge progress, controls and result/report details into one download card; fix long Russian tab labels and keyboard visibility on narrow windows.
+- Preserve pending statistics and refuse unpersisted record removal; keep signed source addresses out of public snapshots and reports.
+
+User-confirmed ordinary Helium checks and isolated native transfer/UI fixtures passed. Native crash/restart, quota stress and broad codec/audio acceptance remain pending. These changes are not in the packaged v2.0.0.28 preview.
+
 ## 2.0.0.28 — Sankaku originals and bounded metadata
 
 - Resolve selected Sankaku preview/sample media to the same post's declared original, preserving its exact signed URL and real format instead of saving an AVIF thumbnail. Refuse ambiguous or inaccessible originals.

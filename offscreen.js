@@ -9,6 +9,25 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
       return false;
     }
 
+    if (typeof message.action === 'string' && message.action.startsWith('STAGING_')) {
+      // Only the worker may pass private source addresses or control prepared files; page/content messages are refused.
+      if (sender?.id !== chrome.runtime.id || sender?.tab || (sender?.url && sender.url !== chrome.runtime.getURL('background.js'))) {
+        sendResponse({success:false,error:'UNAUTHORIZED_SENDER'}); return false;
+      }
+      (async () => {
+        const s = getStaging();
+        if(message.action === 'STAGING_PREPARE') return {success:true,...await s.stage(message.job, async p => {
+          await chrome.runtime.sendMessage({action:'STAGING_PROGRESS',id:message.job.id,progress:p});
+        })};
+        if(message.action === 'STAGING_URL') return {success:true,url:await s.fileUrl(message.id,message.mime)};
+        if(message.action === 'STAGING_VERIFY') return {success:true,valid:await s.verify(message.id,message.size,message.mime)};
+        if(message.action === 'STAGING_REMOVE') {await s.remove(message.id);return {success:true};}
+        if(message.action === 'STAGING_ABORT') {await s.abort(message.id,message.attempt);return {success:true};}
+        return {success:false,error:'INVALID_COMMAND'};
+      })().then(sendResponse,e=>sendResponse({success:false,error:e.message,retryAt:e.retryAt}));
+      return true;
+    }
+
     if (message.action === 'FETCH_GELBOORU_BLOB' || message.action === 'FETCH_PROTECTED_BLOB') {
       if (typeof message.url !== 'string' || !message.url.trim()) {
         sendResponse({ success: false, error: 'INVALID_URL: message.url must be a non-empty string' });
@@ -115,6 +134,15 @@ const INACTIVITY_TIMEOUT_MS = typeof __INACTIVITY_TIMEOUT_MS !== 'undefined' ? _
 const TOTAL_BODY_TIMEOUT_MS = typeof __TOTAL_BODY_TIMEOUT_MS !== 'undefined' ? __TOTAL_BODY_TIMEOUT_MS : 600000;
 const DEFAULT_MAX_PROTECTED_BODY_BYTES = typeof __DEFAULT_MAX_PROTECTED_BODY_BYTES !== 'undefined' ? __DEFAULT_MAX_PROTECTED_BODY_BYTES : (50 * 1024 * 1024);
 const MAX_ALLOWED_PROTECTED_BODY_BYTES = typeof __MAX_ALLOWED_PROTECTED_BODY_BYTES !== 'undefined' ? __MAX_ALLOWED_PROTECTED_BODY_BYTES : (50 * 1024 * 1024);
+
+let staging;
+function getStaging() {
+  return staging || (staging = MediaLatchStaging.createStaging({
+    directory:()=>navigator.storage.getDirectory(), estimate:()=>navigator.storage.estimate(),
+    fetch:(...args)=>fetch(...args), sniff:sniffMediaMagicBytes, malformed:isMalformedMediaContainer,
+    origin:location.origin, url:file=>URL.createObjectURL(file), revoke:url=>URL.revokeObjectURL(url)
+  }));
+}
 
 function sleep(ms, signal) {
   if (signal?.aborted) {

@@ -10,6 +10,8 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 
 ## Features
 
+The themes, all-time Statistics and staged download manager below describe the development source. They are not included in the packaged v2.0.0.28 preview above. The user confirmed themes, Statistics and ordinary downloads in Helium, including the corrected Russian tabs and unified download cards; browser-restart, quota and broader media checks remain pending.
+
 - Original discovery through site adapters, image links, `srcset`, media attributes and unambiguous CSS backgrounds or overlays.
 - Native images/GIFs and accessible MP4/WebM videos. Exact declared URLs, including signatures, are preserved.
 - Genuine looping GIFs from confirmed X and Reddit MP4 animations. Animations longer than 30 seconds or exceeding conversion size limits remain source MP4; other conversion failures are reported.
@@ -17,6 +19,7 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 - All distinct declared original media from a Pawchive feed preview, including the original cover. Selecting an individual attachment saves that attachment.
 - A Downloads subfolder, optional site/type organization, save results and copyable redacted error reports.
 - Blue, Dark and Light interface themes, saved across the popup and settings page.
+- Download manager with received/total bytes, speed and approximate remaining time when measurable. Complete files are staged locally before browser export; failed export can retry from retained bytes without another source download.
 - Opt-in local statistics without an entry count or time limit, with recording and clear controls. Available old history is imported once; expired or removed records cannot be reconstructed.
 - Opt-in local Debug journal with filters, copy/export and clear controls: up to 2,000 events, 1 MiB and 24 hours. Full URLs, tokens, page text and local paths are excluded.
 - Supported post-link copying on X, Instagram, TikTok and YouTube Shorts, with optional preview-link hosts.
@@ -55,7 +58,7 @@ The committed `popup/` pages are ready to use. Node/npm are needed only for deve
 
 Right-click an image, video or supported post preview and select **MediaLatch: Save media**. On X, Shift + right-click can open the browser menu when the site handles right-click itself.
 
-The toolbar popup shows recent results. Its full page contains statistics and Downloads, saving preferences, notifications, link settings and release checks. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
+The toolbar popup shows downloads and source-discovery/processing states. Its full page contains statistics and Downloads, saving preferences, notifications, link settings and release checks. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
 
 Choose **Language** at the top of the full page to switch between English and Russian. The saved choice applies immediately to extension pages, notifications and inline buttons. With no saved choice, a Russian browser uses Russian; other browsers use English. The menu title stays **MediaLatch: Save media** in both languages. Renaming preserves existing preferences and save folders.
 
@@ -63,7 +66,9 @@ To discover this preview in **Updates**, set **Update channel** to **Regular and
 
 For troubleshooting, enable recording in **Debug**, reproduce the problem, then copy or export the filtered events. Recording starts when enabled; turning it off preserves the journal until it is cleared or expires. Reports stay local unless you share them.
 
-Paths are relative to the browser's Downloads directory. Arbitrary drive paths and author folders are planned. The browser owns ordinary transfers; eligible `NETWORK_FAILED` downloads get one native resume attempt.
+Paths are relative to the browser's Downloads directory. Arbitrary drive paths and author folders are planned. The extension receives files into private disk storage, validates their type and only then exports a complete local file through the browser. The byte-transfer queue runs one file at a time; Pause queue stops new transfers, not source discovery or an active transfer. Cancel stops an admitted transfer. Unknown totals have no invented percentage or ETA. Processing keeps the existing GIF/HLS resource limits.
+
+Failed exports retain prepared bytes for explicit retry; removing a record deletes its temporary file, not your saved download. Interrupted remote acquisition restarts from the exact source on explicit retry; partial transfer resume is not promised. Recovery reconciles owned browser exports instead of launching duplicate saves. A lost selection or expired source can require a fresh click on the site. Details and reports remain on the full Downloads page.
 
 ## Limits and privacy
 
@@ -81,8 +86,8 @@ Plans below are **not implemented in this preview**. They describe direction, no
 |---|---|---|
 | Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Next compatibility work |
 | Controls and selection | Small universal inline controls and optional post/media multi-selection | Planned |
-| Download manager | Persisted queue, truthful file/batch progress, cancellation, supported pause/resume, paced requests and 429 cooldowns | Planned |
-| Complete-file staging | Disk-backed acquisition/validation before export, bounded memory and restart cleanup; no second remote download at export | Feasibility before implementation |
+| Download manager | Extend the implemented file queue to paced post resolution, batch totals and proven transfer resume | File queue available in development; remaining work planned |
+| Complete-file staging | Disk-backed acquisition/validation before export and local retry; broaden native restart, quota and media checks | Implemented in development; ordinary Helium checks passed, stress checks pending |
 | Batch archives | Selected-post/page batches, ZIP first; 7z only if a practical bounded implementation is justified | Planned |
 | Destination and naming | Proven-author folders starting with X, validated layout presets and an authorized directory picker where supported | Planned; arbitrary drive paths need feasibility checks |
 | Kemono | Declared same-post originals and scoped feed behavior | Deferred until the site is usable |

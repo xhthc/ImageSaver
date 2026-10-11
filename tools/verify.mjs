@@ -35,6 +35,7 @@ const syntaxFiles = new Set([
 if (!only) for (const file of syntaxFiles) run(`syntax-${file.replaceAll('/', '-')}`, ['--check', file]);
 
 const tests = [
+  'test_download_manager.js',
   'test_statistics.js',
   'test_suite.js', 'test_animation_duration_policy.js', 'test_context_target_avatar.js', 'test_debug_journal.js',
   'test_generic_context_boundary.js', 'test_offscreen_resources.js', 'test_reddit_frame_lifecycle.js',

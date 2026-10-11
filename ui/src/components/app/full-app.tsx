@@ -9,7 +9,7 @@ import { DebugPanel } from "@/components/app/debug-panel"
 import { StatisticsPanel } from "@/components/app/statistics-panel"
 import { LanguageSelect } from "@/components/app/language-select"
 import { ThemeSelect } from "@/components/app/theme-select"
-import { ResultsList } from "@/components/app/results-list"
+import { DownloadsPanel } from "@/components/app/downloads-panel"
 import {
   EmbedPanel,
   NotificationsPanel,
@@ -28,10 +28,10 @@ import { getEnv } from "@/lib/env"
 const TAB_ICONS: Record<string, typeof History> = { history: History, downloads: Download, saving: FolderOpen, notifications: Bell, embed: Share2, updates: RefreshCw, debug: Bug }
 
 /**
- * The full extension page. Six sections as an accessible tab list. Deep links: popup.html#<section>,
- * popup.html?section=<section>, popup.html?op=<operation id> (history section, that operation is opened).
+ * The full extension page. Deep links: popup.html#<section>, popup.html?section=<section>,
+ * popup.html?op=<operation id> (Downloads, that operation is opened).
  * All panels stay mounted (hidden when inactive) so unsaved edits survive a tab switch and a language change, and a results
- * list that was rendered while hidden acknowledges its failures only after the History panel is actually shown.
+ * list that was rendered while hidden acknowledges its failures only after Downloads is actually shown.
  */
 export function FullApp({ settings }: { settings: SettingsController }) {
   const env = getEnv()
@@ -78,7 +78,7 @@ export function FullApp({ settings }: { settings: SettingsController }) {
         </header>
 
         <Tabs value={section} onValueChange={select} className="flex-1 gap-4">
-          <TabsList variant="line" aria-label={t("app.sections")} className="h-auto w-full flex-wrap justify-start gap-1 border-b pb-0">
+          <TabsList variant="line" aria-label={t("app.sections")} className="w-full min-w-0 flex-nowrap justify-start gap-1 overflow-x-auto border-b pb-0 group-data-[orientation=horizontal]/tabs:h-auto">
             {SECTIONS.map((name) => {
               const Icon = TAB_ICONS[name]
               return (
@@ -86,7 +86,8 @@ export function FullApp({ settings }: { settings: SettingsController }) {
                   key={name}
                   value={name}
                   data-section={name}
-                  className="h-9 flex-none px-3 data-[state=active]:text-foreground data-[state=active]:after:opacity-100 after:!bottom-[-1px]"
+                  onFocus={(event) => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}
+                  className="h-9 flex-none px-2 data-[state=active]:text-foreground data-[state=active]:after:opacity-100 after:!bottom-[-1px]"
                 >
                   <Icon aria-hidden="true" />
                   {t(`tab.${name}`)}
@@ -103,7 +104,7 @@ export function FullApp({ settings }: { settings: SettingsController }) {
             <h2 className="sr-only">{t("tab.downloads")}</h2>
             <Card data-slot="recent">
               <CardContent>
-                <ResultsList compact={false} focusId={focusId} visible={section === "downloads"} />
+                <DownloadsPanel full focusId={focusId} visible={section === "downloads"} />
               </CardContent>
             </Card>
           </TabsContent>

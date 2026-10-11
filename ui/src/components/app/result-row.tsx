@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import {
   Ban,
   CheckCircle2,
@@ -39,6 +39,9 @@ export function ResultRow({
   dateTime = false,
   showPost = false,
   onOpenFull,
+  children,
+  actions,
+  jobId,
 }: {
   record: any
   env: DetailsEnv
@@ -47,6 +50,9 @@ export function ResultRow({
   dateTime?: boolean
   showPost?: boolean
   onOpenFull?: (record: any) => void
+  children?: ReactNode
+  actions?: ReactNode
+  jobId?: string
 }) {
   const [open, setOpen] = useState(defaultOpen)
   const item = useRef<HTMLLIElement>(null)
@@ -72,6 +78,7 @@ export function ResultRow({
     <li
       ref={item}
       data-slot="result-item"
+      data-job={jobId}
       data-state-kind={record.state}
       data-unread={unread ? "true" : "false"}
       className={cn(
@@ -80,10 +87,11 @@ export function ResultRow({
       )}
     >
       <Collapsible open={open} onOpenChange={setOpen}>
+        <div className="flex items-center">
         <Tooltip>
           <TooltipTrigger asChild>
             <CollapsibleTrigger
-              className="group flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-accent/50 focus-visible:bg-accent/50"
+              className="group flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left hover:bg-accent/50 focus-visible:bg-accent/50"
               aria-label={`${summary.title}: ${full}`}
             >
               <StateIcon state={record.state} />
@@ -121,6 +129,9 @@ export function ResultRow({
             {full}
           </TooltipContent>
         </Tooltip>
+        {actions}
+        </div>
+        {children}
         <CollapsibleContent className="px-3 pb-3">
           <ResultDetails record={record} env={env} showPost={showPost} onOpenFull={onOpenFull} />
         </CollapsibleContent>

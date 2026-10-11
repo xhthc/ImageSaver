@@ -10,6 +10,7 @@ if (typeof importScripts === 'function') importScripts('lib/feedback.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback_tracker.js');
 if (typeof importScripts === 'function') importScripts('lib/feedback_history.js');
 if (typeof importScripts === 'function') importScripts('lib/statistics.js');
+if (typeof importScripts === 'function') importScripts('lib/download_manager.js');
 if (typeof importScripts === 'function') importScripts('lib/debug_journal.js');
 const FeedbackLib = globalThis.ImageSaverFeedback;
 
@@ -209,6 +210,7 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
 async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options = {}) {
   dbg('plan', 'execute', 'start', undefined, () => ({ provider: plan && plan.provider, tier: plan && plan.tier, transport: plan && plan.transport, host: plan && plan.primaryUrl, count: plan && Array.isArray(plan.variants) ? plan.variants.length : undefined }), { op: options && options.feedbackOp });
   const r = await executeMediaPlanImpl(plan, settings, rawImageUrl, options);
+  if(downloadManager && r?.downloadId)await downloadManager.drain();
   dbg('plan', 'execute', r && r.success ? 'ok' : (r && r.cancelled ? 'skipped' : 'failed'), r && r.success ? undefined : (r && r.cancelled ? 'CANCELLED' : dbgCode(r && r.error)), () => (r ? {
     http: r.status, mime: r.normalizedMime, bytes: r.size, downloadId: r.downloadId, fallback: r.isFallback === true, transport: r.transport
   } : null), { op: options && options.feedbackOp });
@@ -9290,7 +9292,8 @@ if (typeof globalThis.ImageSaverFeedbackTracker?.createTracker === 'function') {
       },
       set: async (key, value) => {
         const area = feedbackStorageArea();
-        if (area) await area.set({ [key]: value });
+        if (!area) throw Error('FEEDBACK_STORAGE_UNAVAILABLE');
+        await area.set({ [key]: value });
       }
     },
     genId: () => `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -9303,7 +9306,7 @@ if (typeof globalThis.ImageSaverFeedbackTracker?.createTracker === 'function') {
     peekEarlyTerminal: (id) => earlyTerminalDownloadStates.get(id),
     notify: (record, ...rest) => { dbg('notify', 'show', 'info', undefined, () => ({ state: record && record.state }), { op: record && record.id }); return feedbackNotifyRecord(record, ...rest); },
     onFinished: (record) => (statistics ? statistics.record(record) : false),
-    onChange: () => { if (!flashBadgeTimeout) restoreOrClearBadge(); },
+    onChange: () => { if (!flashBadgeTimeout) restoreOrClearBadge(); try{chrome.runtime.sendMessage({action:'DOWNLOADS_CHANGED'}).catch(()=>{});}catch(_){} },
     log: (...args) => console.warn('[MediaLatch] feedback:', ...args)
   });
 }
@@ -9356,6 +9359,8 @@ async function fbDiscard(op) {
 }
 async function fbAttach(op, downloadId, patch) {
   if (!op || !feedbackTracker) return;
+  const staged=downloadManager?.output(downloadId);
+  if(staged)patch={...patch,output:{...patch?.output,...staged}};
   dbg('download', 'start', 'start', undefined, () => ({ downloadId, mime: patch && patch.output && patch.output.mime, type: patch && patch.output && patch.output.type }), { op });
   try { await feedbackTracker.attachDownload(op, downloadId, patch); } catch (_) {}
 }
@@ -9364,6 +9369,89 @@ async function fbDownloadTerminal(downloadId, state, errorCode) {
   dbg('download', state === 'complete' ? 'complete' : (state === 'cancelled' ? 'cancel' : 'interrupt'), state === 'complete' ? 'ok' : 'failed', dbgCode(errorCode), { downloadId, state });
   try { await feedbackTracker.downloadTerminal(downloadId, state, errorCode); } catch (_) {}
 }
+
+let downloadManagerBusy = false;
+let downloadManagerRecovering = Boolean(globalThis.MediaLatchDownloads && typeof indexedDB !== 'undefined');
+const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== 'undefined'
+  ? MediaLatchDownloads.createManager({
+    store:MediaLatchDownloads.database(indexedDB), id:()=>crypto.randomUUID(), sleep:ms=>new Promise(r=>setTimeout(r,ms)),
+    activity:on=>{downloadManagerBusy=on;},
+    changed:()=>{try{chrome.runtime.sendMessage({action:'DOWNLOADS_CHANGED'}).catch(()=>{});}catch(_){}},
+    stage:async (job,signal)=>{
+      await ensureOffscreenDocument();
+      if(signal.aborted)throw Error('CANCELLED');
+      const attempt=crypto.randomUUID();
+      const abort=()=>{void offscreenRequest({action:'STAGING_ABORT',id:job.id,attempt}).catch(()=>{});};
+      signal.addEventListener('abort',abort,{once:true});
+      try{
+        if(signal.aborted)throw Error('CANCELLED');
+        const res=await offscreenRequest({action:'STAGING_PREPARE',job:{...job,attempt}});
+        if(!res?.success)throw Object.assign(Error(res?.error || 'STAGING_FAILED'),{retryAt:res?.retryAt});return res;
+      }finally{signal.removeEventListener('abort',abort);}
+    },
+    stop:async id=>{await ensureOffscreenDocument();await offscreenRequest({action:'STAGING_ABORT',id});},
+    verify:async j=>{
+      await ensureOffscreenDocument();const res=await offscreenRequest({action:'STAGING_VERIFY',id:j.id,size:j.total,mime:j.mime});return res?.success && res.valid===true;
+    },
+    fileUrl:async (id,mime)=>{
+      await ensureOffscreenDocument();const res=await offscreenRequest({action:'STAGING_URL',id,mime});
+      if(!res?.success)throw Error(res?.error || 'STAGING_FAILED');return res.url;
+    },
+    remove:async id=>{
+      await ensureOffscreenDocument();const res=await offscreenRequest({action:'STAGING_REMOVE',id});
+      if(!res?.success)throw Error(res?.error || 'STAGING_FAILED');
+    },
+    abort:async id=>{await offscreenRequest({action:'STAGING_ABORT',id});},
+    export:(url,filename)=>chrome.downloads.download({url,filename,saveAs:false}),
+    search:async(id,url)=>{
+      const items=await chrome.downloads.search(Number.isInteger(id)?{id}:{url});
+      return items.find(x=>x.byExtensionId===chrome.runtime.id && (Number.isInteger(id) || x.url===url)) || null;
+    },
+    cancelExport:id=>chrome.downloads.cancel(id),
+    newAttempt:j=>fbBegin({sourceUrl:j.source,expectedType:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'image'}),
+    recoverAttempt:async j=>{
+      const old=await feedbackTracker?.get(j.op);
+      return old && (!FeedbackLib.isTerminal(old.state) || old.state==='complete')?j.op:fbBegin({sourceUrl:j.source,expectedType:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'image'});
+    },
+    attach:async(j,id)=>fbAttach(j.op,id,{filename:j.filename,output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}),
+    complete:async(j)=>fbDownloadTerminal(j.downloadId,'complete'),
+    failed:async j=>j.state==='cancelled'?fbCancel(j.op):fbFail(j.op,{stage:j.prepared?'save':'download',code:j.error}),
+    error:()=>dbg('manager','queue','failed','STORAGE_FAILED')
+  }) : null;
+downloadManager?.ready.then(()=>{downloadManagerRecovering=false;},()=>dbg('manager','load','failed','STORAGE_FAILED'));
+
+function managedDownload(options, feedbackOp=null, mime='') {
+  // Offline legacy harnesses omit IndexedDB; the installed extension always uses the durable queue.
+  if(!downloadManager) return chrome.downloads.download(options);
+  return downloadManager.enqueue(options,{op:feedbackOp,mime});
+}
+async function downloadManagerSnapshot() {
+  const snapshot=await downloadManager.list();
+  const owned=new Set(snapshot.jobs.map(j=>j.op));
+  const preparations=(await feedbackTracker.list()).filter(r=>!owned.has(r.id) && ['resolving','converting','failed','interrupted'].includes(r.state));
+  for(const r of preparations)snapshot.jobs.push({id:r.id,op:r.id,managed:false,filename:r.filename || '',state:r.state==='interrupted'?'failed':r.state,received:0,total:null,speed:0,error:r.failure?.code || '',createdAt:r.createdAt});
+  snapshot.jobs.sort((a,b)=>b.createdAt-a.createdAt);return snapshot;
+}
+if(chrome.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListener((m,sender,respond)=>{
+  if(m?.action==='STAGING_PROGRESS') {
+    if(sender?.id!==chrome.runtime.id || sender?.url!==chrome.runtime.getURL('offscreen.html'))return false;
+    downloadManager?.progress(m.id,m.progress).then(()=>respond({success:true}),()=>respond({success:false}));return true;
+  }
+  if(m?.action!=='DOWNLOADS_LIST' && m?.action!=='DOWNLOADS_COMMAND')return false;
+  if(sender?.id!==chrome.runtime.id || !['popup/popup.html','popup/quick.html'].some(p=>sender.url?.split(/[?#]/)[0]===chrome.runtime.getURL(p)) || !downloadManager){respond({success:false,error:'FORBIDDEN'});return false;}
+  (async()=>{
+    if(m.action==='DOWNLOADS_COMMAND') {
+      if(m.command==='remove') {
+        const job=(await downloadManager.list()).jobs.find(j=>j.id===m.id);
+        if(!job || !['complete','failed','cancelled'].includes(job.state))throw Error('INVALID_STATE');
+        // Clear the fallback durably first; a crash must leave the queue card, never resurrect a removed one.
+        if(job.op)await feedbackTracker.clearFinished(job.op);
+      }
+      await downloadManager.command(m.command,m.id);
+    }
+    return {success:true,...await downloadManagerSnapshot()};
+  })().then(respond,e=>respond({success:false,error:dbgCode(e.message)||'DOWNLOADS_UNAVAILABLE'}));return true;
+});
 
 /** First candidate that is an allowed numeric status actually observed by the pipeline, else null. */
 function fbStatusIn(candidates, allowed) {
@@ -10146,45 +10234,7 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
       throw new Error('JOB_CANCELLED_OR_EXPIRED');
     }
 
-    downloadId = await new Promise((resolve, reject) => {
-      let settled = false;
-      let ret;
-      try {
-        ret = chrome.downloads.download(downloadOptions, (id) => {
-          if (settled) return;
-          settled = true;
-          const lastErr = chrome.runtime?.lastError;
-          if (lastErr) {
-            console.error('[MediaLatch] Ошибка chrome.downloads.download:', lastErr.message);
-            reject(new Error(lastErr.message));
-          } else if (id === undefined) {
-            console.error('[MediaLatch] chrome.downloads.download вернул undefined');
-            reject(new Error('chrome.downloads.download returned undefined downloadId'));
-          } else {
-            resolve(id);
-          }
-        });
-      } catch (syncErr) {
-        if (!settled) {
-          settled = true;
-          console.error('[MediaLatch] Исключение при chrome.downloads.download:', syncErr);
-          reject(syncErr);
-        }
-        return;
-      }
-      if (ret && typeof ret.then === 'function') {
-        ret.then(
-          (id) => { if (!settled) { settled = true; resolve(id); } },
-          (promiseErr) => {
-            if (!settled) {
-              settled = true;
-              console.error('[MediaLatch] Ошибка chrome.downloads.download (Promise):', promiseErr);
-              reject(promiseErr);
-            }
-          }
-        );
-      }
-    });
+    downloadId = await managedDownload(downloadOptions, options?.feedbackOp, structuredResult.normalizedMime);
 
     downloadStarted = true;
     activeDownloadsMetadata.set(downloadId, {
@@ -10243,6 +10293,7 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
     );
 
     const disallowEmergencyFallback = Boolean(
+      downloadManager ||
       options?.disallowFallback ||
       protectedBlobUrl ||
       isVideo ||
@@ -10281,29 +10332,7 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
       };
       delete fallbackOptions.headers;
 
-      const fallbackDownloadId = await new Promise((resolve, reject) => {
-        let settled = false;
-        let ret;
-        try {
-          ret = chrome.downloads.download(fallbackOptions, (id) => {
-            if (settled) return;
-            settled = true;
-            const lastErr = chrome.runtime?.lastError;
-            if (lastErr) reject(new Error(lastErr.message));
-            else if (id === undefined) reject(new Error('fallback download returned undefined'));
-            else resolve(id);
-          });
-        } catch (syncErr) {
-          if (!settled) { settled = true; reject(syncErr); }
-          return;
-        }
-        if (ret && typeof ret.then === 'function') {
-          ret.then(
-            (id) => { if (!settled) { settled = true; resolve(id); } },
-            (err) => { if (!settled) { settled = true; reject(err); } }
-          );
-        }
-      });
+      const fallbackDownloadId = await managedDownload(fallbackOptions, options?.feedbackOp);
 
       activeDownloadsMetadata.set(fallbackDownloadId, { url: fallbackSourceUrl, rawUrl: rawImageUrl });
       // The abandoned primary failure is recoverable: the operation continues with the fallback download.
@@ -10583,11 +10612,7 @@ async function executeXTweetVideoGifDownload(videoUrl, settings = {}, options = 
 
     let downloadId = null;
     try {
-      downloadId = await chrome.downloads.download({
-        url: convResult.blobUrl,
-        filename,
-        saveAs: false
-      });
+      downloadId = await managedDownload({url:convResult.blobUrl,filename,saveAs:false}, feedbackOp, 'image/gif');
     } catch (dlErr) {
       console.error('[MediaLatch] Ошибка вызова chrome.downloads.download для сконвертированного GIF:', dlErr);
       await fbFail(feedbackOp, { stage: 'save', code: dlErr?.message });
@@ -10724,11 +10749,7 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
 
     let downloadId = null;
     try {
-      downloadId = await chrome.downloads.download({
-        url: convResult.blobUrl,
-        filename,
-        saveAs: false
-      });
+      downloadId = await managedDownload({url:convResult.blobUrl,filename,saveAs:false}, feedbackOp, 'image/gif');
     } catch (dlErr) {
       console.error('[MediaLatch] Ошибка вызова chrome.downloads.download для сконвертированного Reddit GIF:', dlErr);
       await fbFail(feedbackOp, { stage: 'save', code: dlErr?.message });
@@ -10836,7 +10857,7 @@ async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) 
     });
     let downloadId = null;
     try {
-      downloadId = await chrome.downloads.download({ url: blobUrl, filename, saveAs: false });
+      downloadId = await managedDownload({url:blobUrl,filename,saveAs:false}, feedbackOp, 'video/mp4');
     } catch (dlErr) {
       console.error('[MediaLatch] Ошибка chrome.downloads.download для собранного Reddit HLS видео:', dlErr);
       await fbFail(feedbackOp, { stage: 'save', code: dlErr?.message });
@@ -10868,6 +10889,7 @@ async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) 
  * Closes the offscreen document when no tasks or active protected downloads remain.
  */
 async function closeOffscreenDocument() {
+  if(downloadManagerBusy || downloadManagerRecovering) return;
   if (activeOffscreenTasks > 0 || hasActiveProtectedDownloads()) return;
   // Persisted live downloads are not recovered yet (recovery pending, or its initial storage read failed): the owners are not restored, so an
   // empty owner set proves nothing and nothing may be closed. The request is remembered and runs once ownership is known. A request while the

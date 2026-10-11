@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the shipped source, not a list of planned capabilities. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
+This document describes the current development source, not a list of planned capabilities. Themes, all-time Statistics and staged downloads are not in the packaged v2.0.0.28 preview. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
 
 ## Runtime layout
 
@@ -12,6 +12,8 @@ This document describes the shipped source, not a list of planned capabilities. 
 | `content_x.js`, `content_reddit.js`, `content_redgifs.js` | Provider evidence, selected-player recovery and inline controls |
 | Other `content_*.js` | Scoped site/link helpers; each script's messages define its contract |
 | `offscreen.js`, `offscreen.html` | Protected buffered fetches, genuine GIF encoding and Reddit HLS assembly |
+| `lib/download_manager.js`, `lib/staging.js` | Private persistent byte queue, streamed OPFS acquisition/validation, local Blob export and recovery |
+| `lib/statistics.js` | Private aggregate counters and compact per-operation deduplication, without media addresses or names |
 | `lib/feedback*.js`, `lib/folder_path.js` | Allow-listed records, bounded history/tracking and portable relative paths |
 | `lib/reddit_hls.mjs`, `lib/vendor/mp4box/` | Restricted Reddit HLS input and locally bundled MP4 muxing |
 | `lib/gifenc.js` | Bundled GIF encoder; preserve its MIT notice |
@@ -26,8 +28,8 @@ This document describes the shipped source, not a list of planned capabilities. 
 2. Choosing **MediaLatch: Save media** revalidates that evidence. Removed, changed or ambiguous owners are refused; another post's media is never substituted.
 3. Provider or generic discovery produces candidates. Preserve declared signed URLs exactly; diagnostic redaction changes only log copies.
 4. Probe candidates and choose an admitted plan. A confirmed original's failure is reported rather than silently becoming a preview.
-5. Save a direct URL, or acquire an owned offscreen task for buffered/converted/assembled output.
-6. Attach the browser download ID to feedback. Terminal events release owned blobs/tasks and record the result.
+5. Prepare supported converted/assembled output if needed, then enqueue the resolved source. One job acquires the complete file into offscreen OPFS storage and validates its measured bytes and media signature/container before export.
+6. Persist export intent, give the browser a typed local Blob backed by that prepared file, and attach the browser download ID to feedback. Keep the offscreen owner alive until the native terminal result; completed/cancelled jobs release their temporary files and private source addresses.
 
 There is no hover-based media-title network prefetch. The save item has a fixed title. Context availability remains best effort; save-time ownership checks are authoritative.
 
@@ -35,7 +37,7 @@ A Pawchive feed-preview save reads the owning post and saves all distinct declar
 
 ## Verification and formats
 
-Ownership precedes quality ranking. Ordinary direct images are generally admitted using headers and candidate evidence; that is not a full payload-byte inspection. X video, buffered Pixiv images, protected bodies, converted GIFs and supported HLS paths add container/byte validation appropriate to their transport.
+Ownership precedes quality ranking. Candidate probes use headers and provider evidence; queued acquisition additionally validates the actual payload before export. The measured size and verified MIME from staging override earlier filename/header estimates. Protected Pixiv bodies, converted GIFs and supported HLS paths retain their existing transport-specific bounds.
 
 Native GIFs remain GIF. Only positively identified X/Reddit animations are converted from MP4. Ordinary videos and RedGIFs remain video. Above the 30-second animation threshold, save the original MP4; conversion errors do not create a renamed MP4 or a poster.
 
@@ -43,7 +45,9 @@ GIF processing: 50 MiB input, 30 seconds duration, 150 frames, 640 px maximum di
 
 Reddit HLS accepts only the supported finite, unencrypted same-asset Reddit H.264/AAC path, including selected fMP4/byte-range cases. Input is capped at 128 MiB and output at 160 MiB. This is not a generic HLS/DASH or DRM implementation.
 
-Eligible owned `NETWORK_FAILED` downloads can resume once through the browser's existing download ID. Other failures remain visible. No unlimited retries, background source refresh or generic download manager exists.
+Eligible owned `NETWORK_FAILED` exports can resume once through the browser's existing download ID. The manager retains prepared bytes after export failure for explicit local retry without a second source GET. It respects an observed Retry-After deadline and bounded explicit retry admission; it never silently refreshes a source or blindly duplicates an uncertain export.
+
+Queue pause stops admission of the next byte-transfer job; the active job continues. Source/owner resolution starts immediately to preserve gesture and DOM evidence. Deferred post-resolution admission, batch totals and proven source-range resume remain separate work. Metadata is in private IndexedDB; pending jobs retain exact signed source URLs there, never in shared diagnostics. Storage quota and browser eviction can still interrupt acquisition.
 
 ## Storage and UI
 
@@ -51,7 +55,9 @@ The MediaLatch rename preserves existing internal message/DOM identifiers and st
 
 Settings use `chrome.storage.local`. A failed settings read keeps the form disabled and prevents saving defaults over unread preferences. Relative paths are validated by the same folder helper in UI/runtime.
 
-Session feedback uses `chrome.storage.session`; history is opt-in local storage, with 50 finished records/seven days. See [Privacy](PRIVACY.md) for exact scope. Page controllers and runtime APIs remain separate from rendering.
+Session diagnostics use `chrome.storage.session` with the existing bounded retention. Legacy history APIs remain for compatibility/import; new Statistics use private IndexedDB aggregate counters without the old entry/time cap. Recording is configurable and clearable. A clear boundary excludes old operations from replay; only retained legacy data can be imported. See [Privacy](PRIVACY.md) for exact scope.
+
+Blue, Dark and Light themes persist and synchronize between pages. The toolbar popup shows byte-transfer controls; the full Downloads page merges progress, controls and expandable result/report details into one card per job. Retained notification deep links can still open old diagnostics. Removing a card first durably clears its terminal diagnostic, then removes the queue record/file; unreadable storage, active records or pending statistics delivery refuse deletion. Aggregate Statistics are not cleared by deleting download cards. Long localized tab names use a scrollable row with keyboard focus visibility.
 
 The UI build targets Chromium 120 and emits local scripts/styles with no remote runtime code. `npm run build --prefix ui` regenerates `popup/`; the parity check rebuilds into a temporary folder and compares bytes. Notices are generated separately after dependencies or their licences change.
 

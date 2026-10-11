@@ -50,6 +50,7 @@
   var stats = null;
   function reply(action) {
     if (scenario === 'error') throw new Error('MESSAGING_DOWN');
+    if (action === 'DOWNLOADS_LIST' || action === 'DOWNLOADS_COMMAND') return {success:true,paused:false,jobs:records.map(function(r){return {id:r.id,filename:r.filename || 'media',state:r.state==='saving'?'receiving':r.state==='interrupted'?'failed':r.state,received:r.output.sizeBytes || 0,total:r.state==='saving'?null:r.output.sizeBytes || null,speed:0,error:r.failure?.code || '',ready:false};})};
     if (action === 'FEEDBACK_LIST' || action === 'FEEDBACK_MARK_SEEN' || action === 'FEEDBACK_CLEAR' || action === 'HISTORY_LIST' || action === 'HISTORY_CLEAR') {
       if (action === 'FEEDBACK_MARK_SEEN') records.forEach(function (r) { r.seen = true; });
       return { success: true, records: records.slice() };

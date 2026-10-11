@@ -8,7 +8,7 @@ import { I18nProvider } from "@/hooks/use-i18n"
 import { getEnv } from "@/lib/env"
 
 const env = getEnv()
-// One controller per popup: it owns the storage listener and the preference read; React only renders it.
+// Navigation is independent of recording preferences; the manager owns its live subscription.
 const quick = createQuick({ chrome: env.chrome, window: env.window })
 // The interface language (saved preference, else the browser language); it changes live with the other extension pages.
 const language = createLanguage({ chrome: env.chrome, navigator: env.navigator })

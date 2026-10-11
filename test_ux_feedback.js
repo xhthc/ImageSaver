@@ -158,7 +158,8 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
     window: { location: { href: '', host: '', pathname: '/' }, addEventListener() {} },
     document: { elementsFromPoint: () => [], querySelectorAll: () => [], querySelector: () => null, getElementById: () => null, createElement: () => ({ addEventListener() {}, removeAttribute() {}, load() {} }) }
   };
-  sandbox.importScripts = (file) => vm.runInContext(read(file), sandbox);
+  // This suite isolates feedback/statistics from the separately tested disk acquisition queue.
+  sandbox.importScripts = (file) => { if(file !== 'lib/download_manager.js') vm.runInContext(read(file), sandbox); };
   vm.createContext(sandbox);
   vm.runInContext(bgCode, sandbox);
   // Archived history/controller regressions inject their legacy sink explicitly;
@@ -702,7 +703,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     const popupHtml = read('popup/quick.html');
     const detailsHtml = read('popup/popup.html');
     assert(/<script src="\.\.\/lib\/feedback\.js"><\/script>/.test(popupHtml) && /id="root"/.test(popupHtml) && /type="module"/.test(popupHtml), '14d: the compact popup loads the shared feedback library and its bundle and has its mount point');
-    assert(/id="root"/.test(detailsHtml) && /<ResultsList compact=\{false\}/.test(read('ui/src/components/app/full-app.tsx')) && !/<script[^>]+src="https?:/.test(popupHtml + detailsHtml) && !/\son\w+=/.test(popupHtml + detailsHtml), '14e: the full page exists; no remote scripts or inline handlers (MV3 CSP)');
+    assert(/id="root"/.test(detailsHtml) && /<DownloadsPanel full/.test(read('ui/src/components/app/full-app.tsx')) && !/<script[^>]+src="https?:/.test(popupHtml + detailsHtml) && !/\son\w+=/.test(popupHtml + detailsHtml), '14e: the full page exists; no remote scripts or inline handlers (MV3 CSP)');
     assert(fs.existsSync(path.resolve(ROOT, 'icons/notification.png')) && fs.readFileSync(path.resolve(ROOT, 'icons/notification.png')).slice(1, 4).toString() === 'PNG', '14f: notification icon is packaged');
     const fbSources = read('lib/feedback.js') + read('lib/feedback_tracker.js') + read('ui/src/core/feedbackList.js') + read('ui/src/core/history.js');
     assert(!/\binnerHTML\b|\beval\(|new Function|document\.write|\bfetch\(|XMLHttpRequest|sendBeacon|\.createIssue|api\.github\.com/.test(fbSources.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')), '14g: feedback code has no innerHTML/eval and no network or issue-creation calls');
@@ -2363,6 +2364,44 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       assert(hydratedIds.includes(opB), '28i5: recreated tracker hydrates opB');
     }
 
+    // A removed download must not reappear from its terminal feedback record; keep other results and statistics.
+    {
+      const context={URL,console,setTimeout,clearTimeout};vm.createContext(context);
+      for(const file of ['lib/feedback.js','lib/feedback_tracker.js'])vm.runInContext(read(file),context);
+      const store={};let sequence=0,failWrite=false,failRead=false;
+      const make=()=>context.ImageSaverFeedbackTracker.createTracker({ genId:()=>`op-remove-${++sequence}`,storage:{get:async key=>{if(failRead)throw Error('READ_FAILED');return store[key] || null},set:async(key,value)=>{if(failWrite)throw Error('WRITE_FAILED');store[key]=JSON.parse(JSON.stringify(value))}},getDownloadItem:async()=>null });
+      const tracker=make();
+      const removed = await tracker.begin({site:'reddit'}), kept = await tracker.begin({site:'x'}), active = await tracker.begin({site:'reddit'});
+      await tracker.fail(removed,{code:'REMOVED'});await tracker.fail(kept,{code:'KEPT'});
+      await tracker.clearFinished(removed);
+      assert((await tracker.list()).map(r=>r.id).join() === [active,kept].join(), '28i6: selective clear removes only the selected terminal result');
+      let activeRejected=false;try{await tracker.clearFinished(active)}catch(_){activeRejected=true}
+      assert(activeRejected && Boolean(await tracker.get(active)), '28i7: selective clear cannot acknowledge removing an active operation');
+      failWrite=true;let rejected=false;
+      try{await tracker.clearFinished(kept)}catch(_){rejected=true}
+      assert(rejected && Boolean(await tracker.get(kept)),'28i8: selective clear refuses an unpersisted deletion and restores its diagnostic');
+      failWrite=false;const restarted=make();
+      assert(Boolean(await restarted.get(kept)) && !await restarted.get(removed),'28i9: restart retains failed deletion and never resurrects acknowledged deletion');
+      failRead=true;const unreadable=make();rejected=false;
+      try{await unreadable.clearFinished(kept)}catch(_){rejected=true}
+      assert(rejected,'28i10: unreadable storage cannot acknowledge selective deletion');
+    }
+    {
+      const context={URL,console,setTimeout,clearTimeout};vm.createContext(context);
+      for(const file of ['lib/feedback.js','lib/feedback_tracker.js'])vm.runInContext(read(file),context);
+      const store={};let release,sequence=0;
+      const deps={genId:()=>`op-pending-remove-${++sequence}`,storage:{get:async key=>store[key] || null,set:async(key,value)=>{store[key]=JSON.parse(JSON.stringify(value))}},getDownloadItem:async()=>null};
+      const tracker=context.ImageSaverFeedbackTracker.createTracker({...deps,onFinished:()=>new Promise((_,reject)=>{release=()=>reject(Error('STATISTICS_COMMIT_FAILED'))})});
+      const id=await tracker.begin({site:'reddit'});await tracker.fail(id,{code:'NO_MEDIA'});
+      let rejected=false;try{await tracker.clearFinished(id)}catch(_){rejected=true}
+      assert(rejected && Boolean(await tracker.get(id)),'28i11: in-flight statistics delivery prevents selective removal');
+      release();await tracker.flush();rejected=false;
+      try{await tracker.clearFinished(id)}catch(_){rejected=true}
+      assert(rejected && (await tracker.get(id)).historyPending,'28i12: failed statistics delivery remains durable after a refused removal');
+      const delivered=[];const restarted=context.ImageSaverFeedbackTracker.createTracker({...deps,onFinished:async record=>{delivered.push(record.id)}});
+      await restarted.ready();await restarted.flush();
+      assert(delivered.includes(id),'28i13: pending statistics survives restart and is delivered again');
+    }
     // 28j: clearFinished during in-flight history outcome does not resurrect cleared record
     {
       const state = {};
