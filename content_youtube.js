@@ -83,7 +83,7 @@
   const SVG_CHECK_ICON = `<svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>`;
 
   const ALLOWED_YT_SHARE_HOSTS = ['youtube.com', 'yfxtube.com', 'koutube.com'];
-  const DEFAULT_YT_SHARE_HOST = 'youtube.com';
+  const DEFAULT_YT_SHARE_HOST = 'koutube.com';
 
   const APPROVED_YT_HOSTS = new Set([
     'youtube.com',

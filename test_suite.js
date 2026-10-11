@@ -9527,6 +9527,10 @@ async function runTests() {
     vm.createContext(xSandbox);
     vm.runInContext(contentXCode, xSandbox);
 
+    assert(xSandbox.__getCachedXShareHost() === 'fixupx.com' && xSandbox.__formatXShareUrl('https://x.com/user/status/123') === 'https://fixupx.com/user/status/123', '202.defaults: missing preference uses fixupx.com in the production copy formatter');
+    mockStorageListeners.forEach(cb => cb({ xShareHost: { newValue: 'x.com' } }, 'local'));
+    assert(xSandbox.__getCachedXShareHost() === 'x.com', '202.original: explicit original preference remains supported');
+
     // 202.1. URL extraction test
     {
       // Case A: time element permalink
@@ -9680,12 +9684,12 @@ async function runTests() {
       );
     }
 
-    // 202.5. Locally constructed share URL: default x.com and optional hosts, suffix/query/hash omission
+    // 202.5. Explicit original and optional hosts, suffix/query/hash omission.
     {
       const format = xSandbox.__formatXShareUrl;
       assert(typeof format === 'function', '202.5: __formatXShareUrl экспортирована');
 
-      // Default host: x.com (first run / missing setting)
+      // Original host explicitly selected above.
       const defRes = format('https://x.com/artist_name/status/1982736450192837465/photo/1?s=20#top');
       // Optional host: fixupx.com
       const fixupRes = format('https://twitter.com/photographer/status/123456789/video/1?s=21', 'fixupx.com');
@@ -9702,9 +9706,9 @@ async function runTests() {
         fixupRes === 'https://fixupx.com/photographer/status/123456789' &&
         cunnyRes === 'https://cunnyx.com/photographer/status/123456789' &&
         origRes === 'https://x.com/illustrator/status/987654321' &&
-        fallbackRes === 'https://x.com/user/status/555444333' &&
-        emptyHostRes === 'https://x.com/user/status/555444333',
-        'Тест 202.5: formatXShareUrl локально формирует URL для default x.com и опциональных fixupx.com и cunnyx.com, отсекая суффиксы, query и hash'
+        fallbackRes === 'https://fixupx.com/user/status/555444333' &&
+        emptyHostRes === 'https://fixupx.com/user/status/555444333',
+        'Тест 202.5: formatXShareUrl сохраняет выбранный x.com, поддерживает fixupx.com/cunnyx.com и безопасный embed-default, отсекая суффиксы, query и hash'
       );
     }
 
@@ -17052,6 +17056,10 @@ async function runTests() {
     vm.createContext(igSandbox);
     vm.runInContext(igCode, igSandbox);
 
+    assert(igSandbox.__getCachedIgShareHost() === 'oginstagram.com' && igSandbox.__formatInstagramShareUrl('https://instagram.com/p/DEFAULT_123/') === 'https://oginstagram.com/p/DEFAULT_123/', '224.defaults: missing preference uses oginstagram.com');
+    mockStorageListeners.forEach(cb => cb({ igShareHost: { newValue: 'instagram.com' } }, 'local'));
+    assert(igSandbox.__getCachedIgShareHost() === 'instagram.com', '224.original: explicit original preference remains supported');
+
     // 224.1 URL Extraction
     {
       const art1 = new TestDomElement('article');
@@ -17103,13 +17111,13 @@ async function runTests() {
         og === 'https://oginstagram.com/p/C_abc123-xyz/' &&
         kirk === 'https://kirkstagram.com/p/C_abc123-xyz/' &&
         kirkReel === 'https://kirkstagram.com/reel/D_reel789_0/' &&
-        eeFallback === 'https://instagram.com/p/C_abc123-xyz/' &&
-        uuFallback === 'https://instagram.com/p/C_abc123-xyz/' &&
-        ddFallback === 'https://instagram.com/p/C_abc123-xyz/' &&
-        kkFallback === 'https://instagram.com/p/C_abc123-xyz/' &&
-        clipFallback === 'https://instagram.com/reel/D_reel789_0/' &&
-        disallowedFallback === 'https://instagram.com/p/C_abc123-xyz/',
-        '224.2: formatInstagramShareUrl форматирует URL для instagram.com, oginstagram.com и kirkstagram.com, а устаревшие (eeinstagram.com, uuinstagram.com и др.) и недопустимые хосты сбрасывает на instagram.com'
+        eeFallback === 'https://oginstagram.com/p/C_abc123-xyz/' &&
+        uuFallback === 'https://oginstagram.com/p/C_abc123-xyz/' &&
+        ddFallback === 'https://oginstagram.com/p/C_abc123-xyz/' &&
+        kkFallback === 'https://oginstagram.com/p/C_abc123-xyz/' &&
+        clipFallback === 'https://oginstagram.com/reel/D_reel789_0/' &&
+        disallowedFallback === 'https://oginstagram.com/p/C_abc123-xyz/',
+        '224.2: formatInstagramShareUrl сохраняет выбранный instagram.com и допустимые embeds; недопустимые хосты сбрасывает на oginstagram.com'
       );
     }
 
@@ -19183,6 +19191,10 @@ async function runTests() {
     vm.createContext(ttSandbox);
     vm.runInContext(ttCode, ttSandbox);
 
+    assert(ttSandbox.__getCachedTtShareHost() === 'tnktok.com' && ttSandbox.__formatTikTokShareUrl('https://tiktok.com/@user/video/7123456789012345678') === 'https://tnktok.com/@user/video/7123456789012345678', '225.defaults: missing preference uses tnktok.com');
+    mockStorageListeners.forEach(cb => cb({ ttShareHost: { newValue: 'tiktok.com' } }, 'local'));
+    assert(ttSandbox.__getCachedTtShareHost() === 'tiktok.com', '225.original: explicit original preference remains supported');
+
     // 225.1 URL Extraction
     {
       const item1 = new TestDomElement('div', { 'data-e2e': 'feed-item' });
@@ -19222,8 +19234,8 @@ async function runTests() {
         def === 'https://tiktok.com/@user/video/7123456789012345678' &&
         tnk === 'https://tnktok.com/@user/video/7123456789012345678' &&
         dtnk === 'https://d.tnktok.com/@user/video/7123456789012345678' &&
-        fallbackDisallowed === 'https://tiktok.com/@user/video/7123456789012345678',
-        '225.2: formatTikTokShareUrl форматирует URL для всех разрешенных хостов и использует tiktok.com по умолчанию'
+        fallbackDisallowed === 'https://tnktok.com/@user/video/7123456789012345678',
+        '225.2: formatTikTokShareUrl сохраняет выбранный tiktok.com и допустимые embeds; недопустимые хосты сбрасывает на tnktok.com'
       );
     }
 
@@ -20058,14 +20070,14 @@ async function runTests() {
       popupHtml.includes('"igShareHostSelect"') &&
       popupHtml.includes('"ttShareHostSelect"') &&
       popupHtml.includes('"xShareHostSelect"') &&
-      embedOption('x.com', 'embed.original', 'x.com (оригинал, по умолчанию)') &&
-      embedOption('fixupx.com', 'embed.primary', 'fixupx.com (основной)') &&
+      embedOption('x.com', 'embed.original', 'x.com (оригинал)') &&
+      embedOption('fixupx.com', 'embed.primary', 'fixupx.com (по умолчанию)') &&
       embedOption('cunnyx.com', 'embed.backup', 'cunnyx.com (резерв)') &&
-      embedOption('instagram.com', 'embed.original', 'instagram.com (оригинал, по умолчанию)') &&
-      embedOption('oginstagram.com', 'embed.primary', 'oginstagram.com (основной)') &&
+      embedOption('instagram.com', 'embed.original', 'instagram.com (оригинал)') &&
+      embedOption('oginstagram.com', 'embed.primary', 'oginstagram.com (по умолчанию)') &&
       embedOption('kirkstagram.com', 'embed.backup', 'kirkstagram.com (резерв)') &&
-      embedOption('tiktok.com', 'embed.original', 'tiktok.com (оригинал, по умолчанию)') &&
-      embedOption('tnktok.com', 'embed.primary', 'tnktok.com (основной)') &&
+      embedOption('tiktok.com', 'embed.original', 'tiktok.com (оригинал)') &&
+      embedOption('tnktok.com', 'embed.primary', 'tnktok.com (по умолчанию)') &&
       embedOption('d.tnktok.com', 'embed.backup', 'd.tnktok.com (резерв)') &&
       !popupHtml.includes('eeinstagram.com') &&
       !popupHtml.includes('uuinstagram.com') &&
@@ -20125,8 +20137,8 @@ async function runTests() {
     const fb226 = await openSettings();
 
     assert(
-      fb226.store.getState().igShareHost === 'instagram.com',
-      '226.2b: Ранее сохраненные удаленные хосты Instagram (eeinstagram.com, uuinstagram.com, kkclip.com и др.) автоматически сбрасываются на instagram.com'
+      fb226.store.getState().igShareHost === 'oginstagram.com',
+      '226.2b: Ранее сохраненные удаленные хосты Instagram автоматически сбрасываются на oginstagram.com'
     );
 
     // 226.2c: Selection, persistence, and isolation for kirkstagram.com and oginstagram.com
@@ -20230,9 +20242,9 @@ async function runTests() {
 
       assert(
         liveIgSandbox.__getCachedIgShareHost() === 'kirkstagram.com' &&
-        fmtLive('https://www.instagram.com/reel/C123456_xyz/', 'eeinstagram.com') === 'https://instagram.com/reel/C123456_xyz/' &&
-        fmtLive('https://www.instagram.com/reel/C123456_xyz/', 'uuinstagram.com') === 'https://instagram.com/reel/C123456_xyz/',
-        '226.2g: chrome.storage.onChanged отклоняет недопустимый хост, а formatInstagramShareUrl сбрасывает устаревшие хосты на instagram.com'
+        fmtLive('https://www.instagram.com/reel/C123456_xyz/', 'eeinstagram.com') === 'https://oginstagram.com/reel/C123456_xyz/' &&
+        fmtLive('https://www.instagram.com/reel/C123456_xyz/', 'uuinstagram.com') === 'https://oginstagram.com/reel/C123456_xyz/',
+        '226.2g: chrome.storage.onChanged отклоняет недопустимый хост, а formatInstagramShareUrl сбрасывает устаревшие хосты на oginstagram.com'
       );
     }
 
@@ -20250,11 +20262,12 @@ async function runTests() {
 
     const formatXShareUrl = xSandbox.__formatXShareUrl;
     assert(
-      formatXShareUrl('https://x.com/user/status/12345') === 'https://x.com/user/status/12345' &&
+      formatXShareUrl('https://x.com/user/status/12345') === 'https://fixupx.com/user/status/12345' &&
+      formatXShareUrl('https://x.com/user/status/12345', 'x.com') === 'https://x.com/user/status/12345' &&
       formatXShareUrl('https://x.com/user/status/12345', 'fixupx.com') === 'https://fixupx.com/user/status/12345' &&
       formatXShareUrl('https://x.com/user/status/12345', 'cunnyx.com') === 'https://cunnyx.com/user/status/12345' &&
-      formatXShareUrl('https://x.com/user/status/12345', 'evil.com') === 'https://x.com/user/status/12345',
-      '226.3: Регрессия X: formatXShareUrl сохраняет форматирование x.com по умолчанию, fixupx.com, cunnyx.com и отклонение чужих хостов'
+      formatXShareUrl('https://x.com/user/status/12345', 'evil.com') === 'https://fixupx.com/user/status/12345',
+      '226.3: Регрессия X: fixupx.com по умолчанию, опциональные x.com/cunnyx.com и отклонение чужих хостов'
     );
   }
 

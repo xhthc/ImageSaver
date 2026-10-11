@@ -189,8 +189,8 @@ const EMBED_FIELDS = [
     id: "xShareHostSelect",
     label: "embed.x.label",
     options: [
-      ["x.com", "embed.original"],
       ["fixupx.com", "embed.primary"],
+      ["x.com", "embed.original"],
       ["cunnyx.com", "embed.backup"],
     ],
     hint: "embed.x.hint",
@@ -200,8 +200,8 @@ const EMBED_FIELDS = [
     id: "igShareHostSelect",
     label: "embed.ig.label",
     options: [
-      ["instagram.com", "embed.original"],
       ["oginstagram.com", "embed.primary"],
+      ["instagram.com", "embed.original"],
       ["kirkstagram.com", "embed.backup"],
     ],
     hint: "embed.ig.hint",
@@ -211,8 +211,8 @@ const EMBED_FIELDS = [
     id: "ttShareHostSelect",
     label: "embed.tt.label",
     options: [
-      ["tiktok.com", "embed.original"],
       ["tnktok.com", "embed.primary"],
+      ["tiktok.com", "embed.original"],
       ["d.tnktok.com", "embed.backup"],
     ],
     hint: "embed.tt.hint",
@@ -222,9 +222,9 @@ const EMBED_FIELDS = [
     id: "youtubeShareHostSelect",
     label: "embed.yt.label",
     options: [
+      ["koutube.com", "embed.primary"],
       ["youtube.com", "embed.original"],
       ["yfxtube.com", "yfxtube.com (FxYouTube)"],
-      ["koutube.com", "koutube.com (Koutube)"],
     ],
     hint: "embed.yt.hint",
   },

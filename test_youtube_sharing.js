@@ -333,6 +333,10 @@ async function runYouTubeSharingTests() {
   vm.createContext(ytSandbox);
   vm.runInContext(ytCode, ytSandbox);
 
+  assert(ytSandbox.__getCachedYtShareHost() === 'koutube.com' && ytSandbox.__formatYouTubeShareUrl('dQw4w9WgXcQ') === 'https://koutube.com/shorts/dQw4w9WgXcQ', 'Missing preference uses Koutube in the production copy formatter');
+  mockStorageListeners.forEach(cb => cb({ youtubeShareHost: { newValue: 'youtube.com' } }, 'local'));
+  assert(ytSandbox.__getCachedYtShareHost() === 'youtube.com', 'Explicit original preference remains supported');
+
   // Test 2: Video ID Validation
   console.log('\n--- Suite 2: Video ID Validation ---');
   {
@@ -415,7 +419,7 @@ async function runYouTubeSharingTests() {
     assert(kout === 'https://koutube.com/shorts/dQw4w9WgXcQ', 'Formats Koutube share URL');
 
     const disallowed = fmt('dQw4w9WgXcQ', 'attacker.com');
-    assert(disallowed === 'https://youtube.com/shorts/dQw4w9WgXcQ', 'Disallowed host safely reverts to youtube.com default');
+    assert(disallowed === 'https://koutube.com/shorts/dQw4w9WgXcQ', 'Disallowed host safely reverts to Koutube preview default');
 
     const invalidId = fmt('short', 'yfxtube.com');
     assert(invalidId === null, 'Formatting with invalid ID returns null');
@@ -556,12 +560,12 @@ async function runYouTubeSharingTests() {
     await new Promise(r => setTimeout(r, 10));
     assert(clipboardText === 'https://koutube.com/shorts/SYNC_TEST_1', 'Dynamically updates to koutube.com on storage change');
 
-    // Malicious host rejected, resets to default original youtube.com
+    // Malicious host rejected, resets to the preview default.
     mockStorageListeners.forEach(cb => cb({ youtubeShareHost: { newValue: 'malicious.com' } }, 'local'));
     clipboardText = '';
     copyWrap.click();
     await new Promise(r => setTimeout(r, 10));
-    assert(clipboardText === 'https://youtube.com/shorts/SYNC_TEST_1', 'Disallowed host resets to default youtube.com');
+    assert(clipboardText === 'https://koutube.com/shorts/SYNC_TEST_1', 'Disallowed host resets to Koutube default');
 
     // Switch back to original youtube.com
     mockStorageListeners.forEach(cb => cb({ youtubeShareHost: { newValue: 'youtube.com' } }, 'local'));
@@ -718,7 +722,7 @@ async function runYouTubeSharingTests() {
     controller.setField('youtubeShareHost', 'unauthorized-site.com');
     console.log = () => {};
     try { await controller.save(); } finally { console.log = quietLog; }
-    assert(storedSettings.youtubeShareHost === 'youtube.com', 'Sanitizes invalid youtubeShareHost to default youtube.com');
+    assert(storedSettings.youtubeShareHost === 'koutube.com', 'Sanitizes invalid youtubeShareHost to Koutube default');
   }
 
   // Test 16: Deferred Scanning, Scheduling Paths, Throttling & Observer
@@ -1110,21 +1114,21 @@ async function runYouTubeSharingTests() {
     mockStorageListeners.forEach(cb => cb({ youtubeShareHost: { newValue: 'koutube.com' } }, 'local'));
     assert(ytSandbox.__getCachedYtShareHost() === 'koutube.com', 'Cached host is koutube.com');
 
-    // Deletion: { youtubeShareHost: { oldValue: 'koutube.com' } } -> should reset to youtube.com
+    // Deleted preference resets to the preview default.
     mockStorageListeners.forEach(cb => cb({ youtubeShareHost: { oldValue: 'koutube.com' } }, 'local'));
-    assert(ytSandbox.__getCachedYtShareHost() === 'youtube.com', 'Deleted preference resets to default youtube.com');
+    assert(ytSandbox.__getCachedYtShareHost() === 'koutube.com', 'Deleted preference resets to Koutube default');
 
     // Re-set to yfxtube.com
     mockStorageListeners.forEach(cb => cb({ youtubeShareHost: { newValue: 'yfxtube.com' } }, 'local'));
     assert(ytSandbox.__getCachedYtShareHost() === 'yfxtube.com', 'Updated to yfxtube.com');
 
-    // Invalid value: { youtubeShareHost: { newValue: 'malicious.com' } } -> should reset to youtube.com
+    // Invalid value resets to the preview default.
     mockStorageListeners.forEach(cb => cb({ youtubeShareHost: { newValue: 'malicious.com' } }, 'local'));
-    assert(ytSandbox.__getCachedYtShareHost() === 'youtube.com', 'Invalid host resets to default youtube.com');
+    assert(ytSandbox.__getCachedYtShareHost() === 'koutube.com', 'Invalid host resets to Koutube default');
 
     // Storage area isolation: sync change should be ignored
     mockStorageListeners.forEach(cb => cb({ youtubeShareHost: { newValue: 'koutube.com' } }, 'sync'));
-    assert(ytSandbox.__getCachedYtShareHost() === 'youtube.com', 'Non-local (sync) storage change is ignored');
+    assert(ytSandbox.__getCachedYtShareHost() === 'koutube.com', 'Non-local (sync) storage change is ignored');
 
     // Subsequent valid update
     mockStorageListeners.forEach(cb => cb({ youtubeShareHost: { newValue: 'koutube.com' } }, 'local'));

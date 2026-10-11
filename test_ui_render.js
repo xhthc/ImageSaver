@@ -412,7 +412,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p.mousedown(p.tabs()[4]);
     const ids = ['xShareHostSelect', 'igShareHostSelect', 'ttShareHostSelect', 'youtubeShareHostSelect'];
     assert(ids.every((id) => { const t = p.q(`#${id}`); return t && t.getAttribute('role') === 'combobox' && p.q(`label[for="${id}"]`); }), 'R7q: the four share-host selects are labelled comboboxes');
-    assert(ids.map((id) => p.q(`#${id}`).textContent).join('|') === 'x.com|instagram.com|tiktok.com|youtube.com', 'R7r: collapsed fields show only their stored domains');
+    assert(ids.map((id) => p.q(`#${id}`).textContent).join('|') === 'fixupx.com|oginstagram.com|tnktok.com|koutube.com', 'R7r: missing preferences select the four preview defaults');
     const help = p.q('[data-slot="embed"] [data-slot="collapsible-trigger"]');
     assert(/Копировать ссылку/.test(p.q('[data-slot="embed"]').textContent) && help.getAttribute('aria-expanded') === 'false' && !/сторонние сервисы/.test(p.q('[data-slot="embed"]').textContent) && p.q('#settingsSaveBar'), 'R7s: concise description and explicit save remain; provider details start collapsed');
     await p.click(help);
@@ -422,13 +422,13 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p.key(p.q('#xShareHostSelect'), 'Enter');
     await p.settle(6);
     const options = p.qa('[role="option"]');
-    assert(options.length === 3 && options.map((o) => o.textContent).join('|').includes('fixupx.com (основной)'), 'R7t: opening a select lists its three allowed hosts');
+    assert(options.length === 3 && options.map((o) => o.textContent).join('|') === 'fixupx.com (по умолчанию)|x.com (оригинал)|cunnyx.com (резерв)', 'R7t: preview default first, optional original and backup remain available');
     await p.key(options[1], 'Enter');
     await p.settle(6);
-    assert(p.q('#xShareHostSelect').textContent === 'fixupx.com', 'R7u: choosing a host shows its domain in the field');
+    assert(p.q('#xShareHostSelect').textContent === 'x.com', 'R7u: the original is an explicit selectable option');
     state.failSet = false;
     await p.click(p.q('#saveButton'));
-    assert(p.calls.localSets[p.calls.localSets.length - 1].xShareHost === 'fixupx.com' && p.calls.localSets[p.calls.localSets.length - 1].igShareHost === 'instagram.com', 'R7v: only the changed host differs in the saved values');
+    assert(p.calls.localSets[p.calls.localSets.length - 1].xShareHost === 'x.com' && p.calls.localSets[p.calls.localSets.length - 1].igShareHost === 'oginstagram.com', 'R7v: original choice saves without changing other preview defaults');
     await p.unmount();
   }
 

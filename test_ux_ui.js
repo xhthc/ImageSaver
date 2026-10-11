@@ -368,10 +368,15 @@ function makeChrome(state) {
 
     const a = await mountSettings({ askEveryTime: true });
     const st = a.st;
-    assert(st().subfolder === 'SavedImages' && st().folderOrganizationMode === 'single' && !('askEveryTime' in st()) && st().xShareHost === 'x.com' && st().igShareHost === 'instagram.com' && st().ttShareHost === 'tiktok.com' && st().youtubeShareHost === 'youtube.com' && st().loaded === true, '26a: existing defaults are loaded unchanged on the full page');
-    assert(JSON.stringify(Object.keys(DEFAULTS).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && JSON.stringify(DEFAULTS) === JSON.stringify({ subfolder: 'SavedImages', folderOrganizationMode: 'single', xShareHost: 'x.com', igShareHost: 'instagram.com', ttShareHost: 'tiktok.com', youtubeShareHost: 'youtube.com' }), '26a2: the remaining settings have their previous defaults; Save As is absent');
+    assert(st().subfolder === 'SavedImages' && st().folderOrganizationMode === 'single' && !('askEveryTime' in st()) && st().xShareHost === 'fixupx.com' && st().igShareHost === 'oginstagram.com' && st().ttShareHost === 'tnktok.com' && st().youtubeShareHost === 'koutube.com' && st().loaded === true, '26a: preview defaults are loaded on the full page');
+    assert(JSON.stringify(Object.keys(DEFAULTS).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && JSON.stringify(DEFAULTS) === JSON.stringify({ subfolder: 'SavedImages', folderOrganizationMode: 'single', xShareHost: 'fixupx.com', igShareHost: 'oginstagram.com', ttShareHost: 'tnktok.com', youtubeShareHost: 'koutube.com' }), '26a2: the remaining settings have preview defaults; Save As is absent');
     assert(st().notify.checked === false && st().notify.error === '', '26b: the Notifications section reflects the stored notifySuccess preference');
     assert(a.calls.localSets.length === 0, '26b2: loading and editing write nothing');
+
+    const originals = { xShareHost: 'x.com', igShareHost: 'instagram.com', ttShareHost: 'tiktok.com', youtubeShareHost: 'youtube.com' };
+    const explicit = await mountSettings(originals);
+    assert(Object.entries(originals).every(([key, value]) => explicit.st()[key] === value) && explicit.calls.localSets.length === 0, '26b2a: loading retains explicit original choices without migrating or overwriting them');
+    assert(await explicit.settings.save() && Object.entries(originals).every(([key, value]) => explicit.state.local[key] === value), '26b2b: explicit originals remain saved after the preview defaults change');
 
     a.settings.setField('subfolder', '  My/Pics  ');
     a.settings.setField('folderOrganizationMode', 'by_site_and_type');
@@ -383,7 +388,7 @@ function makeChrome(state) {
     assert(a.settings.preview().text === 'Загрузки/My/Pics/x/pic/photo.jpg' && a.settings.preview().error === false, '26b4: the example path follows the folder and the organization mode');
     assert(await a.settings.save() === true);
     const saved = a.calls.localSets[a.calls.localSets.length - 1];
-    assert(JSON.stringify(Object.keys(saved).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && saved.folderOrganizationMode === 'by_site_and_type' && !('askEveryTime' in saved) && saved.xShareHost === 'fixupx.com' && saved.youtubeShareHost === 'koutube.com' && saved.igShareHost === 'instagram.com' && saved.ttShareHost === 'tiktok.com', '26c: "Сохранить настройки" writes exactly the six remaining Saving/Embed keys with allowlisted values');
+    assert(JSON.stringify(Object.keys(saved).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && saved.folderOrganizationMode === 'by_site_and_type' && !('askEveryTime' in saved) && saved.xShareHost === 'fixupx.com' && saved.youtubeShareHost === 'koutube.com' && saved.igShareHost === 'oginstagram.com' && saved.ttShareHost === 'tnktok.com', '26c: "Сохранить настройки" writes exactly the six remaining Saving/Embed keys with allowlisted values');
     assert(a.state.local.notifySuccess === false && a.state.local.historyEnabled === true && a.state.local.unrelatedKey === 'keep-me', '26d: saving settings leaves notifySuccess, historyEnabled and unrelated values untouched');
     assert(st().subfolder === 'My/Pics' && /Настройки успешно сохранены/.test(ru(st().status.message)) && st().status.type === 'success' && timers.pop().ms === STATUS_MS, '26d2: the form shows the sanitized value and a success message that clears itself');
 
@@ -438,9 +443,9 @@ function makeChrome(state) {
     const e4 = createHistory({ chrome: makeChrome({ session: [], history: [], local: {}, failGet: true }).chrome, FB });
     await e4.start();
     assert(e4.store.getState().enabled === false && /считается выключенной/.test(ru(e4.store.getState().prefError)), '26l: an unreadable history preference is off and says so');
-    assert(cleanHost('xShareHost', 'evil.example') === 'x.com' && cleanHost('igShareHost', 'kirkstagram.com') === 'kirkstagram.com' && cleanHost('ttShareHost', '__proto__') === 'tiktok.com' && cleanHost('youtubeShareHost', 'koutube.com') === 'koutube.com' && ALLOWED_HOSTS.xShareHost.length === 3, '26m: a share host outside its allow-list falls back to the original service');
+    assert(cleanHost('xShareHost', 'evil.example') === 'fixupx.com' && cleanHost('igShareHost', 'kirkstagram.com') === 'kirkstagram.com' && cleanHost('ttShareHost', '__proto__') === 'tnktok.com' && cleanHost('youtubeShareHost', 'koutube.com') === 'koutube.com' && ALLOWED_HOSTS.xShareHost.length === 3, '26m: a share host outside its allow-list falls back to the preview default');
     const mal = await mountSettings({ xShareHost: 'evil.example', folderOrganizationMode: 'bogus', askEveryTime: 'yes', subfolder: 42 });
-    assert(mal.st().xShareHost === 'x.com' && mal.st().folderOrganizationMode === 'single' && !('askEveryTime' in mal.st()) && mal.st().subfolder === 'SavedImages', '26n: malformed values are normalized and the removed preference is ignored');
+    assert(mal.st().xShareHost === 'fixupx.com' && mal.st().folderOrganizationMode === 'single' && !('askEveryTime' in mal.st()) && mal.st().subfolder === 'SavedImages', '26n: malformed values are normalized and the removed preference is ignored');
   }
 
   // =================================================================================================
@@ -899,14 +904,14 @@ function makeChrome(state) {
     const hostMade = makeChrome(hostState);
     const hostCtrl = createSettings({ chrome: hostMade.chrome, FolderPath });
     await hostCtrl.load();
-    assert(hostCtrl.store.getState().xShareHost === 'x.com', '32u: load normalizes invalid xShareHost to default');
-    assert(hostCtrl.store.getState().igShareHost === 'instagram.com', '32v: load normalizes invalid igShareHost to default');
-    assert(hostCtrl.store.getState().ttShareHost === 'tiktok.com', '32w: load normalizes invalid ttShareHost to default');
-    assert(hostCtrl.store.getState().youtubeShareHost === 'youtube.com', '32x: load normalizes invalid youtubeShareHost to default');
+    assert(hostCtrl.store.getState().xShareHost === 'fixupx.com', '32u: load normalizes invalid xShareHost to default');
+    assert(hostCtrl.store.getState().igShareHost === 'oginstagram.com', '32v: load normalizes invalid igShareHost to default');
+    assert(hostCtrl.store.getState().ttShareHost === 'tnktok.com', '32w: load normalizes invalid ttShareHost to default');
+    assert(hostCtrl.store.getState().youtubeShareHost === 'koutube.com', '32x: load normalizes invalid youtubeShareHost to default');
 
     hostCtrl.setField('youtubeShareHost', 'hacker.org');
     await hostCtrl.save();
-    assert(hostState.local.youtubeShareHost === 'youtube.com', '32y: save sanitizes unapproved youtube share host to default');
+    assert(hostState.local.youtubeShareHost === 'koutube.com', '32y: save sanitizes unapproved youtube share host to default');
 
     // 32z: Inspectable failure details across stages (download error, convert error code)
     const downloadFailRec = rec({

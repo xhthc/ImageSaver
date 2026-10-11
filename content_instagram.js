@@ -99,7 +99,7 @@
   </svg>`;
 
   const ALLOWED_IG_SHARE_HOSTS = ['instagram.com', 'oginstagram.com', 'kirkstagram.com'];
-  const DEFAULT_IG_SHARE_HOST = 'instagram.com';
+  const DEFAULT_IG_SHARE_HOST = 'oginstagram.com';
   let cachedIgShareHost = DEFAULT_IG_SHARE_HOST;
 
   // Initialize and synchronize cachedIgShareHost from storage

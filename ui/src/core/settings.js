@@ -3,7 +3,7 @@
 // - "Saving" (subfolder, folder organization) and "Embed" (four share hosts) are saved together by the
 //   explicit "Save settings" action; nothing is written before it. Input is validated and normalized by the shared
 //   folder rules (lib/folder_path.js, the same code the background uses); an over-long or too deep path is rejected, never
-//   silently shortened. A share host outside its allow-list falls back to the original service.
+//   silently shortened. A share host outside its allow-list falls back to the configured preview default.
 // - The success-notification preference (`notifySuccess`, default on) is saved immediately; a failed write reverts it.
 // - Messages are stored as catalogue keys (lib/i18n.js: '' | key | { key, vars }) and translated when rendered, so a language
 //   change also re-renders a message that is already shown.
@@ -21,15 +21,15 @@ export const ALLOWED_HOSTS = Object.freeze({
 export const DEFAULTS = Object.freeze({
   subfolder: 'SavedImages',
   folderOrganizationMode: 'single',
-  xShareHost: 'x.com',
-  igShareHost: 'instagram.com',
-  ttShareHost: 'tiktok.com',
-  youtubeShareHost: 'youtube.com',
+  xShareHost: 'fixupx.com',
+  igShareHost: 'oginstagram.com',
+  ttShareHost: 'tnktok.com',
+  youtubeShareHost: 'koutube.com',
 });
 
 export const STATUS_MS = 2500;
 
-/** A stored/selected host inside its allow-list, otherwise the default (original service). */
+/** A stored/selected host inside its allow-list, otherwise the preview default. */
 export function cleanHost(key, value) {
   return ALLOWED_HOSTS[key].includes(value) ? value : DEFAULTS[key];
 }

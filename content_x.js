@@ -1279,7 +1279,7 @@
   </svg>`;
 
   const ALLOWED_X_SHARE_HOSTS = ['x.com', 'fixupx.com', 'cunnyx.com'];
-  const DEFAULT_X_SHARE_HOST = 'x.com';
+  const DEFAULT_X_SHARE_HOST = 'fixupx.com';
   let cachedXShareHost = DEFAULT_X_SHARE_HOST;
 
   // Initialize and synchronize cachedXShareHost from storage

@@ -106,7 +106,7 @@
   </svg>`;
 
   const ALLOWED_TT_SHARE_HOSTS = ['tiktok.com', 'tnktok.com', 'd.tnktok.com'];
-  const DEFAULT_TT_SHARE_HOST = 'tiktok.com';
+  const DEFAULT_TT_SHARE_HOST = 'tnktok.com';
   let cachedTtShareHost = DEFAULT_TT_SHARE_HOST;
 
   // Initialize and synchronize cachedTtShareHost from storage
