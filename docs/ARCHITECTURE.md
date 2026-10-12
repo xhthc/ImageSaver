@@ -71,6 +71,8 @@ The UI build targets Chromium 120 and emits local scripts/styles with no remote 
 
 UI motion uses shared 120ms feedback/exit and 180ms entry/disclosure timings with consistent easing. CSS animates Radix menus/tooltips through their existing mount/unmount lifecycle; disclosure padding stays inside the measured wrapper to avoid a closing jump. Panels remain mounted, and byte progress and bulk removal are not delayed by animation. Page-notice dismissal releases focus/actions immediately while its visual card fades for 120ms; new arrivals retire fading cards before admission to preserve the three-card bound. Reduced motion removes effects, including notice exits, without changing the outcome or controls. Native browser popup windows and context menus retain browser-controlled behavior.
 
+Committed language changes animate the existing page from 65% to full opacity for 180ms. Initial preference hydration and failed writes do not animate; a new change, page unmount or reduced-motion preference cancels the effect. Translations, document language and title update together without remounting controls or delaying persistence. Human-facing X platform labels use `x.com`; stored site identifiers, diagnostic fields and actual folder paths remain unchanged.
+
 GitHub checks use the fixed `xhthc/MediaLatch` releases endpoint. The old repository cache is ignored. No release-supplied HTML or navigation URL is trusted, and no extension code is installed by this controller.
 
 ## Release and validation

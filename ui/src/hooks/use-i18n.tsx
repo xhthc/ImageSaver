@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react"
+import { createContext, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from "react"
 
 import { createLanguage } from "@/core/language.js"
 import { translator } from "@/core/i18n.js"
@@ -17,14 +17,34 @@ const I18nContext = createContext<Translator>({ ...translator("en"), language: n
 export function I18nProvider({ language, titleKey, children }: { language: LanguageController; titleKey?: string; children: ReactNode }) {
   const s: any = useStore(language.store)
   const value = useMemo(() => ({ ...translator(s.lang), language }), [s.lang, language])
-  useEffect(() => {
+  const previous = useRef<{ lang: string; ready: boolean } | null>(null)
+  useLayoutEffect(() => {
+    const changed = previous.current?.ready && previous.current.lang !== value.lang
+    previous.current = { lang: value.lang, ready: s.ready }
     try {
       document.documentElement.lang = value.lang
       if (titleKey) document.title = value.t(titleKey)
+      const page = document.querySelector<HTMLElement>("[data-popup]")
+      if (!changed || !page?.animate) return
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)")
+      if (reduced.matches) return
+      const style = getComputedStyle(page)
+      const duration = style.getPropertyValue("--motion-normal").trim() || "180ms"
+      // Animate the committed text, preserving mounted controls and their focus/drafts.
+      const animation = page.animate([{ opacity: 0.65 }, { opacity: 1 }], {
+        duration: parseFloat(duration) * (duration.endsWith("ms") ? 1 : 1000),
+        easing: style.getPropertyValue("--motion-enter").trim() || "ease-out",
+      })
+      const stop = () => { if (reduced.matches) animation.cancel() }
+      reduced.addEventListener("change", stop)
+      return () => {
+        reduced.removeEventListener("change", stop)
+        animation.cancel()
+      }
     } catch {
-      /* no document (tests): nothing to update */
+      /* Presentation is optional when the document or animation API is unavailable. */
     }
-  }, [value, titleKey])
+  }, [value, titleKey, s.ready])
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }
 

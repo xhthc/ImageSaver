@@ -708,7 +708,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
       return true;
     };
     const tabNames = (p) => p.tabs().map((t) => t.textContent.trim()).join('|');
-    const failRec = rec({ state: 'failed', filename: 'clip <img src=x onerror=1> & co.mp4', filenameKind: 'intended', output: { type: 'video', ext: '.mp4', evidence: 'filename_hint' }, failure: failure('download', 'download_interrupted', { downloadError: 'NETWORK_FAILED' }) });
+    const failRec = rec({ state: 'failed', site: 'x', filename: 'clip <img src=x onerror=1> & co.mp4', filenameKind: 'intended', output: { type: 'video', ext: '.mp4', evidence: 'filename_hint' }, failure: failure('download', 'download_interrupted', { downloadError: 'NETWORK_FAILED' }) });
     const state = { session: [rec({ filename: 'Фото.jpg' }), failRec], history: [rec({ filename: 'old-entry.jpg' })], local: { historyEnabled: true } };
 
     const full = await page('full', state, { hash: '#saving' });
@@ -717,6 +717,20 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(langBox && langBox.getAttribute('role') === 'combobox' && full.q('label[for="languageSelect"]').textContent === 'Язык' && /Русский/.test(langBox.textContent), 'R13b: the language choice is a labelled combobox showing the current language');
     const quick = await page('quick', state);
     assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Настройки' && quick.doc.documentElement.lang === 'ru', 'R13c: the compact popup opens in the same language');
+    assert(full.text().includes('x.com: отдельная папка') && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13c-labels: Russian author-folder and link-preview settings display x.com');
+
+    const trackMotion = (p) => {
+      const animations = [], listeners = new Set();
+      const media = { matches: false, addEventListener: (_, fn) => listeners.add(fn), removeEventListener: (_, fn) => listeners.delete(fn) };
+      p.win.matchMedia = () => media;
+      p.win.HTMLElement.prototype.animate = function () {
+        const a = { target: this, cancelled: false, cancel() { this.cancelled = true; } };
+        animations.push(a);
+        return a;
+      };
+      return { animations, listeners, reduce() { media.matches = true; for (const fn of listeners) fn(); } };
+    };
+    const fullMotion = trackMotion(full), quickMotion = trackMotion(quick);
 
     // an unsaved edit survives en -> ru -> en; only the language is written
     await full.type(full.q('#subfolderInput'), 'Unsaved/Edit');
@@ -725,11 +739,17 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(tabNames(full) === 'Downloads|Statistics|Saving|Notifications|Embed|Updates|Debug' && full.doc.documentElement.lang === 'en' && full.doc.title === 'MediaLatch: downloads and settings', 'R13e: ru -> en switches the open page at once (tabs, lang, title)');
     assert(full.q('#subfolderInput').value === 'Unsaved/Edit' && full.q('#folderPreviewPath').textContent === 'Downloads/Unsaved/Edit/photo.jpg' && JSON.stringify(full.calls.localSets.slice(setsBefore)) === JSON.stringify([{ uiLanguage: 'en' }]), 'R13f: the unsaved folder edit is kept and only uiLanguage is written');
     assert(/Save settings/.test(full.q('#saveButton').textContent) && /“MediaLatch: Save media”/.test(full.text()) && full.q('label[for="languageSelect"]').textContent === 'Language', 'R13g: buttons, labels and the fixed menu title follow');
+    assert(full.text().includes('x.com: create a folder') && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13g-labels: English author-folder and link-preview labels display x.com');
     await quick.settle(6);
     assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && quick.doc.documentElement.lang === 'en' && /Saved/.test(quick.qa('[data-job]')[1].textContent), 'R13h: the open compact popup follows the change made on the full page (rows and accessible names)');
+    assert(full.qa('[data-slot="result-item"]').some((row) => row.textContent.includes('x.com')), 'R13h-labels: the loaded manager result card displays x.com for a stored x record');
     assert(quick.qa('[data-job]')[0].textContent.includes('clip <img src=x onerror=1> & co.mp4') && quick.doc.querySelectorAll('img').length === 0, 'R13i: an original file name is shown as text in every language, never as markup');
     assert(await chooseLanguage(full, 'Русский') && tabNames(full).startsWith('Загрузки') && full.q('#subfolderInput').value === 'Unsaved/Edit', 'R13j: en -> ru keeps the edit');
     assert(await chooseLanguage(full, 'English') && tabNames(full).startsWith('Downloads') && full.q('#subfolderInput').value === 'Unsaved/Edit' && state.local.uiLanguage === 'en' && state.local.subfolder === undefined, 'R13k: ru -> en again; the folder edit is still unsaved');
+    await quick.settle(6);
+    assert(fullMotion.animations.length === 3 && quickMotion.animations.length === 3 && fullMotion.animations.every((a) => a.target === full.q('[data-popup]')), 'R13k-motion: each committed switch animates both mounted pages once; storage echoes do not restart it');
+    fullMotion.reduce();
+    assert(fullMotion.animations.every((a) => a.cancelled), 'R13k-reduce: replacing the language cancels old effects; enabling reduced motion stops the current effect');
     await full.mousedown(full.tabs()[1]);
     assert(/Statistics/.test(full.text()) && /Record statistics/.test(full.text()) && !/Save history/.test(full.text()), 'R13l: statistics, history and results are English');
     const failRow = full.qa('[data-slot="results-section"] [data-slot="result-item"]').find((r) => r.getAttribute('data-state-kind') === 'failed');
@@ -739,13 +759,16 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     // close / reopen: the saved choice is read again
     await quick.unmount();
     await full.unmount();
+    assert(quickMotion.animations.every((a) => a.cancelled) && !quickMotion.listeners.size && !fullMotion.listeners.size, 'R13n-cleanup: closing pages cancels effects and releases preference listeners');
     const reopened = await page('full', state);
     assert(tabNames(reopened).startsWith('Downloads') && reopened.doc.documentElement.lang === 'en', 'R13n: a reopened page uses the saved English choice over the Russian browser');
 
     // a failed write keeps the language and says so
     state.failSet = true;
+    const failedMotion = trackMotion(reopened);
     await chooseLanguage(reopened, 'Русский');
     assert(tabNames(reopened).startsWith('Downloads') && state.local.uiLanguage === 'en' && /Could not save the language/.test(reopened.q('[data-slot="language-status"]').textContent), 'R13o: a failed write keeps English and reports the failure (no success state)');
+    assert(failedMotion.animations.length === 0, 'R13o-motion: a failed language write has no success transition');
     state.failSet = false;
     await reopened.unmount();
 

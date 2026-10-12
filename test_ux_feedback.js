@@ -1217,6 +1217,13 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       output: { type: 'video', ext: '.mp4', evidence: 'verified_mime', mime: 'video/mp4', durationSec: d, reason: REASON, thresholdSec: t } });
     const baseRec = (extra = {}) => Object.assign({ id: 'op-1abcdef', createdAt: 1700000000000, updatedAt: 1700000000000, state: 'complete', site: 'reddit.com' }, extra);
 
+    for (const lang of ['en', 'ru']) {
+      const notes = [], record = FB.sanitizeRecord(baseRec({ site: 'x' }));
+      await mkNotifier(notes, { lang })(record);
+      assert(notes.length === 1 && notes[0].o.title === (lang === 'en' ? 'x.com: saved' : 'x.com: сохранено') && FB.summarize(record, lang).lines[0].endsWith('x.com'), '22-x-label [' + lang + ']: notices and result details display x.com for existing x records');
+      assert(record.site === 'x' && /resource_site: x\n/.test(FB.buildReport(record)) && FB.siteLabel('pixiv') === 'pixiv', '22-x-identity [' + lang + ']: display formatting leaves stored identifiers, diagnostics and other sites unchanged');
+    }
+
     // schema: the allowlisted reason and the bounded numbers survive sanitization, record-level and in the output
     const ok = FB.sanitizeRecord(baseRec({ reason: REASON, durationSec: 35.25, thresholdSec: 30, output: { type: 'video', ext: '.mp4', evidence: 'verified_mime', mime: 'video/mp4', durationSec: 35.25, reason: REASON, thresholdSec: 30 } }));
     assert(ok.reason === REASON && ok.durationSec === 35.25 && ok.thresholdSec === 30 && ok.output.reason === REASON && ok.output.thresholdSec === 30 && ok.output.durationSec === 35.25, '22a: sanitizeRecord keeps the allowlisted reason, the measured duration and the threshold (record and output)');

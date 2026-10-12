@@ -15,12 +15,12 @@ export const STATS_SCOPE_NOTE = translator('ru').t('stats.scope');
 /**
  * Row texts shared by the popup list and the history: the saved basename is the main text; result, site, type and (for an
  * unconfirmed name) the naming caveat are secondary. Records without a name (older records, failures before naming) keep
- * the previous summary line as the main text. Original names, sites and extensions are shown as they are.
+ * the previous summary line as the main text. Original names and extensions are shown as they are; sites use display labels.
  */
 export function rowParts(FB, record, lang = 'ru') {
   const { t } = translator(lang);
   const summary = FB.summarize(record, lang);
-  const site = record.site || record.sourceHost || t('row.siteUnknown');
+  const site = FB.siteLabel(record.site || record.sourceHost || t('row.siteUnknown'));
   const type = record.output.type !== 'unknown'
     ? ' · ' + t(record.output.type === 'pic' ? 'type.pic' : record.output.type === 'gif' ? 'type.gif' : 'type.video') + (record.output.ext ? ' ' + record.output.ext : '')
     : '';
