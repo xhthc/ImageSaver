@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/assets/banner.svg" alt="MediaLatch — save available originals" width="880"></p>
 
-<p align="center"><a href="README.ru.md">Русский</a> · <a href="https://github.com/xhthc/MediaLatch/releases">Downloads</a> · <a href="docs/PRIVACY.md">Privacy</a> · <a href="LICENSE">GPL-3.0</a></p>
+<p align="center"><a href="README.ru.md">Русский</a> · <a href="https://github.com/xhthc/MediaLatch/releases">Download preview</a> · <a href="#quick-start">Quick start</a> · <a href="#roadmap">Roadmap</a> · <a href="docs/PRIVACY.md">Privacy</a></p>
 
 MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**. Source discovery starts after you choose Save; the menu title stays fixed.
 
@@ -8,18 +8,64 @@ MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible 
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
+> **Development source is newer than that ZIP.** Screenshots, selected-folder/X-author options and the manager below require a newer source build. Installing v2.0.0.28 does not add them.
+
+## Quick start
+
+1. Install the runtime ZIP using the instructions below.
+2. Right-click an image, video or supported preview and choose **MediaLatch: Save media**. On X, try **Shift + right-click** if the site intercepts the menu.
+3. In the packaged preview, check the save notification; the toolbar popup opens settings and shows recent results when history is enabled. In a development build, the popup tracks downloads; **Open download manager** leads to details and recovery actions.
+4. In a development build, open **Saving**, choose a destination and organization, then press **Save settings**. Files default to `Downloads/SavedImages/`.
+
+An automatic first-run introduction is planned; this quick guide is available now.
+
+## Interface
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/settings-saving.png" alt="Violet Saving settings: destination, organization and example path"><br><strong>Choose where files go</strong><br>Destination, optional subfolder, author folders and a live path example.</td>
+    <td width="50%"><img src="docs/assets/settings-links.png" alt="Link previews: one domain selector per platform"><br><strong>Choose how links are shared</strong><br>One selector per platform; service details stay expandable.</td>
+  </tr>
+</table>
+
+Development interface with demonstration settings. Violet by default, English/Russian localization and short transitions that respect reduced motion.
+
+## Install
+
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.28-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
+3. After replacing a build, reload the extension **and refresh site tabs**.
+
+Alternatively, clone and load the repository root:
+
+```bash
+git clone https://github.com/xhthc/MediaLatch.git
+```
+
+To update an unpacked installation, replace the files in its existing folder, then click **Reload** on the browser's extensions page and refresh site tabs. Keep the same folder to retain the extension's identity and settings.
+
+The committed `popup/` pages are ready to use. Node/npm are needed only for development. Unpacked installs update manually; store updates will be a separate distribution path.
+
 ## Features
 
 The themes, all-time Statistics and staged download manager below describe the development source. They are not included in the packaged v2.0.0.28 preview above. The user confirmed themes, Statistics and ordinary downloads in Helium, including the corrected Russian tabs and unified download cards; browser-restart, quota and broader media checks remain pending.
+
+### Save the selected media
 
 - Original discovery through site adapters, image links, `srcset`, media attributes and unambiguous CSS backgrounds or overlays.
 - Native images/GIFs and accessible MP4/WebM videos. Exact declared URLs, including signatures, are preserved.
 - Genuine looping GIFs from confirmed X and Reddit MP4 animations. Animations longer than 30 seconds or exceeding conversion size limits remain source MP4; other conversion failures are reported.
 - Compact inline save controls on X, Reddit and RedGIFs, with bounded post batches on X and Reddit.
 - All distinct declared original media from a Pawchive feed preview, including the original cover. Selecting an individual attachment saves that attachment.
-- A Downloads subfolder, optional site/type organization, save results and copyable redacted error reports.
-- Violet interface theme by default, with optional Blue, Dark and Light themes. Saved choices apply across the popup and settings page; existing preferences are preserved. Brief interface animations respect reduced motion.
+
+### Manage files
+
+- Choose a writable base folder, an optional subfolder and site/type organization. X can also use folders named after the selected post author. Save results and redacted error reports stay in the manager.
 - Download manager with received/total bytes, speed and approximate remaining time when measurable. Complete files are staged locally before browser export; failed export can retry from retained bytes without another source download.
+
+### Settings and diagnostics
+
+- Violet interface theme by default, with optional Blue, Dark and Light themes. Saved choices apply across the popup and settings page; existing preferences are preserved. Brief interface animations respect reduced motion.
 - Opt-in local statistics without an entry count or time limit, with recording and clear controls. Available old history is imported once; expired or removed records cannot be reconstructed.
 - Opt-in local Debug journal with filters, copy/export and clear controls: up to 2,000 events, 1 MiB and 24 hours. Full URLs, tokens, page text and local paths are excluded.
 - Supported post-link copying on X, Instagram, TikTok and YouTube Shorts, with optional preview-link hosts.
@@ -40,22 +86,6 @@ The themes, all-time Statistics and staged download manager below describe the d
 Kemono is deferred while the site is unavailable. Broader booru compatibility needs separate integration and live validation. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
 
 Existing post batches on X, Reddit, Pixiv and Pawchive share a limit of 100 owned items. Completeness and per-item ownership checks remain; a larger limit does not turn a whole feed into a download batch. Source preparation stays bounded and HTTP 429 stops further admission where supported.
-
-## Install
-
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.28-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
-2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
-3. After replacing a build, reload the extension **and refresh site tabs**.
-
-Alternatively, clone and load the repository root:
-
-```bash
-git clone https://github.com/xhthc/MediaLatch.git
-```
-
-To update an unpacked installation, replace the files in its existing folder, then click **Reload** on the browser's extensions page and refresh site tabs. Keep the same folder to retain the extension's identity and settings.
-
-The committed `popup/` pages are ready to use. Node/npm are needed only for development. Unpacked installs update manually; store updates will be a separate distribution path.
 
 ## Use and settings
 
@@ -85,7 +115,7 @@ There is no telemetry or extension backend. Statistics and Debug recording are o
 
 ## Roadmap
 
-Plans below are **not implemented in this preview**. They describe direction, not promised dates or support for every layout. Reliability comes first; each capability needs a separate implementation and browser check.
+Statuses below describe development, not the packaged v2.0.0.28 ZIP. They describe direction, not promised dates or support for every layout. Reliability comes first; each capability needs a separate implementation and browser check.
 
 | Area | Planned result | Status |
 |---|---|---|
@@ -98,18 +128,16 @@ Plans below are **not implemented in this preview**. They describe direction, no
 | Kemono | Declared same-post originals and scoped feed behavior | Deferred until the site is usable |
 | Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
 | Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Planned; security/privacy gates first |
+| Settings and documentation | Compact settings groups, visual quick start and EN/RU README | Implemented in development; user visual acceptance pending |
+| First-run setup | Short introduction: choose a destination, learn context-menu/inline saving, open the manager and start a first download; skip or reopen the guide | Planned; separate task |
 
 The Telegram/VK roadmap concerns **publishing**.
 
 ## Security before store submission
 
-RCE (remote code execution) is a vulnerability to prevent. Executable extension code is bundled locally; release checks read metadata and never install or run downloaded code. Manifest V3's default extension-page CSP applies.
+Before submission: packaged-code/CSP checks, sender/action/frame validation, URL/redirect and private-network boundaries, minimum permissions, dependency/release integrity, malformed-media and resource-exhaustion checks. Broad HTTP/HTTPS access needs particular review. This is **a readiness plan, not a completed security audit or store approval**. Executable code is bundled locally; release checks read metadata and never install code.
 
-Priorities before Chrome Web Store submission: packaged-code/CSP checks, complete sender/action/frame validation, URL and redirect restrictions including private-network targets, a minimum-permission review, and dependency/release integrity. Keep page/API data out of executable code and unsafe HTML rendering; test malformed media and resource exhaustion. These are planned gates, **not a completed security audit or store approval**. Current broad HTTP/HTTPS access needs particular review.
-
-See [Security and store readiness](docs/SECURITY.md), [Privacy](docs/PRIVACY.md) and [Release preparation](docs/RELEASE.md).
-
-Beyond RCE, review XSS, forged runtime messages, SSRF/private-network access, unsafe download paths, resource exhaustion, data leaks and dependency/publisher-account compromise. Add defenses where the boundary review demonstrates a need; existing safeguards and remaining gaps are documented separately.
+See [Security](docs/SECURITY.md), [Privacy](docs/PRIVACY.md) and [Release preparation](docs/RELEASE.md).
 
 ## Development
 
@@ -127,6 +155,10 @@ Edit `ui/`, then rebuild `popup/`. Verification covers offline regressions, UI t
 [Architecture](docs/ARCHITECTURE.md) · [Release preparation](docs/RELEASE.md) · [Changelog](CHANGELOG.md)
 
 [Tests](test_suite.js): the main offline suite can also run directly with `node test_suite.js`.
+
+## Credits
+
+README organization and compact settings composition were inspired by [Libre Manga Translator](https://github.com/mrdhnto/libre-manga-translator). MediaLatch keeps its own implementation, assets and Violet theme.
 
 ## License
 

@@ -40,70 +40,80 @@ export function SavingPanel({ settings }: { settings: SettingsController }) {
           {t("tab.saving")}
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-5">
-        <div className="space-y-1.5">
-          <Label>{t('saving.baseFolder')}</Label>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-1 break-all text-sm">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t('saving.browserFolder')}</span>
-            <Button type="button" variant="outline" disabled={!s.loaded || s.saving || s.picking} onClick={()=>void settings.pickDirectory()}><FolderOpen/>{t('saving.chooseFolder')}</Button>
-            {s.saveDirectoryId?<Button type="button" variant="ghost" disabled={s.saving || s.picking} onClick={()=>settings.resetDirectory()}>{t('saving.useBrowserFolder')}</Button>:null}
+      <CardContent className="space-y-6">
+        <section aria-labelledby="destinationLabel" className="space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Label id="destinationLabel">{t('saving.baseFolder')}</Label>
+              <p className="break-all text-sm text-muted-foreground">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t('saving.browserFolder')}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" disabled={!s.loaded || s.saving || s.picking} onClick={()=>void settings.pickDirectory()}><FolderOpen/>{t('saving.chooseFolder')}</Button>
+              {s.saveDirectoryId?<Button type="button" variant="ghost" disabled={s.saving || s.picking} onClick={()=>settings.resetDirectory()}>{t('saving.useBrowserFolder')}</Button>:null}
+            </div>
           </div>
           <Hint>{t('saving.baseFolderHint')}</Hint>
           {s.directoryError?<Alert variant="destructive"><AlertDescription>{msg(s.directoryError)}</AlertDescription></Alert>:null}
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="subfolderInput">{t("saving.folderLabel")}</Label>
-          <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background/40 shadow-xs focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40">
-            <span className="flex max-w-[40%] items-center border-r bg-muted px-2.5 text-xs text-muted-foreground"><span className="truncate">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t("saving.downloads")}</span> /</span>
-            <Input
-              id="subfolderInput"
-              type="text"
-              value={s.subfolder}
-              placeholder="SavedImages"
-              spellCheck={false}
-              disabled={!s.loaded}
-              aria-describedby="folderPreviewHint"
-              className="min-w-0 flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
-              onChange={(e) => settings.setField("subfolder", e.target.value)}
-            />
+          <div className="space-y-1.5">
+            <Label htmlFor="subfolderInput">{t("saving.folderLabel")}</Label>
+            <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background/40 shadow-xs focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40">
+              <span className="flex max-w-[40%] items-center border-r bg-muted px-2.5 text-xs text-muted-foreground"><span className="truncate">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t("saving.downloads")}</span> /</span>
+              <Input
+                id="subfolderInput"
+                type="text"
+                value={s.subfolder}
+                placeholder="SavedImages"
+                spellCheck={false}
+                disabled={!s.loaded}
+                aria-describedby="folderPreviewHint"
+                className="min-w-0 flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                onChange={(e) => settings.setField("subfolder", e.target.value)}
+              />
+            </div>
+            <Hint>{t("saving.folderHint")}</Hint>
           </div>
-          <Hint>{t("saving.folderHint")}</Hint>
-        </div>
+        </section>
 
-        <div className="space-y-2">
+        <section aria-labelledby="folderModeLabel" className="space-y-3 border-t pt-5">
           <Label id="folderModeLabel">{t("saving.modeLabel")}</Label>
           <RadioGroup
             aria-labelledby="folderModeLabel"
             value={s.folderOrganizationMode}
             onValueChange={(v) => settings.setField("folderOrganizationMode", v)}
             disabled={!s.loaded}
-            className="gap-2"
+            className="grid gap-2 sm:grid-cols-2"
           >
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2.5 rounded-lg border bg-background/40 px-3 has-[[data-state=checked]]:border-ring">
               <RadioGroupItem value="single" id="folderModeSingle" />
-              <Label htmlFor="folderModeSingle" className="cursor-pointer font-normal">{t("saving.modeSingle")}</Label>
+              <Label htmlFor="folderModeSingle" className="min-h-11 flex-1 cursor-pointer py-2 font-normal">{t("saving.modeSingle")}</Label>
             </div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2.5 rounded-lg border bg-background/40 px-3 has-[[data-state=checked]]:border-ring">
               <RadioGroupItem value="by_site_and_type" id="folderModeBySiteType" />
-              <Label htmlFor="folderModeBySiteType" className="cursor-pointer font-normal">{t("saving.modeBySite")}</Label>
+              <Label htmlFor="folderModeBySiteType" className="min-h-11 flex-1 cursor-pointer py-2 font-normal">{t("saving.modeBySite")}</Label>
             </div>
           </RadioGroup>
+          <Hint secondary>{t("saving.modeHint")}</Hint>
+
+          <div className="flex items-center justify-between gap-4 border-t pt-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="xAuthorFolders" className="cursor-pointer">{t('saving.xAuthor')}</Label>
+              <Hint id="xAuthorHint">{t('saving.xAuthorHint')}</Hint>
+            </div>
+            <Switch id="xAuthorFolders" checked={s.xAuthorFolders} disabled={!s.loaded || s.saving} onCheckedChange={v=>settings.setField('xAuthorFolders',v)} aria-describedby="xAuthorHint"/>
+          </div>
+        </section>
+
+        <div className="rounded-lg border bg-muted/40 p-3">
           <Hint id="folderPreviewHint">
             {t("saving.example")}{" "}
             <span
               id="folderPreviewPath"
               data-error={preview.error ? "true" : "false"}
-              className={cn("rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] break-all", preview.error ? "text-danger" : "text-foreground")}
+              className={cn("mt-1.5 block font-mono text-xs break-all", preview.error ? "text-danger" : "text-foreground")}
             >
               {preview.text}
             </span>
           </Hint>
-          <Hint secondary>{t("saving.modeHint")}</Hint>
-        </div>
-
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2.5"><Switch id="xAuthorFolders" checked={s.xAuthorFolders} disabled={!s.loaded || s.saving} onCheckedChange={v=>settings.setField('xAuthorFolders',v)}/><Label htmlFor="xAuthorFolders" className="cursor-pointer">{t('saving.xAuthor')}</Label></div>
-          <Hint>{t('saving.xAuthorHint')}</Hint>
         </div>
 
       </CardContent>
