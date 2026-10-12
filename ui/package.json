@@ -10,7 +10,7 @@
     "check:built": "node scripts/check-built.mjs",
     "notices": "node scripts/gen-notices.mjs",
     "preview": "node scripts/preview-server.mjs",
-    "test:render": "node ../test_ui_render.js"
+    "test:render": "node ../tests/test_ui_render.js"
   },
   "dependencies": {
     "class-variance-authority": "0.7.1",
