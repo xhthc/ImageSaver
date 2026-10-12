@@ -10,7 +10,8 @@ const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 2, 0xff, 0xd9]);
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MP4 = new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 2, 0, 0x6d, 0x70, 0x34, 0x31, 0x6d, 0x70, 0x34, 0x32]);
 const read = (file) => fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
-const background = read('background.js') + '\n' + read('lib/media_format.js');
+const background = ['background.js', 'lib/media_format.js', 'lib/worker_providers.js', 'lib/worker_pipeline.js']
+  .map(read).join('\n');
 const offscreen = read('offscreen.js');
 const redgifs = read('content/content_redgifs.js');
 const functionSource = (source, name) => {

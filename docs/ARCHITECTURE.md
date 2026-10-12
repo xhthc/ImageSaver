@@ -77,6 +77,12 @@ GitHub checks use the fixed `xhthc/MediaLatch` releases endpoint. The old reposi
 
 ## Release and validation
 
+The worker now groups provider discovery in `lib/worker_providers.js`, plan execution in `lib/worker_pipeline.js` and shared X/Reddit animation lifetime in `lib/worker_animation.js`. They remain classic worker scripts imported at their original initialization boundaries; selected-owner proofs, signed addresses, MIME validation and transport policy stay unchanged. This grouping does not yet remove every shared worker dependency.
+
+`lib/worker_offscreen.js` creates a controller with explicit browser, messaging, download maps, tracking and manager-busy dependencies. Its ownership, creation/close single-flight and recovery state belong to that controller. A worker bridge preserves existing call order and interfaces. Unknown persisted ownership and unavailable download lookups still block destructive cleanup.
+
+`lib/download_contracts.d.ts` describes the existing download snapshot, commands and UI state. The downloads controller is checked with `@ts-check`; its React view infers the store type. Worker sender checks and runtime validation remain mandatory: the declarations do not validate message contents. Compile-only negative cases check misspelled commands/states and numeric job IDs. The original MIME/resource integration cases now run from `tests/cases/media_lifecycle.cjs` in their original order with the same shared fixtures; `tests/test_worker_offscreen.js` also checks the controller directly.
+
 Run `node tools/verify.mjs --ui` after building. It includes syntax, offline regressions, UI typecheck/render and source/build parity. Packaging reads only committed allow-listed runtime files and includes licence notices. Archive metadata records source commit, version, per-file hashes and ZIP hash.
 
 Offline mocks and render tests do not prove native browser behavior, actual downloaded bytes or audio. Live acceptance is recorded separately. The large background/test files are existing integration boundaries; split them only under a specific behavior-preserving task, rather than rewriting during release preparation.

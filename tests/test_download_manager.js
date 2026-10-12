@@ -308,7 +308,7 @@ function env(stored={jobs:[],paused:false}) {
     };
     const sandbox = {
       chrome, indexedDB: {}, crypto: { randomUUID: () => 'uuid' }, console: { log() {}, warn() {}, error() {} },
-      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_format|download_paths|site_resolvers)\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
+      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_format|download_paths|site_resolvers|worker_offscreen|worker_providers|worker_pipeline|worker_animation)\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
       ImageSaverFeedback: globalThis.ImageSaverFeedback,
       ImageSaverFeedbackTracker: globalThis.ImageSaverFeedbackTracker,
       MediaLatchDownloads: {
@@ -383,7 +383,7 @@ function env(stored={jobs:[],paused:false}) {
     let closed=0;
     chrome.runtime.getContexts=async()=>[{contextType:'OFFSCREEN_DOCUMENT'}];
     chrome.offscreen.closeDocument=async()=>{closed++;};
-    vm.runInContext('offscreenOwnershipKnown=true',sandbox);
+    vm.runInContext('offscreenState.offscreenOwnershipKnown=true',sandbox);
     capturedAdapter.activity(true);
     await sandbox.closeOffscreenDocument();assert.equal(closed,0,'busy manager owns the document');
     capturedAdapter.activity(false);await wait();assert.equal(closed,1,'manager idle closes unused document');
@@ -411,7 +411,7 @@ function env(stored={jobs:[],paused:false}) {
       const result=await work;
       if(action==='STAGING_VERIFY')assert.equal(result,true);
       assert.equal(closed,beforeClose+1,'completed '+action+' releases its last owner');
-      assert.equal(vm.runInContext('activeOffscreenTasks',sandbox),0);
+      assert.equal(vm.runInContext('offscreenState.activeOffscreenTasks',sandbox),0);
     }
   }
   console.log('PASS: production stream validation, byte identity, queue/export boundary, local retry, cancellation, journal failure, recovery and statistics');

@@ -12,12 +12,12 @@ import {ResultRow} from "@/components/app/result-row"
 const bytes=(n:number)=>n>=1048576?`${(n/1048576).toFixed(1)} MB`:n>=1024?`${(n/1024).toFixed(1)} KB`:`${n} B`
 type FeedbackController=ReturnType<typeof createFeedbackList>
 function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false}:{controller:ReturnType<typeof createDownloads>;feedback?:FeedbackController;records?:any[];unreadIds?:string[];focusId?:string;full?:boolean}) {
-  const s:any=useStore(controller.store),{t}=useI18n()
+  const s=useStore(controller.store),{t}=useI18n()
   const env=getEnv()
   const jobs=s.jobs.slice()
   // Keep old notification deep links inspectable even after their byte-queue record was removed.
   const focused=records.find(r=>r.id===focusId)
-  if(focused && !s.removingIds?.includes(focused.id) && !s.dismissedIds?.includes(focused.id) && !jobs.some((j:any)=>(j.op || j.id)===focusId))jobs.push({id:focused.id,op:focused.id,managed:false,state:focused.state==='interrupted'?'failed':focused.state,received:0})
+  if(focused && !s.removingIds?.includes(focused.id) && !s.dismissedIds?.includes(focused.id) && !jobs.some(j=>(j.op || j.id)===focusId))jobs.push({id:focused.id,op:focused.id,managed:false,filename:focused.filename || '',state:focused.state==='interrupted'?'failed':focused.state,received:0,total:null,speed:0,error:'',createdAt:focused.createdAt})
   return <section aria-label={t('downloads.heading')} className="space-y-3" data-slot={full?'results-section':undefined}>
     <div className="flex items-center justify-between gap-2">
       <h2 className="text-sm font-semibold">{t('downloads.heading')}</h2>
@@ -25,13 +25,13 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
       <Button variant="ghost" size={full?'sm':'icon'} disabled={s.busy} aria-label={t(s.paused?'downloads.resume':'downloads.pause')} title={t(s.paused?'downloads.resume':'downloads.pause')} onClick={()=>void controller.command('pause',undefined)}>
         {s.paused?<Play/>:<Pause/>}{full?t(s.paused?'downloads.resume':'downloads.pause'):null}
       </Button>
-      <Button variant="ghost" size="icon" disabled={s.busy || !s.jobs.some((j:any)=>['complete','failed','cancelled'].includes(j.state))} aria-label={t('downloads.clearFinished')} title={t('downloads.clearFinished')} onClick={()=>void controller.command('clearFinished',undefined)}><Trash2/></Button>
+      <Button variant="ghost" size="icon" disabled={s.busy || !s.jobs.some(j=>['complete','failed','cancelled'].includes(j.state))} aria-label={t('downloads.clearFinished')} title={t('downloads.clearFinished')} onClick={()=>void controller.command('clearFinished',undefined)}><Trash2/></Button>
       </div>
     </div>
     {s.error?<Alert variant="destructive"><AlertDescription>{t(s.error)}</AlertDescription></Alert>:null}
     {s.status==='loading'?<p className="text-xs text-muted-foreground">{t('downloads.loading')}</p>:null}
     {s.status==='ready' && !jobs.length?<p data-slot="empty" className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">{t('downloads.empty')}</p>:null}
-    <ul className="space-y-2" data-slot="download-jobs">{jobs.map((j:any)=>{
+    <ul className="space-y-2" data-slot="download-jobs">{jobs.map(j=>{
       const active=!['complete','failed','cancelled'].includes(j.state)
       const seconds=j.total && j.speed>0?Math.ceil((j.total-j.received)/j.speed):null
       const record=records.find(r=>r.id===(j.op || j.id))

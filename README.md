@@ -195,12 +195,6 @@ Edit `ui/`, then rebuild `popup/`. Verification covers offline regressions, UI t
 
 ---
 
-## Credits
-
-README organization and compact settings composition were inspired by [Libre Manga Translator](https://github.com/mrdhnto/libre-manga-translator). MediaLatch keeps its own implementation, assets and Violet theme.
-
----
-
 ## License
 
 Project-owned code is **GPL-3.0-only**. Third-party code and icon glyphs retain their original notices: [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), [UI notices](popup/THIRD_PARTY_NOTICES.txt) and the [MP4Box license](lib/vendor/mp4box/2.4.1/LICENSE).

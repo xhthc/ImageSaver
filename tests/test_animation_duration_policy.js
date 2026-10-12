@@ -445,7 +445,7 @@ function createIntegratedEnvironment({
     env.activeBlobs.clear();
     ALL_ENVS.delete(env);
   };
-  env.offscreenTaskCount = () => vm.runInContext('activeOffscreenOwners.size', bgSandbox);
+  env.offscreenTaskCount = () => vm.runInContext('offscreenState.activeOffscreenOwners.size', bgSandbox);
 
   env.saveRedditGif = async (url, pageUrl = 'https://reddit.com/r/test', settings = {}) => {
     env.noticePage=pageUrl;

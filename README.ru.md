@@ -195,12 +195,6 @@ node tools/package.mjs HEAD
 
 ---
 
-## Благодарности
-
-Структура README и компактная компоновка настроек вдохновлены [Libre Manga Translator](https://github.com/mrdhnto/libre-manga-translator). MediaLatch сохраняет собственную реализацию, графику и фиолетовую тему.
-
----
-
 ## Лицензия
 
 Собственный код — **GPL-3.0-only**. Сторонний код и графические символы сохраняют свои лицензии: [общие уведомления](THIRD_PARTY_NOTICES.txt), [UI](popup/THIRD_PARTY_NOTICES.txt) и [MP4Box](lib/vendor/mp4box/2.4.1/LICENSE).
