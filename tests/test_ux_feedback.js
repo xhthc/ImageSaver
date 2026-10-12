@@ -533,7 +533,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     const ids = [];
     for (let i = 0; i < 7; i++) { await env6.click(imageClick('b' + i)); }
     for (const rr of await env6.records()) await env6.finish(rr.downloadId);
-    assert(env6.notifications.length <= 4 && (await env6.records()).filter((r) => r.state === 'complete').length === 7, '9g: a burst of successes is throttled to at most 4 notifications (all remain listed)');
+    assert(env6.notifications.length === 7 && (await env6.records()).filter((r) => r.state === 'complete').length === 7, '9g: all seven successes reach the coalescing page renderer without undercounting');
     for (const closed of [false, true]) {
       const away = makeEnv(); await away.ready(); await away.click(imageClick('away'));
       const record = await away.last();
