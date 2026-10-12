@@ -2612,6 +2612,34 @@ const resolveTwitterVideoThumbUrl = resolveTweetVideoThumbUrl;
 /**
  * Resolve original image for Pixiv (www.pixiv.net, i.pximg.net)
  */
+async function resolvePixivPostMedia({ srcUrl, pageUrl, linkUrl }) {
+  let src, page, link;
+  try { src=new URL(srcUrl); page=new URL(pageUrl); link=new URL(linkUrl); } catch (_) { return undefined; }
+  const pixiv = u => u.protocol==='https:' && (u.hostname==='pixiv.net' || u.hostname.endsWith('.pixiv.net')) && !u.username && !u.password && !u.port;
+  if(src.protocol!=='https:' || src.hostname!=='i.pximg.net' || src.username || src.password || src.port || !pixiv(page) || !pixiv(link))return undefined;
+  const selected=src.pathname.match(/\/(\d+)_p\d+_(?:master|square|custom)\d+\.[a-z0-9]+$/i);
+  const linked=link.pathname.match(/^\/(?:[a-z]{2}\/)?artworks\/(\d+)\/?$/);
+  if(!selected || !linked)return undefined;
+  if(selected[1]!==linked[1])return {error:'POST_MEDIA_MISMATCH'};
+  const opened=page.pathname.match(/^\/(?:[a-z]{2}\/)?artworks\/(\d+)\/?$/);
+  if(opened?.[1]===selected[1])return undefined;
+  const id=selected[1];
+  const data=await fetchResolverMetadata(`https://www.pixiv.net/ajax/illust/${id}/pages`,{timeoutMs:4000,credentials:'include'});
+  if(data?.error || !Array.isArray(data?.body) || !data.body.length)return {error:'POST_MEDIA_UNAVAILABLE'};
+  if(data.body.length>PAWCHIVE_POST_MEDIA_MAX)return {error:'BATCH_LIMIT'};
+  const items=[];
+  for(let i=0;i<data.body.length;i++){
+    const raw=data.body[i]?.urls?.original;
+    if(typeof raw!=='string' || raw!==raw.trim())return {error:'POST_MEDIA_MISMATCH'};
+    let u;try{u=new URL(raw);}catch(_){return {error:'POST_MEDIA_MISMATCH'};}
+    if(u.protocol!=='https:' || u.hostname!=='i.pximg.net' || u.username || u.password || u.port ||
+       !u.pathname.includes('/img-original/') || !new RegExp(`/`+id+`_p`+i+`\\.(?:png|jpe?g|gif|webp|avif)$`,'i').test(u.pathname))return {error:'POST_MEDIA_MISMATCH'};
+    items.push(raw);
+  }
+  if(items.length===1)return adaptCandidateToGroup({url:items[0],source:'specialized_provider',score:100,tier:'original',provider:'pixiv',transport:'pixivDataUrl'});
+  return {pixivPostMedia:{postUrl:`https://www.pixiv.net/artworks/${id}`,items}};
+}
+
 async function resolvePixivUrl(urlObj, pageUrl, linkUrl) {
   const candidates = [];
   const pathname = urlObj.pathname;
@@ -8122,7 +8150,25 @@ async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPost
 // stops remaining batch discovery; already admitted transfers may continue. A repeated declaration is saved once (one entry per hash).
 const PAWCHIVE_POST_MEDIA_MAX = 20;
 let PAWCHIVE_POST_MEDIA_PACE_MS = 1000;
-const pawchiveItemInfos = new WeakSet();
+const postMediaItemInfos = new WeakSet();
+
+async function savePixivPostMedia(batch, info, tab) {
+  const pending=new Set(), rejected=[];
+  let limited=false;
+  for(let i=0;i<batch.items.length;i++){
+    if(pending.size>=2)await Promise.race(pending);
+    if(i)await new Promise(resolve=>setTimeout(resolve,PAWCHIVE_POST_MEDIA_PACE_MS));
+    const url=batch.items[i];
+    if(limited){await pawchiveItemFailed(info,tab,url,{stage:'resolve',code:'RATE_LIMIT',status:429});continue;}
+    const postMediaPlan=adaptCandidateToGroup({url,source:'specialized_provider',score:100,tier:'original',provider:'pixiv',transport:'pixivDataUrl'});
+    const item={menuItemId:'save-image-item',srcUrl:url,pageUrl:batch.postUrl,frameId:info.frameId,postMediaPlan};
+    postMediaItemInfos.add(item);
+    const work=onContextMenuClicked(item,tab).then(()=>{if(postMediaPlan._rateLimited || postMediaPlan._verificationStatus===429 || postMediaPlan.error==='RATE_LIMIT')limited=true;},error=>{rejected.push(error);}).finally(()=>pending.delete(work));
+    pending.add(work);
+  }
+  await Promise.all(pending);
+  if(rejected.length)throw rejected[0];
+}
 
 async function pawchiveItemFailed(info, tab, url, failure) {
   const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: url, site: fbSiteOf(info.pageUrl || tab?.url, url), cid: info.dbgCid });
@@ -8152,8 +8198,8 @@ async function savePawchivePostMedia(batch, info, tab) {
       continue;
     }
     if (out.fail && out.fail._rateLimited === true) { limited = true; tally.rateLimited++; } else if (out.plan) tally.verified++; else tally.refused++;
-    const itemInfo = { menuItemId: 'save-image-item', srcUrl: url, pageUrl: info.pageUrl, frameId: info.frameId, pawchivePlan: plan };
-    pawchiveItemInfos.add(itemInfo);
+    const itemInfo = { menuItemId: 'save-image-item', srcUrl: url, pageUrl: info.pageUrl, frameId: info.frameId, postMediaPlan: plan };
+    postMediaItemInfos.add(itemInfo);
     pending.push(onContextMenuClicked(itemInfo, tab).then(() => null, error => error));
   }
   if (batch.items.length > urls.length) await pawchiveItemFailed(info, tab, batch.postUrl, { stage: 'resolve', code: 'NO_MEDIA' });
@@ -8364,6 +8410,10 @@ async function resolveOriginalMediaPlanImpl(firstArg, secondArg, thirdArg, fourt
   // SITE-PAWCHIVE-01: a Pawchive thumbnail or original is resolved by the post that declares it (no speculative probes, no thumbnail fallback)
   const pawchivePlan = await resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPostMedia });
   if (pawchivePlan !== undefined) return pawchivePlan;
+  if(allowPostMedia){
+    const pixivPostPlan=await resolvePixivPostMedia({srcUrl,pageUrl,linkUrl});
+    if(pixivPostPlan!==undefined)return pixivPostPlan;
+  }
 
   const sankakuPlan = await resolveSankakuOriginalPlan({ srcUrl, pageUrl, linkUrl, tabId, frameId });
   if (sankakuPlan !== undefined) return sankakuPlan;
@@ -9867,7 +9917,7 @@ async function fetchPixivImageAsDataUrl(targetImageUrl) {
       method: 'GET',
       signal: controller.signal
     });
-    if (!response.ok) throw new Error(`Pixiv fetch failed with HTTP ${response.status}`);
+    if (!response.ok) throw Object.assign(new Error(`Pixiv fetch failed with HTTP ${response.status}`),{status:response.status});
     const declaredType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
     if (declaredType && !declaredType.startsWith('image/') && declaredType !== 'application/octet-stream') {
       throw new Error('Invalid image MIME from Pixiv');
@@ -10182,9 +10232,10 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
         };
         break;
       } catch (pixivErr) {
+        if(pixivErr.status===429)group._rateLimited=true;
         console.error('[MediaLatch] Ошибка Pixiv fetch:', pixivErr);
         await flashBadge('ERR', '#ef4444');
-        return { success: false, error: pixivErr.message, status: pixivErr.status || 500 };
+        return { success: false, error: pixivErr.status===429?'RATE_LIMIT':pixivErr.message, status: pixivErr.status || 500 };
       }
     } else {
       // Direct transport: central canonical filename policy
@@ -11474,7 +11525,7 @@ async function onContextMenuClicked(info, tab) {
   dbg('menu', 'click', 'start', undefined, () => ({
     menu: info.menuItemId, hasSrc: Boolean(info.srcUrl), hasLink: Boolean(info.linkUrl), srcHost: info.srcUrl, linkHost: info.linkUrl,
     pageHost: info.pageUrl || (tab && tab.url), frame: info.frameId, kind: info.mediaType,
-    inline: xInlineInfos.has(info) || redditInlineInfos.has(info) || redgifsInlineInfos.has(info), batch: pawchiveItemInfos.has(info)
+    inline: xInlineInfos.has(info) || redditInlineInfos.has(info) || redgifsInlineInfos.has(info), batch: postMediaItemInfos.has(info)
   }), { cid: info.dbgCid, tab: tab && tab.id });
   // A page/overlay click on X uses its existing selected-player path. Native sources and direct media links
   // retain the generic entry path (including X images); old IDs remain accepted for in-flight menu callbacks.
@@ -11493,7 +11544,7 @@ async function onContextMenuClicked(info, tab) {
     // bypasses it, and no provider recovery, probe or download runs before it passes.
     const claimsMediaLink = !rawImageUrl && hasMediaAssociation('', rawLinkUrl);
     // An inline Reddit click (UX-11-RD) was proven by the document right before this call; a gesture capture, possibly of another tile, must not decide it.
-    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || pawchiveItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '' });
+    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || postMediaItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '' });
     dbg('menu', 'owner', owner === 'refused' || owner === 'preview' ? 'refused' : 'ok', owner === 'preview' ? 'SEEK_PREVIEW' : (owner === 'refused' ? 'STALE_OWNER' : undefined), { owner }, { cid: info.dbgCid, tab: tab && tab.id });
     if (owner === 'refused' || owner === 'preview') {
       console.warn(owner === 'preview'
@@ -11712,9 +11763,9 @@ async function onContextMenuClicked(info, tab) {
         }
       }
 
-      // One original of a Pawchive post whose originals are all saved: the batch owner already proved the post and verified this original
-      if (pawchiveItemInfos.has(info) && info.pawchivePlan) {
-        mediaPlan = info.pawchivePlan;
+      // The batch owner proved the post; only its internally admitted declared originals get this path.
+      if (postMediaItemInfos.has(info) && info.postMediaPlan) {
+        mediaPlan = info.postMediaPlan;
         targetMediaUrl = mediaPlan.primaryUrl;
       }
 
@@ -11763,6 +11814,16 @@ async function onContextMenuClicked(info, tab) {
         }
       }
 
+      if(mediaPlan?.pixivPostMedia){
+        const current=await resolveContextOwner(tab?.id,info.frameId,{src:rawImageUrl,link:''});
+        if(current!=='proven'){await fbFail(op,{stage:'resolve',code:'NO_MEDIA'});await flashBadge('ERR','#ef4444');return;}
+        await fbDiscard(op);
+        await savePixivPostMedia(mediaPlan.pixivPostMedia,info,tab);
+        return;
+      }
+      if(['POST_MEDIA_MISMATCH','POST_MEDIA_UNAVAILABLE','BATCH_LIMIT'].includes(mediaPlan?.error)){
+        await fbFail(op,{stage:'resolve',code:mediaPlan.error});await flashBadge('ERR','#ef4444');return;
+      }
       if (mediaPlan?.pawchivePostMedia) {
         // the user chose to save a feed preview of a post with several originals: every distinct declared original is a separate item with its own operation
         await fbDiscard(op);

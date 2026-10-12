@@ -47,7 +47,7 @@ Reddit HLS accepts only the supported finite, unencrypted same-asset Reddit H.26
 
 Eligible owned `NETWORK_FAILED` exports can resume once through the browser's existing download ID. The manager retains prepared bytes after export failure for explicit local retry without a second source GET. It respects an observed Retry-After deadline and bounded explicit retry admission; it never silently refreshes a source or blindly duplicates an uncertain export.
 
-Queue pause stops admission of the next byte-transfer job; the active job continues. Source/owner resolution starts immediately to preserve gesture and DOM evidence. Deferred post-resolution admission, batch totals and proven source-range resume remain separate work. Metadata is in private IndexedDB; pending jobs retain exact signed source URLs there, never in shared diagnostics. Storage quota and browser eviction can still interrupt acquisition.
+Queue pause stops admission of new byte-transfer jobs; active jobs continue. Source/owner resolution starts immediately to preserve gesture and DOM evidence. Deferred post-resolution admission, batch totals and proven source-range resume remain separate work. Metadata is in private IndexedDB; pending jobs retain exact signed source URLs there, never in shared diagnostics. Storage quota and browser eviction can still interrupt acquisition.
 
 ## Storage and UI
 
@@ -68,3 +68,5 @@ GitHub checks use the fixed `xhthc/MediaLatch` releases endpoint. The old reposi
 Run `node tools/verify.mjs --ui` after building. It includes syntax, offline regressions, UI typecheck/render and source/build parity. Packaging reads only committed allow-listed runtime files and includes licence notices. Archive metadata records source commit, version, per-file hashes and ZIP hash.
 
 Offline mocks and render tests do not prove native browser behavior, actual downloaded bytes or audio. Live acceptance is recorded separately. The large background/test files are existing integration boundaries; split them only under a specific behavior-preserving task, rather than rewriting during release preparation.
+
+Pixiv feed previews with an explicit matching artwork link read the bounded pages API once and save only its declared same-artwork originals (up to 20). Opened-artwork media remains a single selection. Re-prove the selected owner after metadata lookup before admitting any batch item. Internal WeakSet provenance carries each declared plan; caller-supplied plan fields have no authority. Protected page acquisition is capped at two in-flight handlers per batch to bound buffered image preparation. An observed HTTP 429 stops further admission in that batch and records skipped pages as rate-limited; already admitted pages may finish.

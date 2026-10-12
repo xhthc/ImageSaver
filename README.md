@@ -34,7 +34,8 @@ The themes, all-time Statistics and staged download manager below describe the d
 | RedGIFs | Selected clip and same-clip video renditions; inline saving; provider audio recovery where available |
 | Pawchive | Declared post originals from previews or individual attachments; batches capped at 20, with spaced starts and a rate-limit stop |
 | Sankaku | Selected preview/sample to declared same-post original via the context menu in feeds/opened posts; image/video smoke tests reported working in Helium, native GIF test pending |
-| Other sites | Generic discovery plus existing rules, including Pixiv and selected booru paths; coverage varies |
+| Pixiv | Feed previews save the post's declared original pages (up to 20); an image selected inside an opened artwork remains single |
+| Other sites | Generic discovery plus existing rules, including selected booru paths; coverage varies |
 
 Kemono is deferred while the site is unavailable. Broader booru compatibility needs separate integration and live validation. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
 
