@@ -929,7 +929,7 @@ async function runTests() {
 
   // 43. CSS background-image: поддержка нескольких слоёв фона (multiple layers)
   const bgMultipleLayersTest = await sandbox.resolveOriginalImageUrl({
-    srcUrl: 'https://example.com/preview.jpg',
+    srcUrl: '',
     pageUrl: 'https://example.com/',
     linkUrl: null,
     tabId: 1,
@@ -938,6 +938,13 @@ async function runTests() {
     }
   });
   assert(bgMultipleLayersTest === 'https://example.com/layer1.png', 'CSS background-image: поддержка нескольких слоёв фона (multiple layers)');
+
+  const selectedImagePlan = await sandbox.resolveOriginalMediaPlan({
+    srcUrl: 'https://example.com/selected.avif', pageUrl: 'https://example.com/',
+    domMeta: { bgImages: ['https://example.com/header-11.webp'] }
+  });
+  assert(selectedImagePlan?.primaryUrl === 'https://example.com/selected.avif',
+    'A selected image never becomes an unrelated ancestor background, even when that background ranks higher');
 
   // 44. CSS background-image: извлечение через computed style и DOM метаданные
   const mockContainer = {
@@ -977,6 +984,14 @@ async function runTests() {
     bgComputedResolved === 'https://example.com/assets/computed_bg.jpg',
     'CSS background-image: извлечение через computed style и DOM метаданные'
   );
+  const selectedDomImage = {
+    nodeType: 1, tagName: 'IMG', src: 'https://example.com/selected.avif',
+    style: {}, parentElement: mockContainer,
+    getAttribute: () => null, closest: () => null
+  };
+  sandbox.document.querySelectorAll = sel => sel === 'img, picture, [srcset], a[href]' ? [selectedDomImage] : [];
+  assert(sandbox.extractDomImageMetadata(selectedDomImage.src).bgImages.length === 0,
+    'Selected IMG extraction excludes ancestor decoration rather than proposing it as original media');
 
   // 45. generic candidate discovery: множественные источники (data-full, srcset, parent <a>) и корректное ранжирование
   const multiCandidateRes = await sandbox.resolveOriginalImageUrl({
@@ -24925,7 +24940,7 @@ async function runTests() {
         assert(dls.length === 1 && dls[0].url === O2 && !fetched.includes(O1), '237.31: разные <picture>-источники, :hover потерян: захваченная карточка 2 использует свой источник');
         p1 = pictureCardC('', 'url("' + O1 + '")'); p2 = pictureCardC('', 'url("' + O2 + '")');
         dls = await withCaps({ 0: cap(p2) }, { 0: cardsDoc(p1, p2) }, PVS, 0, 3734);
-        assert(dls.length === 1 && dls[0].url === O2 && !fetched.includes(O1), '237.32: разный CSS-фон карточек, :hover потерян: захваченная карточка 2 использует свой фон');
+        assert(dls.length === 1 && dls[0].url === PVS && !fetched.includes(O1) && !fetched.includes(O2), '237.32: image capture retains its selected asset; neither card decoration is an original');
         // Without any capture (provider pages, tabs opened before the update) the earlier behavior stays
         [c1, c2] = two();
         dls = await withCaps({}, { 0: cardsDoc(c1, c2) }, PVS, 0, 3735);

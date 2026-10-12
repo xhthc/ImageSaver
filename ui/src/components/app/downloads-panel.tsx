@@ -21,9 +21,12 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
   return <section aria-label={t('downloads.heading')} className="space-y-3" data-slot={full?'results-section':undefined}>
     <div className="flex items-center justify-between gap-2">
       <h2 className="text-sm font-semibold">{t('downloads.heading')}</h2>
-      <Button variant="ghost" size="sm" disabled={s.busy} onClick={()=>void controller.command('pause',undefined)}>
-        {s.paused?<Play/>:<Pause/>}{t(s.paused?'downloads.resume':'downloads.pause')}
+      <div className="flex items-center gap-1">
+      <Button variant="ghost" size={full?'sm':'icon'} disabled={s.busy} aria-label={t(s.paused?'downloads.resume':'downloads.pause')} title={t(s.paused?'downloads.resume':'downloads.pause')} onClick={()=>void controller.command('pause',undefined)}>
+        {s.paused?<Play/>:<Pause/>}{full?t(s.paused?'downloads.resume':'downloads.pause'):null}
       </Button>
+      <Button variant="ghost" size="icon" disabled={s.busy || !s.jobs.some((j:any)=>['complete','failed','cancelled'].includes(j.state))} aria-label={t('downloads.clearFinished')} title={t('downloads.clearFinished')} onClick={()=>void controller.command('clearFinished',undefined)}><Trash2/></Button>
+      </div>
     </div>
     {s.error?<Alert variant="destructive"><AlertDescription>{t(s.error)}</AlertDescription></Alert>:null}
     {s.status==='loading'?<p className="text-xs text-muted-foreground">{t('downloads.loading')}</p>:null}

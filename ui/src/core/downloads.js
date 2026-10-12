@@ -17,9 +17,13 @@ export function createDownloads({chrome}) {
   async function command(command,id) {
     if(disposed || store.getState().busy)return;
     store.setState({busy:true,error:''});
-    try{const r=await chrome.runtime.sendMessage({action:'DOWNLOADS_COMMAND',command,id});if(!r?.success)throw Error();await load();}
+    try{
+      const ids=command==='clearFinished'?store.getState().jobs.filter(j=>['complete','failed','cancelled'].includes(j.state)).map(j=>j.id):[id];
+      for(const selected of ids){const r=await chrome.runtime.sendMessage({action:'DOWNLOADS_COMMAND',command:command==='clearFinished'?'remove':command,id:selected});if(!r?.success)throw Error();}
+      if(command!=='clearFinished')await load();
+    }
     catch(_){if(!disposed)store.setState({error:'downloads.commandFailed'});}
-    finally{if(!disposed)store.setState({busy:false});}
+    finally{if(command==='clearFinished')await load();if(!disposed)store.setState({busy:false});}
   }
   return {store,load,command,dispose(){disposed=true;chrome.runtime.onMessage?.removeListener(changed);}};
 }

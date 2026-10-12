@@ -479,6 +479,12 @@ function makeChrome(state) {
     fail=false;listeners[0]({action:'DOWNLOADS_CHANGED'});await settle();
     assert(c.store.getState().error==='downloads.commandFailed','manager-ui-4a: automatic progress does not erase a refused action');
     await c.command('pause');assert(!c.store.getState().error,'manager-ui-4b: the next successful explicit action clears the error');
+    replies={success:true,jobs:[{id:'done',state:'complete'},{id:'bad',state:'failed'},{id:'stopped',state:'cancelled'},{id:'live',state:'receiving'},{id:'waiting',state:'queued'}],paused:false};
+    await c.load();calls=[];await c.command('clearFinished');
+    assert(calls.filter(m=>m.action==='DOWNLOADS_COMMAND').map(m=>m.id).join(',')==='done,bad,stopped' && calls.filter(m=>m.action==='DOWNLOADS_COMMAND').every(m=>m.command==='remove'),'manager-ui-clear: bulk clear uses validated removal only for terminal records');
+    const selected=[];chrome.runtime.sendMessage=async m=>{if(m.action==='DOWNLOADS_COMMAND'){selected.push(m.id);return {success:m.id!=='bad'};}return {...replies,jobs:replies.jobs.filter(j=>j.id!=='done')};};
+    await c.command('clearFinished');
+    assert(selected.join(',')==='done,bad' && c.store.getState().error==='downloads.commandFailed' && !c.store.getState().busy && !c.store.getState().jobs.some(j=>j.id==='done') && c.store.getState().jobs.some(j=>j.id==='bad'),'manager-ui-clear-failure: partial clear stops on refusal, refreshes surviving records and exposes failure');
     c.dispose();assert(!listeners.length,'manager-ui-5: closed pages remove subscriptions');
     await c.load();assert(!listeners.length,'manager-ui-6: disposed controller is inert');
   }

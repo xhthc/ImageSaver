@@ -4878,7 +4878,8 @@ function extractDomImageMetadata(clickedSrc) {
       }
     }
 
-    const bgImages = targetElement ? collectBackgrounds(targetElement) : [];
+    // An image's surrounding decoration is not evidence of its original asset.
+    const bgImages = targetElement && !targetImg ? collectBackgrounds(targetElement) : [];
 
     // Fallback: If no target element from :hover, inspect elements with inline background style
     // Only perform document-wide scan when not clicking an image element and not on a multi-card search gallery
@@ -8496,6 +8497,7 @@ async function resolveOriginalMediaPlanImpl(firstArg, secondArg, thirdArg, fourt
       const hasClickedYandexCandidate = isYandex && Array.from(candidateGroupMap.values()).some(c => c.source === 'search_result_decoded');
       if (!isYandex || !hasClickedYandexCandidate) {
         for (const bg of domData.bgImages) {
+          if (srcUrl && bg !== srcUrl) continue;
           addCandidate(bg, 'css_background');
         }
       }
