@@ -310,7 +310,7 @@ function env(stored={jobs:[],paused:false}) {
     };
     const sandbox = {
       chrome, indexedDB: {}, crypto: { randomUUID: () => 'uuid' }, console: { log() {}, warn() {}, error() {} },
-      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_format|download_paths|site_resolvers|toolbar_badge|worker_offscreen|worker_providers|worker_pipeline|worker_animation)\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
+      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_format|download_paths|site_resolvers|toolbar_badge|native_explorer|worker_offscreen|worker_providers|worker_pipeline|worker_animation)\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
       ImageSaverFeedback: globalThis.ImageSaverFeedback,
       ImageSaverFeedbackTracker: globalThis.ImageSaverFeedbackTracker,
       MediaLatchDirectory: globalThis.MediaLatchDirectory,
@@ -362,14 +362,20 @@ function env(stored={jobs:[],paused:false}) {
     assert.equal(beginCalls.at(-1).expectedType, 'gif');
 
     // Feedback-only removal invokes the real authenticated worker handler and persisted tracker.
-    const handler=listeners.find(fn=>fn.toString().includes("'DOWNLOADS_LOCATION'].includes"));
+    const handler=listeners.find(fn=>fn.toString().includes("m.action==='DOWNLOADS_LOCATION'"));
     const sender={id:'testid',url:chrome.runtime.getURL('popup/popup.html')};
     const command=(id,from=sender)=>new Promise(resolve=>handler({action:'DOWNLOADS_COMMAND',command:'remove',id},from,resolve));
     const reveal=(id,from=sender)=>new Promise(resolve=>handler({action:'DOWNLOADS_LOCATION',id},from,resolve));
+    const link=from=>new Promise(resolve=>handler({action:'DIRECTORY_NATIVE_LINK',directoryId:'directory-test'},from,resolve));
+    sandbox.fixtureLinks=[];vm.runInContext('nativeExplorer.link=async id=>fixtureLinks.push(id)',sandbox);
+    assert.equal((await link(sender)).success,true);assert.equal(sandbox.fixtureLinks[0],'directory-test');
+    assert.equal((await link({...sender,url:chrome.runtime.getURL('popup/quick.html')})).error,'FORBIDDEN');
+    assert.equal((await link({...sender,url:'https://media.test/'})).error,'FORBIDDEN');assert.equal(sandbox.fixtureLinks.length,1);
+    sandbox.fixtureReveals=[];vm.runInContext('nativeExplorer.reveal=async id=>fixtureReveals.push(id)',sandbox);
     const shown=[];let item={id:401,byExtensionId:'testid',state:'complete',exists:true};
     chrome.downloads.show=id=>shown.push(id);chrome.downloads.search=async()=>item?[item]:[];
     assert.equal((await reveal('job-browser')).success,true);assert.deepEqual(shown,[401]);
-    assert.equal((await reveal('job-directory')).exportId,'file:job-directory');assert.deepEqual(shown,[401]);
+    assert.equal((await reveal('job-directory')).success,true);assert.equal(sandbox.fixtureReveals[0],'file:job-directory');assert.deepEqual(shown,[401]);
     assert.equal((await reveal('job-browser',{id:'testid',url:'https://media.test/'})).error,'FORBIDDEN');
     assert.equal((await reveal('job-browser',{...sender,id:'foreign'})).error,'FORBIDDEN');
     assert.equal((await reveal('not-owned')).success,false);

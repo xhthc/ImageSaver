@@ -399,6 +399,14 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
 
   // =================================================================================================
   console.log('\n--- R7. Full page: Saving, Notifications and Embed ---');
+  for(const lang of ['en','ru']) {
+    const state={session:[],history:[],local:{uiLanguage:lang,saveDirectoryId:'directory-test'}};
+    const p=await page('full',state,{hash:'#saving'});
+    const label=lang==='ru'?'Связать папку с Проводником':'Link folder to Explorer';
+    const button=p.byText('button',new RegExp(label));assert(button && !button.disabled && p.text().includes('testid'),'explorer-render: localized link action and actual extension ID are visible');
+    await p.click(button);assert(p.calls.messages.includes('DIRECTORY_NATIVE_LINK') && p.q('[role="alert"]') && !button.disabled,'explorer-render-failure: failed binding retains the chosen destination and releases its action');
+    await p.unmount();
+  }
   {
     const state = { session: [], history: [], local: { askEveryTime: true, notifySuccess: false, historyEnabled: true, unrelatedKey: 'keep-me' } };
     const p = await page('full', state, { hash: '#saving' });

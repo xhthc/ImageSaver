@@ -1,8 +1,7 @@
 // @ts-check
 import { createStore } from './store.js';
-import { openStoredLocation } from './fileLocation.js';
-/** @param {{chrome: import('../../../lib/download_contracts').DownloadsChrome, openLocation?: (exportId:string)=>Promise<void>}} dependencies */
-export function createDownloads({ chrome, openLocation=openStoredLocation }) {
+/** @param {{chrome: import('../../../lib/download_contracts').DownloadsChrome}} dependencies */
+export function createDownloads({ chrome }) {
     const store = createStore(/** @type {import('../../../lib/download_contracts').DownloadsViewState} */ ({ jobs: [], paused: false, status: 'loading', error: '', busy: false, removingIds: [], dismissedIds: [] }));
     let disposed = false, loading = false, again = false;
     /** @type {import('../../../lib/download_contracts').DownloadJob[]} */
@@ -88,11 +87,9 @@ export function createDownloads({ chrome, openLocation=openStoredLocation }) {
         store.setState({busy:true,error:''});
         try {
             const r=await chrome.runtime.sendMessage({action:'DOWNLOADS_LOCATION',id});
-            if(!r?.success)throw Error();
-            if(disposed)return;
-            if(r.exportId)await openLocation(r.exportId);
+            if(!r?.success)throw Error(r?.error || 'LOCATION_FAILED');
         } catch(error) {
-            if(!disposed && !(error instanceof Error && error.name==='AbortError'))store.setState({error:'downloads.locationFailed'});
+            if(!disposed)store.setState({error:error instanceof Error && error.message==='NATIVE_HOST_REQUIRED'?'downloads.nativeRequired':error instanceof Error && error.message==='DIRECTORY_LINK_REQUIRED'?'downloads.nativeLinkRequired':'downloads.locationFailed'});
         } finally { if(!disposed)store.setState({busy:false}); }
     }
     return { store, load, command, reveal, dispose() { disposed = true; chrome.runtime.onMessage?.removeListener(changed); } };

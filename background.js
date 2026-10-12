@@ -15,6 +15,9 @@ if (typeof importScripts === 'function') importScripts('lib/export_directory.js'
 if (typeof importScripts === 'function') importScripts('lib/debug_journal.js');
 const FeedbackLib = globalThis.ImageSaverFeedback;
 const directoryStore=typeof indexedDB!=='undefined' && globalThis.MediaLatchDirectory?MediaLatchDirectory.database(indexedDB):null;
+if(typeof importScripts==='function')importScripts('lib/native_explorer.js');
+const nativeExplorer=directoryStore && globalThis.MediaLatchNativeExplorer?MediaLatchNativeExplorer.create({store:directoryStore,Directory:MediaLatchDirectory,FolderPath,
+  send:message=>chrome.runtime.sendNativeMessage('net.medialatch.explorer',message),nonce:()=>crypto.randomUUID().replace(/-/g,'')}):null;
 const isFileExport=id=>globalThis.MediaLatchDirectory?.isExportId(id)===true;
 
 // ============================================================================
@@ -4150,12 +4153,16 @@ if(chrome.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListener(
     if(sender?.id!==chrome.runtime.id || sender?.url!==chrome.runtime.getURL('offscreen.html'))return false;
     downloadManager?.progress(m.id,m.progress).then(()=>respond({success:true}),()=>respond({success:false}));return true;
   }
-  if(!['DOWNLOADS_LIST','DOWNLOADS_COMMAND','DOWNLOADS_LOCATION'].includes(m?.action))return false;
+  if(!['DOWNLOADS_LIST','DOWNLOADS_COMMAND','DOWNLOADS_LOCATION','DIRECTORY_NATIVE_LINK'].includes(m?.action))return false;
   if(sender?.id!==chrome.runtime.id || !['popup/popup.html','popup/quick.html'].some(p=>sender.url?.split(/[?#]/)[0]===chrome.runtime.getURL(p)) || !downloadManager){respond({success:false,error:'FORBIDDEN'});return false;}
   (async()=>{
+    if(m.action==='DIRECTORY_NATIVE_LINK'){
+      if(sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('popup/popup.html') || !nativeExplorer)throw Error('FORBIDDEN');
+      await nativeExplorer.link(m.directoryId);return {success:true};
+    }
     if(m.action==='DOWNLOADS_LOCATION') {
       const id=await downloadManager.location(m.id);
-      if(isFileExport(id))return {success:true,exportId:id};
+      if(isFileExport(id)){if(!nativeExplorer)throw Error('NATIVE_HOST_REQUIRED');await nativeExplorer.reveal(id);return {success:true};}
       const item=await readDownloadItem(id);
       if(!item || item.byExtensionId!==chrome.runtime.id || item.state!=='complete' || item.exists===false)throw Error('FILE_NOT_FOUND');
       await chrome.downloads.show(id);

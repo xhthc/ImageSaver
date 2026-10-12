@@ -31,6 +31,8 @@ Statistics has recording and Clear statistics controls. Turning recording off pr
 
 Selecting a base folder grants local write access only after a browser picker action. Private extension IndexedDB retains directory handles and per-file export receipts (destination ID, relative filename, type, size and job/operation identifiers). Receipts are removed with the manager record; previously selected handles remain until extension data is cleared. Handles and destination paths never enter Debug reports. Direct writes do not create Chrome download-history entries. Optional X author folders use the selected post's username locally; no author data is uploaded.
 
+Development `main` supports an optional Windows Explorer companion for chosen-folder file-location actions. It is installed separately in the current user's local application directory and registers its own Chrome/Chromium native host. Only the configured extension ID is allowed. The worker creates and removes a temporary random proof file in the already granted destination; the companion verifies it, receives the completed relative filename and opens its existing parent in Explorer. Destination bindings containing absolute paths remain in the companion's private local `bindings.json`; they do not enter reports, statistics or network requests. Uninstalling its registration retains these bindings/helper files and saved media. The companion does not download files, run media or accept arbitrary commands. The published v2.0.0.30 ZIP does not include this integration.
+
 ## Reports and diagnostics
 
 The current preview uses MediaLatch notices on the source web page instead of desktop notifications. They show bounded site/type/result text, without filenames, paths or source URLs, in a closed Shadow DOM. Delivery is limited to the original tab and origin. Session feedback holds a tab ID and origin for delivery/restart; legacy history, reports and Statistics exclude this route. Closing/navigating the tab or a restricted page can prevent a notice; the manager and failure badge remain. Page notices are UI inside the website, not a confidential system surface. The older v2.0.0.28 preview uses its original notification mechanism.
@@ -47,6 +49,7 @@ Debug events can be filtered, copied or exported only by user action. Exports co
 |---|---|
 | `contextMenus` | Native save action and supported link actions |
 | `downloads` | Start and monitor extension-owned downloads, show actual saved filenames and eligible native resume |
+| `nativeMessaging` (development) | Contact the separately installed Windows Explorer companion for chosen-folder location actions |
 | `storage` | Preferences, statistics, legacy metadata, release cache and session lifecycle records |
 | `scripting` | Selected-frame provider discovery/recovery and content-script injection |
 | `declarativeNetRequest` | Scoped provider request-header adjustments, including required image referrers |

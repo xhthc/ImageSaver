@@ -53,6 +53,7 @@ export function SavingPanel({ settings }: { settings: SettingsController }) {
             </div>
           </div>
           <Hint>{t('saving.baseFolderHint')}</Hint>
+          {s.saveDirectoryId?<div className="space-y-2"><Button type="button" variant="outline" disabled={!s.loaded || s.saving || s.picking || s.linking} onClick={()=>void settings.linkExplorer()}><FolderOpen/>{t('saving.linkExplorer')}</Button><Hint>{t('saving.explorerHint')}</Hint><p className="break-all text-xs text-muted-foreground">{t('saving.extensionId')}: {getEnv().chrome.runtime.id}</p></div>:null}
           {s.directoryError?<Alert variant="destructive"><AlertDescription>{msg(s.directoryError)}</AlertDescription></Alert>:null}
           <div className="space-y-1.5">
             <Label htmlFor="subfolderInput">{t("saving.folderLabel")}</Label>

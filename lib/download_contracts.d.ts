@@ -28,7 +28,7 @@ export type DownloadRequest =
 export type DownloadResponse =
   | ({ success: true } & DownloadSnapshot)
   | { success: false; error?: string };
-export type DownloadLocationResponse = { success:true; exportId?:string } | { success:false; error?:string };
+export type DownloadLocationResponse = { success:true } | { success:false; error?:string };
 export interface DownloadNotice { action?: string }
 export interface DownloadsChrome {
   runtime: {
@@ -43,7 +43,7 @@ export interface DownloadsChrome {
 
 export interface DownloadsViewState extends DownloadSnapshot {
   status: 'loading' | 'ready' | 'error';
-  error: '' | 'downloads.unavailable' | 'downloads.commandFailed' | 'downloads.locationFailed';
+  error: '' | 'downloads.unavailable' | 'downloads.commandFailed' | 'downloads.locationFailed' | 'downloads.nativeRequired' | 'downloads.nativeLinkRequired';
   busy: boolean;
   removingIds: string[];
   dismissedIds: string[];
