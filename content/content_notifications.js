@@ -94,7 +94,8 @@
     const open=document.createElement('button');open.type='button';open.className='open';open.textContent=notice.actionLabel;
     open.addEventListener('click',async()=>{
       open.disabled=true;
-      try { if ((await chrome.runtime.sendMessage({action:'MEDIALATCH_NOTICE_OPEN',id:entry.latestId}))?.success) {if(notices.get(entry.id)===entry)remove(entry.id,true,true);return;} } catch (_) {}
+      // Opening details retires this card; only an explicit dismissal mutes the series.
+      try { if ((await chrome.runtime.sendMessage({action:'MEDIALATCH_NOTICE_OPEN',id:entry.latestId}))?.success) {if(notices.get(entry.id)===entry)remove(entry.id,true);return;} } catch (_) {}
       if(notices.get(entry.id)!==entry)return;
       open.disabled=false;open.focus();
     });
