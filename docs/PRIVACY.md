@@ -33,7 +33,7 @@ Selecting a base folder grants local write access only after a browser picker ac
 
 ## Reports and diagnostics
 
-The v2.0.0.29 preview uses MediaLatch notices on the source web page instead of desktop notifications. They show bounded site/type/result text, without filenames, paths or source URLs, in a closed Shadow DOM. Delivery is limited to the original tab and origin. Session feedback holds a tab ID and origin for delivery/restart; legacy history, reports and Statistics exclude this route. Closing/navigating the tab or a restricted page can prevent a notice; the manager and failure badge remain. Page notices are UI inside the website, not a confidential system surface. The older v2.0.0.28 preview uses its original notification mechanism.
+The current preview uses MediaLatch notices on the source web page instead of desktop notifications. They show bounded site/type/result text, without filenames, paths or source URLs, in a closed Shadow DOM. Delivery is limited to the original tab and origin. Session feedback holds a tab ID and origin for delivery/restart; legacy history, reports and Statistics exclude this route. Closing/navigating the tab or a restricted page can prevent a notice; the manager and failure badge remain. Page notices are UI inside the website, not a confidential system surface. The older v2.0.0.28 preview uses its original notification mechanism.
 
 Bug reports are created and copied only when requested. The report builder allows bounded fields and removes addresses, paths and token-bearing data from its structured output. Diagnostic log copies redact known signed query parameters; the exact request URL is preserved for the actual transfer.
 

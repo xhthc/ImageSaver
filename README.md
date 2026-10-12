@@ -3,14 +3,14 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.29"><img src="https://img.shields.io/badge/preview-v2.0.0.29-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Preview v2.0.0.29"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.30"><img src="https://img.shields.io/badge/preview-v2.0.0.30-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Preview v2.0.0.30"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.29"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.30"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
     <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Chrome Web Store distribution planned; not yet available">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
@@ -19,9 +19,9 @@
 
 MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**, track parallel downloads and choose where files go — including **a folder for each x.com author**.
 
-> **Current preview: [v2.0.0.29](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.29).** Violet interface, a chosen destination, Pixiv albums and notices on the original page. English/Russian settings, Statistics and smooth transitions that respect reduced motion.
+> **Current preview: [v2.0.0.30](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.30).** Grouped bulk-save notices, steadier download indicators and file-location buttons, with the Violet interface, chosen folders and English/Russian settings.
 
-Development `main` also includes grouped bulk-save notices, a steadier toolbar badge, file-location buttons and further worker refactoring. These changes are not yet included in the downloadable preview. Windows file-location dialogs and broader manual regression checks remain pending.
+The runtime ZIP includes the current worker refactoring and interface changes. Real Windows file-location dialogs, toolbar-popup lifetime and broader manual regression checks remain pending.
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
@@ -53,7 +53,7 @@ An automatic first-run introduction is planned; this quick guide is available no
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.29-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.30-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -85,10 +85,11 @@ The packaged preview includes these features. Ordinary downloads, themes, Statis
 
 - Choose a writable base folder, an optional subfolder and site/type organization. X can also use folders named after the selected post author. Save results and redacted error reports stay in the manager.
 - Download manager with received/total bytes, speed and approximate remaining time when measurable. Complete files are staged locally before browser export; failed export can retry from retained bytes without another source download.
+- Folder icons on completed files: browser downloads reveal the file in the OS manager; chosen-folder saves open a browser file picker at the actual parent directory. Closing the picker keeps the download card.
 
 ### Settings and diagnostics
 
-- Own MediaLatch notices on the source page, with dismiss/manager buttons, synchronized themes and no Windows notifications. Closed or navigated tabs cannot display them; results and the failure badge remain in the extension. Success notices can be switched off independently.
+- Own MediaLatch notices on the source page, grouping bulk saves into one card with success/error counts, dismiss/manager buttons and synchronized themes. Closed or navigated tabs cannot display them; results and the failure badge remain in the extension. Success notices can be switched off independently.
 - Violet interface theme by default, with optional Blue, Dark and Light themes. Saved choices apply across the popup and settings page; existing preferences are preserved. Brief interface animations respect reduced motion.
 - Opt-in local statistics without an entry count or time limit, with recording and clear controls. Available old history is imported once; expired or removed records cannot be reconstructed.
 - Opt-in local Debug journal with filters, copy/export and clear controls: up to 2,000 events, 1 MiB and 24 hours. Full URLs, tokens, page text and local paths are excluded.

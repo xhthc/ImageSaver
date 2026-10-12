@@ -17,17 +17,17 @@ Never package arbitrary working-folder contents. Local agent files, recovery arc
 
 **Name:** MediaLatch
 
-**Single purpose:** Save accessible original media selected on a web page, with local save feedback and optional history.
+**Single purpose:** Save accessible original media selected on a web page, organized locally with download feedback and optional statistics.
 
-**Short English description:** Save available original images, videos and GIFs from the context menu, with selected site support and local save history.
+**Short English description:** Save available original images, videos and GIFs, with parallel downloads, custom folders and local statistics.
 
 **English description:**
 
-> Save available original images, videos and GIFs with MediaLatch: Save media. Supported paths include X, Reddit, RedGIFs, Pawchive and selected Sankaku originals, plus generic image discovery. Selected animations can be saved as genuine GIFs. Choose a writable destination or organize files within Downloads, inspect save results and optionally keep seven days of local history. There is no telemetry or extension backend. Site access rules and format limits apply; universal stream/DRM downloading is not supported. See the repository for current coverage and privacy details.
+> Save available original images, videos and GIFs with MediaLatch: Save media. Supported paths include x.com, Reddit, RedGIFs, Pawchive and selected Sankaku originals, plus generic image discovery. Selected animations can be saved as genuine GIFs. Track parallel downloads, choose a writable destination or organize files within Downloads, inspect save results and optionally collect local aggregate statistics. There is no telemetry or extension backend. Site access rules and format limits apply; universal stream/DRM downloading is not supported. See the repository for current coverage and privacy details.
 
 **Russian description:**
 
-> Сохраняйте доступные оригинальные изображения, видео и GIF через MediaLatch: Save media. Поддерживаются отдельные сценарии X, Reddit, RedGIFs, Pawchive и оригиналы выбранных постов Sankaku и универсальный поиск изображений. Подтверждённые анимации преобразуются в настоящий GIF. Доступны подпапка в «Загрузках», результаты сохранения и отключаемая локальная история за семь дней. Телеметрии и сервера расширения нет. Действуют ограничения форматов и доступа сайтов; DRM и универсальная загрузка потоков не поддерживаются.
+> Сохраняйте доступные оригинальные изображения, видео и GIF через MediaLatch: Save media. Поддерживаются отдельные сценарии x.com, Reddit, RedGIFs, Pawchive, оригиналы выбранных постов Sankaku и универсальный поиск изображений. Подтверждённые анимации преобразуются в настоящий GIF. Доступны параллельные загрузки, выбор папки, результаты сохранения и отключаемая локальная статистика. Телеметрии и сервера расширения нет. Действуют ограничения форматов и доступа сайтов; DRM и универсальная загрузка потоков не поддерживаются.
 
 Website: https://github.com/xhthc/MediaLatch
 
@@ -35,7 +35,7 @@ Privacy URL: https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md
 
 Support URL: https://github.com/xhthc/MediaLatch/issues
 
-The v2.0.0.29 preview ships the organized source and newer interface/manager work described in CHANGELOG.md and the English/Russian README. Validate the exact committed runtime ZIP, including relocated content scripts and imported worker modules. Prior native user checks remain scoped; crash/restart, quota stress, broader codecs/audio and store approval remain separate gates.
+The v2.0.0.30 preview ships the worker refactoring, grouped page notices, stable toolbar badge and file-location actions described in CHANGELOG.md and the English/Russian README. Validate the exact committed runtime ZIP, including relocated content scripts and imported worker modules. Prior native user checks remain scoped; crash/restart, quota stress, broader codecs/audio and store approval remain separate gates.
 
 ## Permission and privacy disclosures
 
