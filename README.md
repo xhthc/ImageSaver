@@ -94,7 +94,7 @@ Plans below are **not implemented in this preview**. They describe direction, no
 | Download manager | Extend the implemented file queue to paced post resolution, batch totals and proven transfer resume | File queue available in development; remaining work planned |
 | Complete-file staging | Disk-backed acquisition/validation before export and local retry; broaden native restart, quota and media checks | Implemented in development; ordinary Helium checks passed, stress checks pending |
 | Batch archives | Selected-post/page batches, ZIP first; 7z only if a practical bounded implementation is justified | Planned |
-| Destination and naming | Writable base-directory selection and optional selected X author folders | Implemented in development; external-directory permission and live X acceptance pending |
+| Destination and naming | Writable base-directory selection and optional selected X author folders | User-confirmed external folder and X author saves in Helium; browser-restart permission recovery and broader layouts remain untested |
 | Kemono | Declared same-post originals and scoped feed behavior | Deferred until the site is usable |
 | Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
 | Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Planned; security/privacy gates first |
