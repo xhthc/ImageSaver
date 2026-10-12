@@ -91,7 +91,7 @@ export function ResultRow({
         <Tooltip>
           <TooltipTrigger asChild>
             <CollapsibleTrigger
-              className="group flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left hover:bg-accent/50 focus-visible:bg-accent/50"
+              className="group flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-3 py-2 text-left focus-visible:-outline-offset-2"
               aria-label={`${summary.title}: ${full}`}
             >
               <StateIcon state={record.state} />
