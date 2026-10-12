@@ -21,6 +21,8 @@ export const ALLOWED_HOSTS = Object.freeze({
 export const DEFAULTS = Object.freeze({
   subfolder: 'SavedImages',
   folderOrganizationMode: 'single',
+  saveDirectoryId: '',
+  xAuthorFolders: false,
   xShareHost: 'fixupx.com',
   igShareHost: 'oginstagram.com',
   ttShareHost: 'tnktok.com',
@@ -39,12 +41,16 @@ export function cleanHost(key, value) {
  */
 export function createSettings(deps) {
   const { chrome: chromeApi, FolderPath } = deps;
+  const directory=deps.directory || (globalThis.indexedDB && globalThis.MediaLatchDirectory?globalThis.MediaLatchDirectory.database(globalThis.indexedDB):null);
+  const chooseDirectory=deps.chooseDirectory || (()=>globalThis.showDirectoryPicker({id:'medialatch-media',mode:'readwrite',startIn:'downloads'}));
+  let pendingHandle=null;
   const setT = deps.setTimeout || globalThis.setTimeout;
   const clearT = deps.clearTimeout || globalThis.clearTimeout;
   const store = createStore({
     loaded: false,
     ...DEFAULTS,
     saving: false,
+    directoryName:'',picking:false,directoryError:'',
     status: { message: '', type: '' }, // message: catalogue key or { key, vars }; type: 'success' | 'error' | ''
     notify: { checked: true, error: '' }, // error: catalogue key
   });
@@ -71,17 +77,21 @@ export function createSettings(deps) {
     const { root: cleanFolder, error } = FolderPath.normalizeRoot(s.subfolder);
     if (error) return { text: tr.msg(describeRootError(error)), error: true };
     const rootPart = cleanFolder ? `${cleanFolder}/` : '';
-    const downloads = tr.t('saving.downloads');
-    return { text: s.folderOrganizationMode === 'by_site_and_type' ? `${downloads}/${rootPart}x/pic/photo.jpg` : `${downloads}/${rootPart}photo.jpg`, error: false };
+    const downloads = s.saveDirectoryId?s.directoryName || tr.t('saving.selectedFolder'):tr.t('saving.downloads');
+    const author=s.xAuthorFolders?'username/':'';
+    return { text: s.folderOrganizationMode === 'by_site_and_type' ? `${downloads}/${rootPart}x/${author}pic/photo.jpg` : `${downloads}/${rootPart}${author}photo.jpg`, error: false };
   }
 
   async function load() {
     store.setState({ loaded: false });
     try {
       const data = await chromeApi.storage.local.get(DEFAULTS);
+      const directoryId=/^directory-[a-zA-Z0-9-]{1,80}$/.test(data.saveDirectoryId)?data.saveDirectoryId:'';
+      const handle=directoryId && directory?await directory.get(directoryId):null;
       store.setState({
         subfolder: typeof data.subfolder === 'string' ? data.subfolder : DEFAULTS.subfolder,
         folderOrganizationMode: data.folderOrganizationMode === 'by_site_and_type' ? 'by_site_and_type' : 'single',
+        saveDirectoryId:directoryId,xAuthorFolders:data.xAuthorFolders===true,directoryName:handle?.name || '',directoryError:directoryId && (!handle || await handle.queryPermission({mode:'readwrite'})!=='granted')?'saving.directoryAccess':'',
         xShareHost: cleanHost('xShareHost', data.xShareHost),
         igShareHost: cleanHost('igShareHost', data.igShareHost),
         ttShareHost: cleanHost('ttShareHost', data.ttShareHost),
@@ -110,7 +120,7 @@ export function createSettings(deps) {
 
   async function save() {
     const s = store.getState();
-    if (!s.loaded || s.saving) return false;
+    if (!s.loaded || s.saving || s.picking) return false;
     const { root: cleanFolder, changed: folderChanged, error: folderError } = FolderPath.normalizeRoot(s.subfolder);
     if (folderError) {
       // Excessive input is rejected explicitly: nothing is saved and nothing is silently shortened.
@@ -121,6 +131,7 @@ export function createSettings(deps) {
     const values = {
       subfolder: cleanFolder,
       folderOrganizationMode: s.folderOrganizationMode === 'by_site_and_type' ? 'by_site_and_type' : 'single',
+      saveDirectoryId:/^directory-[a-zA-Z0-9-]{1,80}$/.test(s.saveDirectoryId)?s.saveDirectoryId:'',xAuthorFolders:s.xAuthorFolders===true,
       xShareHost: cleanHost('xShareHost', s.xShareHost),
       igShareHost: cleanHost('igShareHost', s.igShareHost),
       ttShareHost: cleanHost('ttShareHost', s.ttShareHost),
@@ -128,7 +139,9 @@ export function createSettings(deps) {
     };
     store.setState({ ...values, saving: true }); // the fields show the sanitized values
     try {
+      if(pendingHandle && values.saveDirectoryId)await directory.set(values.saveDirectoryId,pendingHandle);
       await chromeApi.storage.local.set(values);
+      pendingHandle=null;
       console.log('[MediaLatch Popup] Settings saved:', values);
       uiLog('settings', 'save', 'ok', undefined, { mode: values.folderOrganizationMode, fallback: Boolean(folderChanged) });
       showMessage(folderChanged
@@ -160,5 +173,20 @@ export function createSettings(deps) {
 
   function dispose() { disposed = true; if (statusTimer) clearT(statusTimer); }
 
-  return { store, load, setField, save, preview, setNotifySuccess, describeRootError, dispose };
+  async function pickDirectory(){
+    const s=store.getState();if(!s.loaded || s.saving || s.picking)return false;
+    store.setState({picking:true,directoryError:''});
+    try{
+      if(!directory)throw Error('UNSUPPORTED');
+      const handle=await chooseDirectory();
+      if(await handle.queryPermission({mode:'readwrite'})!=='granted')throw Error('PERMISSION');
+      const old=s.saveDirectoryId?await directory.get(s.saveDirectoryId):null;
+      const id=old && await handle.isSameEntry(old)?s.saveDirectoryId:'directory-'+(deps.id?deps.id():crypto.randomUUID());
+      pendingHandle=handle;store.setState({saveDirectoryId:id,directoryName:handle.name});return true;
+    }catch(e){if(e.name!=='AbortError')store.setState({directoryError:'saving.directoryPickFailed'});return false;}
+    finally{store.setState({picking:false});}
+  }
+  function resetDirectory(){pendingHandle=null;store.setState({saveDirectoryId:'',directoryName:'',directoryError:''});}
+
+  return { store, load, setField, save, preview, setNotifySuccess, describeRootError, pickDirectory, resetDirectory, dispose };
 }

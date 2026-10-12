@@ -13,6 +13,7 @@ This document describes the current development source, not a list of planned ca
 | Other `content_*.js` | Scoped site/link helpers; each script's messages define its contract |
 | `offscreen.js`, `offscreen.html` | Protected buffered fetches, genuine GIF encoding and Reddit HLS assembly |
 | `lib/download_manager.js`, `lib/staging.js` | Private persistent byte queue, streamed OPFS acquisition/validation, local Blob export and recovery |
+| `lib/export_directory.js` | Private IndexedDB directory grants/receipts and streaming validated-file writes to a selected base directory |
 | `lib/statistics.js` | Private aggregate counters and compact per-operation deduplication, without media addresses or names |
 | `lib/feedback*.js`, `lib/folder_path.js` | Allow-listed records, bounded history/tracking and portable relative paths |
 | `lib/reddit_hls.mjs`, `lib/vendor/mp4box/` | Restricted Reddit HLS input and locally bundled MP4 muxing |
@@ -29,11 +30,15 @@ This document describes the current development source, not a list of planned ca
 3. Provider or generic discovery produces candidates. Preserve declared signed URLs exactly; diagnostic redaction changes only log copies.
 4. Probe candidates and choose an admitted plan. A confirmed original's failure is reported rather than silently becoming a preview.
 5. Prepare supported converted/assembled output if needed, then enqueue the resolved source. Up to three jobs (two per source origin) acquire complete files into offscreen OPFS storage and validate their measured bytes and media signature/container before export.
-6. Persist export intent, give the browser a typed local Blob backed by that prepared file, and attach the browser download ID to feedback. Keep the offscreen owner alive until the native terminal result; completed/cancelled jobs release their temporary files and private source addresses.
+6. Persist export intent, then export the prepared file through browser downloads or write it to the user-selected directory. Browser exports attach the real Chrome ID; direct writes use a private receipt, never a fabricated Chrome ID. Direct writes report success after atomic close and size confirmation. Restart reconciles an interrupted receipt against exact staged bytes; uncertain outcomes refuse automatic retry. Known aborted pre-close failures retain prepared bytes for retry. Completed/cancelled jobs release temporary files and source addresses.
+
+Saving controls are drafts until explicit Save. Private IndexedDB stores structured-cloned directory handles; local preferences store only a directory ID. Each queued job snapshots its destination. Grants are checked in the offscreen writer; unavailable access never falls back to Downloads. Numbered collision names preserve existing files. A cancelled pre-close write can leave an empty placeholder. Permission renewal requires choosing the same directory in settings; the handle's identity retains queued destinations. Native external-picker permission lifetime remains a browser acceptance gate.
+
+Optional X author folders derive a strict username from the exact selected media owner's post permalink, not the page URL, reposter or quoted post's outer owner. Unknown author preserves the existing layout. The same relative path builder covers photos, videos, converted GIFs and MP4 fallback; platform-reserved usernames use the shared portable normalization. Author folders on other providers are not inferred.
 
 There is no hover-based media-title network prefetch. The save item has a fixed title. Context availability remains best effort; save-time ownership checks are authoritative.
 
-A Pawchive feed-preview save reads the owning post and saves all distinct declared supported originals, including the original cover. An individual attachment remains a single target. Post batches stop at 20 items, space starts by one second and stop on rate limits. This is a bounded adapter, not general page downloading.
+A Pawchive feed-preview save reads the owning post and saves all distinct declared supported originals, including the original cover. An individual attachment remains a single target. Post batches stop at 100 items, space starts by one second and stop on rate limits. This is a bounded adapter, not general page downloading.
 
 ## Verification and formats
 

@@ -74,6 +74,23 @@ function env(stored={jobs:[],paused:false}) {
   assert.equal((await lm.list()).jobs.find(j=>j.filename==='peer.png').state,'queued');await Promise.all(waits);await lm.drain();
   }
   // Local export failure retains full bytes. Explicit retry does not receive remotely again.
+  {
+    const fs=env({jobs:[],paused:true}),exports=new Map();let finish;
+    fs.d.export=async(url,filename,j)=>{assert.equal(j.directoryId,'directory-chosen');const id='file:'+j.id;exports.set(id,{id,url,filename,state:'in_progress',fileSize:png.length});await new Promise(r=>finish=r);exports.get(id).state='complete';return id;};
+    fs.d.search=async(id,url)=>exports.get(id) || [...exports.values()].find(x=>x.url===url);
+    const manager=createManager(fs.d);await manager.ready;let settled=false;
+    const result=manager.enqueue({url:'https://media.test/custom',filename:'folder/custom.png'},{directoryId:'directory-chosen'}).then(id=>{settled=true;return id;});
+    await until(()=>fs.data.jobs.length===1);assert.equal(fs.data.jobs[0].directoryId,'directory-chosen');await manager.command('pause');await until(()=>Boolean(finish));
+    assert(!settled,'Directory export does not signal success before atomic close');finish();assert.equal(await result,'file:job-1');await manager.drain();
+    assert.equal((await manager.list()).jobs[0].state,'complete');assert.equal((await manager.list()).jobs[0].downloadId,null,'Directory receipt never becomes public Chrome ID');assert(fs.removed.includes('job-1'));
+    const lostReply=env();let receipt,searches=0;lostReply.d.export=async(url,filename,j)=>{receipt={id:'file:'+j.id,url,filename:'actual (1).png',state:'complete'};return receipt.id;};lostReply.d.search=async()=>{if(++searches===1)throw Error('lookup reply lost');return receipt;};
+    const committed=createManager(lostReply.d);await committed.ready;assert.equal(await committed.enqueue({url:'https://media.test/lost-reply',filename:'intended.png'},{directoryId:'directory-chosen'}),'file:job-1');await committed.drain();assert(lostReply.removed.includes('job-1'));assert(!(await committed.list()).jobs[0].ready && (await committed.list()).jobs[0].filename==='actual (1).png','Committed export after lost reply cleans staging and keeps actual name');
+    const lost=env({jobs:[{id:'job-lost-file',state:'exporting',directoryId:'directory-chosen',filename:'a.png',downloadId:null,exportUrl:'blob:lost',prepared:true,total:png.length,mime:'image/png'}],paused:false});
+    lost.d.search=async()=>({id:'file:job-lost-file',state:'unknown',error:'EXPORT_UNCERTAIN'});
+    const restarted=createManager(lost.d);await restarted.ready;assert.equal((await restarted.list()).jobs[0].error,'EXPORT_UNCERTAIN');await assert.rejects(restarted.command('retry','job-lost-file'),/EXPORT_UNCERTAIN/);assert.equal(lost.exports,0,'Uncertain file export never retries blindly');
+    exports.clear();const denied=env();let allow=false;denied.d.export=async(url,filename,j)=>{if(!allow)throw Error('DIRECTORY_ACCESS_REQUIRED');exports.set('file:'+j.id,{id:'file:'+j.id,url,filename,state:'complete'});return 'file:'+j.id;};denied.d.search=fs.d.search;
+    const retry=createManager(denied.d);await retry.ready;await assert.rejects(retry.enqueue({url:'https://media.test/denied',filename:'denied.png'},{directoryId:'directory-chosen'}),/DIRECTORY_ACCESS_REQUIRED/);await retry.drain();assert((await retry.list()).jobs[0].ready);allow=true;await retry.command('retry',(await retry.list()).jobs[0].id);await retry.drain();assert.equal(denied.stages,1,'Restored access exports retained bytes');
+  }
   const f=env();const exportFile=f.d.export;let fail=true;f.d.export=async(...args)=>{if(fail)throw Error('EXPORT_FAILED');return exportFile(...args)};
   const fm=createManager(f.d);await fm.ready;await assert.rejects(fm.enqueue({url:'https://media.test/retry',filename:'retry.png'}),/EXPORT_FAILED/);await fm.drain();
   let j=(await fm.list()).jobs[0];assert(j.ready && j.state==='failed');fail=false;await fm.command('retry',j.id);await fm.drain();assert.equal(f.stages,1);assert.equal((await fm.list()).jobs[0].state,'complete');

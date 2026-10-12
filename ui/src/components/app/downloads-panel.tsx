@@ -37,14 +37,14 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
       const record=records.find(r=>r.id===(j.op || j.id))
       const actions=<>
         {active && j.managed!==false?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t('downloads.cancel')} onClick={()=>void controller.command('cancel',j.id)}><X/></Button>:null}
-        {j.state==='failed' && j.managed!==false?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t(j.ready?'downloads.exportAgain':'downloads.retry')} onClick={()=>void controller.command('retry',j.id)}><RotateCcw/></Button>:null}
+        {j.state==='failed' && j.managed!==false && j.error!=='EXPORT_UNCERTAIN'?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t(j.ready?'downloads.exportAgain':'downloads.retry')} onClick={()=>void controller.command('retry',j.id)}><RotateCcw/></Button>:null}
         {!active?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t(j.managed===false?'downloads.removeRecord':'downloads.remove')} onClick={()=>void controller.command('remove',j.id)}><Trash2/></Button>:null}
       </>
       const progress=<div className="space-y-2">
         {active?<progress className="h-1.5 w-full accent-primary" aria-label={t('downloads.progress')} max={j.total||1} value={j.total?j.received:undefined}/>:null}
         {record && active?<p className="text-xs text-muted-foreground" role="status">{t(`downloads.${j.state}`)}</p>:null}
         {j.received>0?<p className="text-xs text-muted-foreground">{bytes(j.received)} / {j.total?bytes(j.total):t('downloads.unknown')}{j.state==='receiving' && j.speed>0?` · ${bytes(j.speed)}/s`:''}{seconds!==null && j.state==='receiving'?` · ${t('downloads.remaining',{seconds})}`:''}</p>:null}
-        {j.error?<p className="break-all text-xs text-danger">{j.error}{j.ready?` · ${t('downloads.kept')}`:''}</p>:null}
+        {j.error?<p className="break-all text-xs text-danger">{j.error==='DIRECTORY_ACCESS_REQUIRED'?t('saving.directoryAccess'):j.error==='DIRECTORY_WRITE_FAILED'?t('saving.directoryWriteFailed'):j.error==='EXPORT_UNCERTAIN'?t('saving.exportUncertain'):j.error}{j.ready?` · ${t('downloads.kept')}`:''}</p>:null}
         {j.managed===false && active?<p className="text-xs text-muted-foreground">{t('downloads.preparingHint')}</p>:null}
       </div>
       if(record && feedback)return <ResultRow key={j.id} jobId={j.id} record={record} env={{FB:env.FB,...feedback.env}} unread={unreadIds.includes(record.id)} defaultOpen={focusId===record.id} actions={actions}><div className="px-3 pb-3">{progress}</div></ResultRow>

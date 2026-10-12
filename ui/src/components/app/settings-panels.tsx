@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { CheckCircle2, ChevronDown, Save, TriangleAlert } from "lucide-react"
+import { CheckCircle2, ChevronDown, FolderOpen, Save, TriangleAlert } from "lucide-react"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -31,7 +31,7 @@ function Hint({ children, secondary = false, id }: { children: React.ReactNode; 
 /** "Saving": subfolder and folder organization. Edited here, written by the explicit save action. */
 export function SavingPanel({ settings }: { settings: SettingsController }) {
   const s: any = useStore(settings.store)
-  const { t, lang } = useI18n()
+  const { t, msg, lang } = useI18n()
   const preview = settings.preview(lang)
   return (
     <Card data-slot="saving">
@@ -42,9 +42,19 @@ export function SavingPanel({ settings }: { settings: SettingsController }) {
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="space-y-1.5">
+          <Label>{t('saving.baseFolder')}</Label>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1 break-all text-sm">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t('saving.browserFolder')}</span>
+            <Button type="button" variant="outline" disabled={!s.loaded || s.saving || s.picking} onClick={()=>void settings.pickDirectory()}><FolderOpen/>{t('saving.chooseFolder')}</Button>
+            {s.saveDirectoryId?<Button type="button" variant="ghost" disabled={s.saving || s.picking} onClick={()=>settings.resetDirectory()}>{t('saving.useBrowserFolder')}</Button>:null}
+          </div>
+          <Hint>{t('saving.baseFolderHint')}</Hint>
+          {s.directoryError?<Alert variant="destructive"><AlertDescription>{msg(s.directoryError)}</AlertDescription></Alert>:null}
+        </div>
+        <div className="space-y-1.5">
           <Label htmlFor="subfolderInput">{t("saving.folderLabel")}</Label>
           <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background/40 shadow-xs focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40">
-            <span className="flex items-center border-r bg-muted px-2.5 text-xs whitespace-nowrap text-muted-foreground">{t("saving.downloads")} /</span>
+            <span className="flex max-w-[40%] items-center border-r bg-muted px-2.5 text-xs text-muted-foreground"><span className="truncate">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t("saving.downloads")}</span> /</span>
             <Input
               id="subfolderInput"
               type="text"
@@ -89,6 +99,11 @@ export function SavingPanel({ settings }: { settings: SettingsController }) {
             </span>
           </Hint>
           <Hint secondary>{t("saving.modeHint")}</Hint>
+        </div>
+
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2.5"><Switch id="xAuthorFolders" checked={s.xAuthorFolders} disabled={!s.loaded || s.saving} onCheckedChange={v=>settings.setField('xAuthorFolders',v)}/><Label htmlFor="xAuthorFolders" className="cursor-pointer">{t('saving.xAuthor')}</Label></div>
+          <Hint>{t('saving.xAuthorHint')}</Hint>
         </div>
 
       </CardContent>
@@ -305,7 +320,7 @@ export function SaveBar({ settings }: { settings: SettingsController }) {
           {type === "error" ? <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" /> : null}
           {msg(message)}
         </div>
-        <Button id="saveButton" type="button" disabled={!s.loaded || s.saving} onClick={() => { void settings.save() }}>
+        <Button id="saveButton" type="button" disabled={!s.loaded || s.saving || s.picking} onClick={() => { void settings.save() }}>
           <Save />
           {t("savebar.save")}
         </Button>

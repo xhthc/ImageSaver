@@ -50,6 +50,9 @@
   } = {}) {
     const normalizedSrc = (src || currentSrc || '').trim();
     const normalizedCurrent = (currentSrc || src || '').trim();
+    const selectedOwner=xiOwnerOf(lastChosenEl),ownerId=selectedOwner && xiIdOf(selectedOwner.owner,Boolean(selectedOwner.quote));
+    const ownerLink=ownerId?extractTweetUrl(selectedOwner.owner,'https://x.com/'):null;
+    const authorPostUrl=ownerLink?.match(/\/status\/(\d+)/)?.[1]===ownerId?ownerLink:null;
     let normalizedType = type;
     if (!normalizedType) {
       if (/\.(mp4|webm|ogv|mov|m4v)(\?.*)?$/i.test(normalizedSrc) || (mime && mime.startsWith('video/'))) {
@@ -80,6 +83,7 @@
       recoveredMp4Url: recoveredMp4Url || null,
       recoveredBitrate: typeof recoveredBitrate === 'number' ? recoveredBitrate : null,
       postUrl: postUrl ? postUrl.trim() : null,
+      authorPostUrl,
       tweetId: tweetId ? String(tweetId).trim() : null,
       mediaIdHint: mediaIdHint ? String(mediaIdHint).trim() : null,
       mediaIndex: typeof mediaIndex === 'number' ? mediaIndex : null,

@@ -188,7 +188,7 @@ function makeChrome(state) {
     const missing = refs.filter(([file, ref]) => !fs.existsSync(path.resolve(ROOT, path.posix.join(path.posix.dirname(file), ref))));
     assert(refs.length >= 6 && missing.length === 0, `21f: every local script and stylesheet the pages reference exists (${refs.length} references)`);
     const order = (html, a, b) => html.indexOf(a) > -1 && html.indexOf(b) > -1 && html.indexOf(a) < html.indexOf(b);
-    assert(/<script src="\.\.\/lib\/folder_path\.js"><\/script>\s*<script src="\.\.\/lib\/feedback\.js"><\/script>/.test(fullHtml) && /<script src="\.\.\/lib\/feedback\.js"><\/script>/.test(quickHtml) && /type="module"[^>]*src="\.\/assets\//.test(quickHtml + fullHtml), '21g: the shared libraries (folder rules, feedback schema) are the classic scripts of the pages; the bundle is a local module');
+    assert(order(fullHtml,'../lib/folder_path.js','../lib/export_directory.js') && order(fullHtml,'../lib/export_directory.js','../lib/feedback.js') && /<script src="\.\.\/lib\/feedback\.js"><\/script>/.test(quickHtml) && /type="module"[^>]*src="\.\/assets\//.test(quickHtml + fullHtml), '21g: shared folder, directory and feedback scripts precede the local UI module');
     assert(!fs.existsSync(path.resolve(ROOT, 'popup/popup.js')) && !fs.existsSync(path.resolve(ROOT, 'popup/feedback.js')) && !fs.existsSync(path.resolve(ROOT, 'popup/history.js')) && !fs.existsSync(path.resolve(ROOT, 'popup/app.js')) && !fs.existsSync(path.resolve(ROOT, 'popup/quick.js')) && !fs.existsSync(path.resolve(ROOT, 'popup/details.html')), '21h: the previous hand-written page scripts are gone (one implementation)');
     const built = fs.readdirSync(path.resolve(ROOT, 'popup/assets')).map((f) => read(`popup/assets/${f}`)).join('\n');
     assert(!/\beval\s*\(/.test(built) && !/new Function\s*\(/.test(built) && !/importScripts|https?:\/\/[a-z0-9.-]+\.[a-z]{2,}\/[^"'`\s)]*\.js/i.test(built), '21i: the built bundle has no eval, no new Function and no remote script reference');
@@ -281,7 +281,7 @@ function makeChrome(state) {
     assert(!/HTTP 4\d\d|HTTP 5\d\d|404|подтвердил, что файл отсутствует/.test(lines), '24c: no HTTP status or absence claim is invented for NO_MEDIA');
     const rl = s.records.find((r) => r.id === longName.id);
     assert(rl.filename === longName.filename && longName.filename.length <= 120, '24d: a long file name is bounded to 120 characters');
-    assert(present.filenameLine(rl).includes(longName.filename) && /фактическое, по данным Chrome/.test(present.filenameLine(rl)) && present.filenameLine(rec({ filename: 'p.jpg', filenameKind: 'intended' })).endsWith('(запланированное, не подтверждено)') && present.filenameLine(unnamedFailure()) === '', '24e: details carry the complete name and say whether it is confirmed');
+    assert(present.filenameLine(rl).includes(longName.filename) && /фактическое/.test(present.filenameLine(rl)) && present.filenameLine(rec({ filename: 'p.jpg', filenameKind: 'intended' })).endsWith('(запланированное, не подтверждено)') && present.filenameLine(unnamedFailure()) === '', '24e: details carry the complete name and say whether it is confirmed');
     assert(/имя запланировано, не подтверждено/.test(present.rowParts(FB, rec({ filename: 'q.jpg', filenameKind: 'intended' })).meta) && !/запланировано/.test(present.rowParts(FB, rl).meta), '24f: an unconfirmed name is marked in the row, a confirmed one is not');
     assert(present.hasReport(noMedia) && !present.hasReport(other) && present.hasReport(rec({ state: 'interrupted', output: {}, failure: failure('download', 'download_interrupted') })) && !present.hasReport(rec({ state: 'cancelled', output: {}, failure: failure('save', 'cancelled') })), '24g: only failed and interrupted results offer the retry hint and the report');
     const rep = present.buildReportText(FB, noMedia, 'save fails <b>bold</b> https://x.test/?token=NOTE123', { version: '2.0.0', browser: 'Chromium 126' });
@@ -372,20 +372,30 @@ function makeChrome(state) {
   // =================================================================================================
   console.log('\n--- 26. Settings: persistence and isolation (ui/src/core/settings.js, history.js) ---');
   {
-    const DEFAULTS_KEYS = ['subfolder', 'folderOrganizationMode', 'xShareHost', 'igShareHost', 'ttShareHost', 'youtubeShareHost'];
+    const DEFAULTS_KEYS = ['subfolder', 'folderOrganizationMode', 'saveDirectoryId', 'xAuthorFolders', 'xShareHost', 'igShareHost', 'ttShareHost', 'youtubeShareHost'];
     const timers = [];
-    const mountSettings = async (stateOver = {}) => {
+    const mountSettings = async (stateOver = {}, deps = {}) => {
       const state = { session: [], history: [], local: { notifySuccess: false, historyEnabled: true, unrelatedKey: 'keep-me', ...stateOver } };
       const { chrome, calls } = makeChrome(state);
-      const settings = createSettings({ chrome, FolderPath, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {} });
+      const settings = createSettings({ chrome, FolderPath, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {}, ...deps });
       await settings.load();
       return { state, calls, settings, chrome, st: () => settings.store.getState() };
     };
 
     const a = await mountSettings({ askEveryTime: true });
+    const handles=new Map(),handle={name:'My media',queryPermission:async()=> 'granted',isSameEntry:async old=>old===handle};
+    let cancelPick=false;
+    const dirDeps={directory:{get:async id=>handles.get(id),set:async(id,h)=>handles.set(id,h)},chooseDirectory:async()=>{if(cancelPick)throw Object.assign(Error(),{name:'AbortError'});return handle;},id:()=> 'chosen'};
+    const picked=await mountSettings({},dirDeps);assert(await picked.settings.pickDirectory() && picked.calls.localSets.length===0 && handles.size===0,'26folder1: picker changes only draft, not persisted destination');
+    picked.settings.setField('xAuthorFolders',true);assert(picked.settings.preview('en').text==='My media/SavedImages/username/photo.jpg','26folder2: custom base and author preview compose');
+    assert(await picked.settings.save() && picked.state.local.saveDirectoryId==='directory-chosen' && handles.get('directory-chosen')===handle && picked.state.local.xAuthorFolders===true,'26folder3: explicit Save stores handle, folder and author preference');
+    const reopen=await mountSettings(picked.state.local,dirDeps);assert(reopen.st().directoryName==='My media' && reopen.st().xAuthorFolders===true,'26folder4: reopen restores destination and author preference');
+    cancelPick=true;assert(!await reopen.settings.pickDirectory() && reopen.st().saveDirectoryId==='directory-chosen' && !reopen.st().directoryError,'26folder5: cancellation preserves selected destination');
+    reopen.settings.resetDirectory();assert(reopen.calls.localSets.length===0 && reopen.st().saveDirectoryId==='' && reopen.state.local.saveDirectoryId==='directory-chosen','26folder6: reset is a draft until Save');
+    assert(await reopen.settings.save() && reopen.state.local.saveDirectoryId==='','26folder7: explicit reset restores standard downloads');
     const st = a.st;
     assert(st().subfolder === 'SavedImages' && st().folderOrganizationMode === 'single' && !('askEveryTime' in st()) && st().xShareHost === 'fixupx.com' && st().igShareHost === 'oginstagram.com' && st().ttShareHost === 'tnktok.com' && st().youtubeShareHost === 'koutube.com' && st().loaded === true, '26a: preview defaults are loaded on the full page');
-    assert(JSON.stringify(Object.keys(DEFAULTS).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && JSON.stringify(DEFAULTS) === JSON.stringify({ subfolder: 'SavedImages', folderOrganizationMode: 'single', xShareHost: 'fixupx.com', igShareHost: 'oginstagram.com', ttShareHost: 'tnktok.com', youtubeShareHost: 'koutube.com' }), '26a2: the remaining settings have preview defaults; Save As is absent');
+    assert(JSON.stringify(Object.keys(DEFAULTS).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && JSON.stringify(DEFAULTS) === JSON.stringify({ subfolder: 'SavedImages', folderOrganizationMode: 'single', saveDirectoryId: '', xAuthorFolders: false, xShareHost: 'fixupx.com', igShareHost: 'oginstagram.com', ttShareHost: 'tnktok.com', youtubeShareHost: 'koutube.com' }), '26a2: the remaining settings have preview defaults; Save As is absent');
     assert(st().notify.checked === false && st().notify.error === '', '26b: the Notifications section reflects the stored notifySuccess preference');
     assert(a.calls.localSets.length === 0, '26b2: loading and editing write nothing');
 
@@ -404,7 +414,7 @@ function makeChrome(state) {
     assert(a.settings.preview().text === 'Загрузки/My/Pics/x/pic/photo.jpg' && a.settings.preview().error === false, '26b4: the example path follows the folder and the organization mode');
     assert(await a.settings.save() === true);
     const saved = a.calls.localSets[a.calls.localSets.length - 1];
-    assert(JSON.stringify(Object.keys(saved).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && saved.folderOrganizationMode === 'by_site_and_type' && !('askEveryTime' in saved) && saved.xShareHost === 'fixupx.com' && saved.youtubeShareHost === 'koutube.com' && saved.igShareHost === 'oginstagram.com' && saved.ttShareHost === 'tnktok.com', '26c: "Сохранить настройки" writes exactly the six remaining Saving/Embed keys with allowlisted values');
+    assert(JSON.stringify(Object.keys(saved).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && saved.folderOrganizationMode === 'by_site_and_type' && !('askEveryTime' in saved) && saved.xShareHost === 'fixupx.com' && saved.youtubeShareHost === 'koutube.com' && saved.igShareHost === 'oginstagram.com' && saved.ttShareHost === 'tnktok.com', '26c: "Сохранить настройки" writes exactly the eight Saving/Embed keys with allowlisted values');
     assert(a.state.local.notifySuccess === false && a.state.local.historyEnabled === true && a.state.local.unrelatedKey === 'keep-me', '26d: saving settings leaves notifySuccess, historyEnabled and unrelated values untouched');
     assert(st().subfolder === 'My/Pics' && /Настройки успешно сохранены/.test(ru(st().status.message)) && st().status.type === 'success' && timers.pop().ms === STATUS_MS, '26d2: the form shows the sanitized value and a success message that clears itself');
 
@@ -1061,7 +1071,7 @@ function makeChrome(state) {
 
     // interpolation and fallbacks
     assert(I18n.t('en', 'updates.installed', { version: '2.0.0.25' }) === 'Installed version: 2.0.0.25' && I18n.t('ru', 'updates.installed', { version: '2.0.0.25' }) === 'Установленная версия: 2.0.0.25', '33g: placeholders are substituted in both languages');
-    assert(I18n.t('en', 'filename.actual', { name: '{name} <b>x</b> $& $1' }) === 'File name: {name} <b>x</b> $& $1 (actual, reported by Chrome)', '33h: a substituted value is inserted literally (no second substitution, no $-patterns, no markup interpretation)');
+    assert(I18n.t('en', 'filename.actual', { name: '{name} <b>x</b> $& $1' }) === 'File name: {name} <b>x</b> $& $1 (actual)', '33h: a substituted value is inserted literally (no second substitution, no $-patterns, no markup interpretation)');
     assert(I18n.t('en', 'updates.installed') === 'Installed version: {version}' && I18n.t('de', 'results.empty') === 'No save results yet.' && I18n.t('ru', 'no.such.key') === 'no.such.key', '33i: a missing value keeps its placeholder; an unknown language uses English; an unknown key is shown as itself');
     assert(I18n.message('en', '') === '' && I18n.message('en', 'history.cleared') === 'History cleared.' && I18n.message('ru', { key: 'settings.error.tooDeep', vars: { max: 8 } }) === 'Слишком много вложенных папок (максимум 8)', '33j: stored messages (key or { key, vars }) render in the requested language');
 
@@ -1192,7 +1202,7 @@ function makeChrome(state) {
     const enSum = FB.summarize(failRec, 'en');
     assert(enSum.title === 'Server error' && /HTTP error 500/.test(enSum.explanation) && enSum.lines.includes('Stage: checking the content') && enSum.lines.includes('HTTP status: 500') && enSum.lines.includes('Code: HTTP_500') && FB.summarize(failRec).title === 'Ошибка сервера', '33zg: failure details translate while diagnostic codes and statuses stay intact');
     assert(FB.formatSize(1004544, 'en') === '981 KB' && FB.formatSize(1004544, 'ru') === '981 КБ' && FB.formatSize(1536, 'en') === '1.5 KB' && FB.formatSize(1536, 'ru') === '1,5 КБ' && FB.formatSize(1536) === '1,5 КБ', '33zh: sizes use the unit and decimal mark of the language');
-    assert(present.filenameLine(okRec, 'en') === 'File name: Фото «оригинал».jpg (actual, reported by Chrome)', '33zi: the file-name line is translated around the unchanged name');
+    assert(present.filenameLine(okRec, 'en') === 'File name: Фото «оригинал».jpg (actual)', '33zi: the file-name line is translated around the unchanged name');
     const enStats = present.statsView(FB, [okRec, failRec], 'ok', true, 'en');
     assert(enStats.tiles[0].label === 'Operations in history' && /^Known total size: at least 981 KB\. Size measured for 1 of 1 successful saves\.$/.test(enStats.sizeText) && /50 operations/.test(enStats.note), '33zj: statistics are presented in English');
     assert(FB.buildReport(failRec, { env: { version: '2.0.0' } }) === FB.buildReport(failRec, { env: { version: '2.0.0' } }) && /^MediaLatch bug report\n/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })) && /http_status: 500/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })), '33zk: the copied bug report keeps its single format');

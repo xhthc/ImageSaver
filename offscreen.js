@@ -16,13 +16,15 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
       }
       (async () => {
         const s = getStaging();
+        if(message.action === 'STAGING_DIRECTORY_EXPORT') return {success:true,id:await getDirectoryExporter().write(message.job,message.url)};
+        if(message.action === 'STAGING_DIRECTORY_SEARCH') return {success:true,item:await getDirectoryExporter().search(message.id,message.url)};
         if(message.action === 'STAGING_PREPARE') return {success:true,...await s.stage(message.job, async p => {
           await chrome.runtime.sendMessage({action:'STAGING_PROGRESS',id:message.job.id,progress:p});
         })};
         if(message.action === 'STAGING_URL') return {success:true,url:await s.fileUrl(message.id,message.mime)};
         if(message.action === 'STAGING_VERIFY') return {success:true,valid:await s.verify(message.id,message.size,message.mime)};
         if(message.action === 'STAGING_REMOVE') {await s.remove(message.id);return {success:true};}
-        if(message.action === 'STAGING_ABORT') {await s.abort(message.id,message.attempt);return {success:true};}
+        if(message.action === 'STAGING_ABORT') {await Promise.all([s.abort(message.id,message.attempt),getDirectoryExporter().abort(message.id)]);return {success:true};}
         return {success:false,error:'INVALID_COMMAND'};
       })().then(sendResponse,e=>sendResponse({success:false,error:e.message,retryAt:e.retryAt}));
       return true;
@@ -127,6 +129,11 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
 
   return false;
 });
+}
+
+let directoryExporter;
+function getDirectoryExporter(){
+  return directoryExporter || (directoryExporter=MediaLatchDirectory.createExporter({store:MediaLatchDirectory.database(indexedDB),FolderPath:ImageSaverFolderPath,file:async id=>(await (await (await navigator.storage.getDirectory()).getDirectoryHandle('medialatch-downloads')).getFileHandle(id)).getFile()}));
 }
 
 const HEADER_TIMEOUT_MS = typeof __HEADER_TIMEOUT_MS !== 'undefined' ? __HEADER_TIMEOUT_MS : 30000;

@@ -29,6 +29,8 @@ Copy-link settings may produce links to third-party preview services. Copying su
 
 Statistics has recording and Clear statistics controls. Turning recording off preserves totals. Clear statistics removes its counters and duplicate-prevention ledger; pre-clear operations cannot restore them. It does not remove legacy history metadata or downloaded files. Removing extension storage/uninstalling removes extension-local data; browser downloads and saved files are managed separately.
 
+Selecting a base folder grants local write access only after a browser picker action. Private extension IndexedDB retains directory handles and per-file export receipts (destination ID, relative filename, type, size and job/operation identifiers). Receipts are removed with the manager record; previously selected handles remain until extension data is cleared. Handles and destination paths never enter Debug reports. Direct writes do not create Chrome download-history entries. Optional X author folders use the selected post's username locally; no author data is uploaded.
+
 ## Reports and diagnostics
 
 Bug reports are created and copied only when requested. The report builder allows bounded fields and removes addresses, paths and token-bearing data from its structured output. Diagnostic log copies redact known signed query parameters; the exact request URL is preserved for the actual transfer.

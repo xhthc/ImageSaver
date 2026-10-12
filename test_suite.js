@@ -620,6 +620,25 @@ async function runTests() {
   console.log('Проверка MediaLatch v2.0.0: test_suite.js (466 проверок)');
   console.log('====================================================\n');
 
+  {
+    const path=opts=>sandbox.resolveDownloadPath({filename:'media.gif',subfolder:'SavedImages',pageUrl:'https://x.com/AUTHOR/status/42',xAuthor:'AUTHOR',...opts});
+    assert(path({})==='SavedImages/author/media.gif','X author: one folder adds selected username');
+    assert(path({folderOrganizationMode:'by_site_and_type',isConvertedGif:true})==='SavedImages/x/author/gif/media.gif','X author: genuine converted GIF retains author and type');
+    assert(path({filename:'media.mp4',folderOrganizationMode:'by_site_and_type',resolvedExtension:'.mp4'})==='SavedImages/x/author/video/media.mp4','X author: MP4 fallback retains author and video type');
+    assert(path({xAuthor:''})==='SavedImages/media.gif' && path({xAuthor:'../escape'})==='SavedImages/media.gif' && path({pageUrl:'https://reddit.com/post'})==='SavedImages/media.gif','X author: unknown, invalid and foreign contexts retain existing layout');
+    assert(path({xAuthor:'CON'})==='SavedImages/con_/media.gif','X author: valid reserved username gets portable folder name');
+    assert(sandbox.xAuthorFromPost('https://x.com/Some_User/status/42/photo/1')==='some_user' && sandbox.xAuthorFromPost('https://twitter.com/NAME/status/42')==='name','X author: strict own-post username parser supports both X hosts');
+    assert(['https://x.com.evil/author/status/42','https://author@x.com/author/status/42','https://x.com/author','https://x.com/too_long_username/status/42','http://x.com/author/status/42'].every(u=>sandbox.xAuthorFromPost(u)===''),'X author: unproven or invalid URL cannot become folder');
+    const original=mockChrome.tabs.sendMessage;
+    try{
+      mockChrome.tabs.sendMessage=async()=>({type:'image',url:'https://pbs.twimg.com/media/a.jpg',authorPostUrl:'https://x.com/Owner/status/42'});
+      assert(await sandbox.selectedXAuthor({frameId:0},{id:1},'https://pbs.twimg.com/media/a.jpg')==='owner' && await sandbox.selectedXAuthor({frameId:0},{id:1},'https://pbs.twimg.com/media/other.jpg')==='','X author: generic image route accepts only exact selected source');
+    }finally{mockChrome.tabs.sendMessage=original;}
+    const get=mockChrome.storage.local.get,download=mockChrome.downloads.download;let exports=0;
+    try{mockChrome.storage.local.get=async()=>({saveDirectoryId:'directory-chosen'});mockChrome.downloads.download=async()=>exports++;let refused=false;try{await sandbox.managedDownload({url:'https://example.com/a.png',filename:'a.png'});}catch(e){refused=e.message==='DIRECTORY_ACCESS_REQUIRED';}assert(refused && exports===0,'Custom folder: unavailable manager refuses instead of silently using Downloads');}
+    finally{mockChrome.storage.local.get=get;mockChrome.downloads.download=download;}
+  }
+
   // 1. universal fallback: Обычное изображение -> fallback на исходный srcUrl
   const standardResult = await sandbox.resolveOriginalImageUrl({
     srcUrl: 'https://example.com/simple_photo.jpg',
@@ -33429,6 +33448,7 @@ ${stats !== null ? `<p class="post__missing-stats">\n        ${stats}\n      </p
     assert(quoteDesc && quoteDesc.isQuoteTweet === true && quoteDesc.tweetId === QUOTE_ID && quoteDesc.postUrl.includes(QUOTE_ID), '272.5: findMediaInElements on quote video derives isQuoteTweet: true, quote tweetId, and quote postUrl');
     const outerDesc = csCtx.__findMediaInElements([outerVideo]);
     assert(outerDesc && outerDesc.isQuoteTweet === false && outerDesc.tweetId === OUTER_ID && outerDesc.postUrl.includes(OUTER_ID), '272.6: findMediaInElements on outer video derives isQuoteTweet: false and outer tweetId');
+    assert(quoteDesc.authorPostUrl === `https://x.com/KaynakNews/status/${QUOTE_ID}` && outerDesc.authorPostUrl === `https://x.com/kirawontmiss/status/${OUTER_ID}`, '272.author: folder attribution uses selected owner permalink, including quote author');
 
     // 272.7: Attribution anchor inside player is excluded from post owner resolution
     const publisherAnchor = mkEl('a', { href: `/Publisher/status/${PUBLISHER_ID}/video/1` });

@@ -405,7 +405,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p.type(input, '  My/Pics  ');
     await p.click(p.q('#saveButton'));
     const saved = p.calls.localSets[p.calls.localSets.length - 1];
-    assert(p.calls.localSets.length === 1 && saved.subfolder === 'My/Pics' && saved.folderOrganizationMode === 'by_site_and_type' && !('askEveryTime' in saved) && Object.keys(saved).length === 6, 'R7g: "Сохранить настройки" writes the six remaining Saving/Embed keys, sanitized');
+    assert(p.calls.localSets.length === 1 && saved.subfolder === 'My/Pics' && saved.folderOrganizationMode === 'by_site_and_type' && saved.saveDirectoryId === '' && saved.xAuthorFolders === false && !('askEveryTime' in saved) && Object.keys(saved).length === 8, 'R7g: explicit Save writes the eight Saving/Embed keys, sanitized');
     assert(state.local.notifySuccess === false && state.local.historyEnabled === true && state.local.unrelatedKey === 'keep-me', 'R7h: other preferences are untouched');
     assert(/Настройки успешно сохранены/.test(p.q('#statusMessage').textContent) && p.q('#statusMessage').getAttribute('aria-live') === 'polite' && p.q('#statusMessage').getAttribute('data-type') === 'success', 'R7i: the result is announced in a polite live region');
     await p.type(input, 'x'.repeat(300));
@@ -418,6 +418,12 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p.click(p.q('#saveButton'));
     assert(/Не удалось сохранить настройки/.test(p.q('#statusMessage').textContent) && !p.q('#saveButton').disabled, 'R7l: a storage failure is reported and the button is released');
     state.failSet = false;
+
+    const author=p.q('#xAuthorFolders');
+    assert(author.getAttribute('role')==='switch' && p.q('label[for="xAuthorFolders"]'),'R7author1: author folders are a labelled accessible switch');
+    const writes=p.calls.localSets.length;await p.click(author);
+    assert(p.calls.localSets.length===writes && p.q('#folderPreviewPath').textContent.includes('x/username/pic/'),'R7author2: author choice is a draft reflected in the preview');
+    await p.click(p.q('#saveButton'));assert(state.local.xAuthorFolders===true,'R7author3: explicit Save persists author choice');
 
     // notifications
     await p.mousedown(p.tabs()[3]);

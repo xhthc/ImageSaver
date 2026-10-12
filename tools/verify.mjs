@@ -36,6 +36,7 @@ if (!only) for (const file of syntaxFiles) run(`syntax-${file.replaceAll('/', '-
 
 const tests = [
   'test_download_manager.js',
+  'test_export_directory.js',
   'test_statistics.js',
   'test_sankaku_original.js',
   'test_post_media.js',

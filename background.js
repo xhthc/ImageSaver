@@ -11,8 +11,11 @@ if (typeof importScripts === 'function') importScripts('lib/feedback_tracker.js'
 if (typeof importScripts === 'function') importScripts('lib/feedback_history.js');
 if (typeof importScripts === 'function') importScripts('lib/statistics.js');
 if (typeof importScripts === 'function') importScripts('lib/download_manager.js');
+if (typeof importScripts === 'function') importScripts('lib/export_directory.js');
 if (typeof importScripts === 'function') importScripts('lib/debug_journal.js');
 const FeedbackLib = globalThis.ImageSaverFeedback;
+const directoryStore=typeof indexedDB!=='undefined' && globalThis.MediaLatchDirectory?MediaLatchDirectory.database(indexedDB):null;
+const isFileExport=id=>globalThis.MediaLatchDirectory?.isExportId(id)===true;
 
 // ============================================================================
 // 0. DEBUG-MENU-01: the opt-in debug journal (lib/debug_journal.js)
@@ -806,6 +809,13 @@ function getConfiguredRoot(settings) {
   return typeof settings?.subfolder === 'string' ? settings.subfolder : FolderPath.DEFAULT_ROOT;
 }
 
+function xAuthorFromPost(url){
+  try{const u=new URL(url),m=/^\/([a-zA-Z0-9_]{1,15})\/status(?:es)?\/\d+(?:\/(?:photo|video)\/\d+)?\/?$/.exec(u.pathname);return u.protocol==='https:' && /^(?:www\.)?(?:x|twitter)\.com$/.test(u.hostname) && !u.username && !u.password && !u.port && m?m[1].toLowerCase():'';}catch(_){return '';}
+}
+async function selectedXAuthor(info,tab,src){
+  try{const media=await chrome.tabs.sendMessage(tab.id,{action:'GET_X_MEDIA_AT_CURSOR'},{frameId:Number.isInteger(info.frameId)?info.frameId:0});return media?.type==='image' && (media.url===src || media.src===src)?xAuthorFromPost(media.authorPostUrl):'';}catch(_){return '';}
+}
+
 const FOLDER_MEDIA_TYPES = new Set(['pic', 'video', 'gif', 'unknown-type']);
 
 /**
@@ -820,6 +830,7 @@ function resolveDownloadPath({
   filename,
   subfolder = FolderPath.DEFAULT_ROOT,
   folderOrganizationMode = 'single',
+  xAuthor = '',
   owningSite = null,
   mediaType = null,
   resolvedUrl = '',
@@ -831,9 +842,10 @@ function resolveDownloadPath({
 } = {}) {
   const cleanRoot = sanitizeRootSubfolder(subfolder);
   const cleanFilename = (filename || 'download').replace(/^[/\\]+/, '');
+  const author=/^[a-zA-Z0-9_]{1,15}$/.test(xAuthor) && determineOwningWebsite({pageUrl,resolvedUrl,group})==='x'?FolderPath.normalizeSegment(xAuthor.toLowerCase()):'';
 
   if (folderOrganizationMode !== 'by_site_and_type') {
-    return FolderPath.joinPath([cleanRoot], cleanFilename);
+    return FolderPath.joinPath([cleanRoot,author], cleanFilename);
   }
 
   const site = FolderPath.normalizeSite(
@@ -844,7 +856,7 @@ function resolveDownloadPath({
     ? mediaType
     : determineFinalMediaType({ resolvedUrl, resolvedExtension, isConvertedGif, contentType, group });
 
-  return FolderPath.joinPath([cleanRoot, site, type], cleanFilename);
+  return FolderPath.joinPath([cleanRoot, site, author, type], cleanFilename);
 }
 
 /**
@@ -870,6 +882,7 @@ function buildFinalFilename(resolvedUrl, resolvedExtension, subfolder = '', opti
     filename: finalFilename,
     subfolder,
     folderOrganizationMode: options.folderOrganizationMode,
+    xAuthor:options.xAuthor,
     owningSite: options.owningSite,
     mediaType: options.mediaType,
     resolvedUrl,
@@ -9068,6 +9081,7 @@ async function hydrateTrackedDownloadIds() {
 updateTrackedIdsList(() => {});
 
 async function addTrackedDownloadId(id) {
+  if(isFileExport(id))return;
   if (id === undefined || id === null) return;
   trackedDownloadIds.add(id);
   trackedIdsRemovedBeforeHydration.delete(id);
@@ -9424,6 +9438,7 @@ if (typeof globalThis.ImageSaverFeedbackTracker?.createTracker === 'function') {
       const items = await chrome.downloads.search({ id });
       return Array.isArray(items) && items.length ? items[0] : null;
     },
+    getFileExportItem:async op=>{if(!directoryStore)return null;const r=await directoryStore.byOp(op);if(!r)return null;return {...await searchDirectoryExport(r.id,r.exportUrl),output:{mime:r.mime,evidence:'verified_mime',type:r.mime?.startsWith('video/')?'video':r.mime==='image/gif'?'gif':'pic',sizeBytes:r.size,sizeKind:'measured'}};},
     peekEarlyTerminal: (id) => earlyTerminalDownloadStates.get(id),
     notify: (record, ...rest) => { dbg('notify', 'show', 'info', undefined, () => ({ state: record && record.state }), { op: record && record.id }); return feedbackNotifyRecord(record, ...rest); },
     onFinished: (record) => (statistics ? statistics.record(record) : false),
@@ -9479,6 +9494,7 @@ async function fbDiscard(op) {
   try { await feedbackTracker.discard(op); } catch (_) {}
 }
 async function fbAttach(op, downloadId, patch) {
+  if(isFileExport(downloadId))return;
   if (!op || !feedbackTracker) return;
   const staged=downloadManager?.output(downloadId);
   if(staged)patch={...patch,output:{...patch?.output,...staged}};
@@ -9527,12 +9543,14 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
       finally{await releaseOffscreenTask(owner);}
     },
     abort:async id=>{await offscreenRequest({action:'STAGING_ABORT',id});},
-    export:(url,filename)=>chrome.downloads.download({url,filename,saveAs:false}),
+    export:async(url,filename,j)=>{if(!j.directoryId)return chrome.downloads.download({url,filename,saveAs:false});await ensureOffscreenDocument();const r=await offscreenRequest({action:'STAGING_DIRECTORY_EXPORT',job:j,url});if(!r?.success)throw Error(r?.error || 'DIRECTORY_WRITE_FAILED');return r.id;},
     search:async(id,url)=>{
+      if(isFileExport(id) || (directoryStore && await directoryStore.byUrl(url)))return searchDirectoryExport(id,url);
       const items=await chrome.downloads.search(Number.isInteger(id)?{id}:{url});
       return items.find(x=>x.byExtensionId===chrome.runtime.id && (Number.isInteger(id) || x.url===url)) || null;
     },
-    cancelExport:id=>chrome.downloads.cancel(id),
+    cancelExport:id=>isFileExport(id)?offscreenRequest({action:'STAGING_ABORT',id:id.slice(5)}):chrome.downloads.cancel(id),
+    forget:j=>directoryStore?.forget('file:'+j.id),
     newAttempt:j=>{
       const m = j.mime || j.expectedMime || '';
       return fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'});
@@ -9542,17 +9560,21 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
       const m = j.mime || j.expectedMime || '';
       return old && (!FeedbackLib.isTerminal(old.state) || old.state==='complete')?j.op:fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'});
     },
-    attach:async(j,id)=>fbAttach(j.op,id,{filename:j.filename,output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}),
-    complete:async(j)=>fbDownloadTerminal(j.downloadId,'complete'),
+    attach:async(j,id)=>isFileExport(id)?fbStage(j.op,'saving',{output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}):fbAttach(j.op,id,{filename:j.filename,output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}),
+    complete:async(j,item)=>isFileExport(j.downloadId)?feedbackTracker?.completeFile(j.op,item,{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}):fbDownloadTerminal(j.downloadId,'complete'),
     failed:async j=>j.state==='cancelled'?fbCancel(j.op):fbFail(j.op,{stage:j.prepared?'save':'download',code:j.error}),
     error:()=>dbg('manager','queue','failed','STORAGE_FAILED')
   }) : null;
 downloadManager?.ready.then(()=>{downloadManagerRecovering=false;void closeOffscreenDocument().catch(()=>{});},()=>dbg('manager','load','failed','STORAGE_FAILED'));
 
-function managedDownload(options, feedbackOp=null, mime='') {
+async function searchDirectoryExport(id,url){
+  const owner=acquireOffscreenTask();try{await ensureOffscreenDocument();const r=await offscreenRequest({action:'STAGING_DIRECTORY_SEARCH',id,url});if(!r?.success)throw Error(r?.error || 'DIRECTORY_WRITE_FAILED');return r.item;}finally{await releaseOffscreenTask(owner);}
+}
+async function managedDownload(options, feedbackOp=null, mime='') {
   // Offline legacy harnesses omit IndexedDB; the installed extension always uses the durable queue.
-  if(!downloadManager) return chrome.downloads.download(options);
-  return downloadManager.enqueue(options,{op:feedbackOp,mime});
+  const {saveDirectoryId=''}=await chrome.storage.local.get({saveDirectoryId:''});
+  if(!downloadManager){if(saveDirectoryId)throw Error('DIRECTORY_ACCESS_REQUIRED');return chrome.downloads.download(options);}
+  return downloadManager.enqueue(options,{op:feedbackOp,mime,directoryId:saveDirectoryId});
 }
 async function downloadManagerSnapshot() {
   const snapshot=await downloadManager.list();
@@ -10078,6 +10100,7 @@ if (typeof globalThis !== 'undefined') {
  * staying tracked and shown as running, because no later event will ever arrive for it.
  */
 async function settleEarlyTerminalDownload(downloadId) {
+  if(isFileExport(downloadId)){await restoreOrClearBadge();return;}
   const earlyTerminal = earlyTerminalDownloadStates.get(downloadId);
   if (!earlyTerminal) return false;
   earlyTerminalDownloadStates.delete(downloadId);
@@ -10341,6 +10364,7 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
     subfolder,
     {
       folderOrganizationMode: settings.folderOrganizationMode,
+      xAuthor: settings.xAuthor,
       pageUrl: options?.pageUrl || group?.pageUrl || '',
       group,
       structuredResult
@@ -10373,7 +10397,7 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
     downloadId = await managedDownload(downloadOptions, options?.feedbackOp, structuredResult.normalizedMime);
 
     downloadStarted = true;
-    activeDownloadsMetadata.set(downloadId, {
+    if(Number.isInteger(downloadId))activeDownloadsMetadata.set(downloadId, {
       url: structuredResult.resolvedUrl,
       rawUrl: rawImageUrl || structuredResult.resolvedUrl,
       plan: group
@@ -10451,6 +10475,7 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
         filename: fallbackFilename,
         subfolder,
         folderOrganizationMode: settings.folderOrganizationMode,
+      xAuthor: settings.xAuthor,
         pageUrl: options?.pageUrl || group?.pageUrl || '',
         resolvedUrl: rawImageUrl,
         resolvedExtension: (fallbackFilename.match(/\.[^./]+$/) || [''])[0]
@@ -10470,7 +10495,7 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
 
       const fallbackDownloadId = await managedDownload(fallbackOptions, options?.feedbackOp);
 
-      activeDownloadsMetadata.set(fallbackDownloadId, { url: fallbackSourceUrl, rawUrl: rawImageUrl });
+      if(Number.isInteger(fallbackDownloadId))activeDownloadsMetadata.set(fallbackDownloadId, { url: fallbackSourceUrl, rawUrl: rawImageUrl });
       // The abandoned primary failure is recoverable: the operation continues with the fallback download.
       await fbAttach(options?.feedbackOp, fallbackDownloadId, {
         fallback: true,
@@ -10741,6 +10766,7 @@ async function executeXTweetVideoGifDownload(videoUrl, settings = {}, options = 
       filename: `${filenameNoExt}.gif`,
       subfolder: getConfiguredRoot(settings),
       folderOrganizationMode: settings?.folderOrganizationMode,
+      xAuthor: settings?.xAuthor,
       isConvertedGif: true,
       pageUrl,
       resolvedUrl: videoUrl
@@ -10878,6 +10904,7 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
       filename: `${filenameNoExt}.gif`,
       subfolder: getConfiguredRoot(settings),
       folderOrganizationMode: settings?.folderOrganizationMode,
+      xAuthor: settings?.xAuthor,
       isConvertedGif: true,
       pageUrl,
       resolvedUrl: videoUrl
@@ -10986,6 +11013,7 @@ async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) 
       filename: `${master.assetId}.mp4`,
       subfolder: getConfiguredRoot(settings),
       folderOrganizationMode: settings?.folderOrganizationMode,
+      xAuthor: settings?.xAuthor,
       mediaType: 'video',
       pageUrl: options?.pageUrl || '',
       resolvedUrl: master.url,
@@ -11124,6 +11152,7 @@ async function releaseOffscreenTask(ownerOrBlob = null, blobToRevoke = null) {
  * Safe against early terminal events arriving before, during, or after registration.
  */
 async function trackDownloadProtectedBlob(downloadId, blobUrl, ownerKey = null) {
+  if(isFileExport(downloadId)){await releaseOffscreenTask(ownerKey || `protected_${downloadId}`,blobUrl);return;}
   if (!downloadId) return;
   const owner = ownerKey || `protected_${downloadId}`;
   const key = `active_dl_blob_${downloadId}`;
@@ -11740,8 +11769,11 @@ async function onContextMenuClicked(info, tab) {
 
       const settings = await chrome.storage.local.get({
         subfolder: 'SavedImages',
-        folderOrganizationMode: 'single'
+        folderOrganizationMode: 'single',
+        xAuthorFolders: false
       });
+
+      if(settings.xAuthorFolders===true && isXPageUrl(info.pageUrl || tab?.url))settings.xAuthor=await selectedXAuthor(info,tab,rawImageUrl);
 
       // An HLS-only post video proven by the selected Reddit player's document (inline): its frozen master address goes straight to the assembly
       if (redditInlineInfos.has(info) && info.redditInlineMedia && info.redditInlineMedia.redditHls === true) {
@@ -12081,10 +12113,12 @@ async function onContextMenuClicked(info, tab) {
 
       const settings = await chrome.storage.local.get({
         subfolder: 'SavedImages',
-        folderOrganizationMode: 'single'
+        folderOrganizationMode: 'single',
+        xAuthorFolders: false
       });
 
       await fbSetPost(op, mediaResult.postUrl);
+      if(settings.xAuthorFolders===true)settings.xAuthor=xAuthorFromPost(mediaResult.authorPostUrl);
       await fbStage(op, 'resolving', {
         sourceUrl: mediaResult.url,
         expectedType: mediaResult.type === 'x_tweet_video' ? 'gif' : (mediaResult.type === 'video' ? 'video' : 'image'),
@@ -12364,6 +12398,7 @@ function sanitizeXInlineMedia(raw) {
     sourceType: ['image', 'video', 'x_tweet_video'].includes(raw.sourceType) ? raw.sourceType : type,
     animated: raw.animated === true, isHlsOnly: raw.isHlsOnly === true, isBlobPlayer: raw.isBlobPlayer === true,
     recoveredMp4Url: recovered || null, recoveredBitrate: num(raw.recoveredBitrate), postUrl: postUrl || null,
+    authorPostUrl:xAuthorFromPost(raw.authorPostUrl)?text(raw.authorPostUrl):null,
     tweetId: digits(raw.tweetId), mediaIdHint: digits(raw.mediaIdHint),
     mediaIndex: Number.isInteger(raw.mediaIndex) && raw.mediaIndex >= 0 && raw.mediaIndex < 100 ? raw.mediaIndex : null,
     isQuoteTweet: raw.isQuoteTweet === true
@@ -12871,4 +12906,3 @@ if (typeof globalThis !== 'undefined') {
   globalThis.getFolderContextHost = getFolderContextHost;
   globalThis.getConfiguredRoot = getConfiguredRoot;
 }
-
