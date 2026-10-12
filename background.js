@@ -2727,17 +2727,28 @@ async function readZerochanOriginal(srcUrl, linkUrl, pageUrl) {
   const id=/^\/(\d+)\/?$/.exec(post.pathname)?.[1];
   if(!id || post.origin!==location.origin || (linkUrl && new URL(linkUrl,location.href).href!==post.href))return {error:'NO_MEDIA'};
   const unchanged=()=>location.href===documentUrl && image.isConnected && (image.currentSrc || image.src)===srcUrl && image.closest('a[href]')===owner && owner.href===post.href;
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);let response,reader;
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);let response,reader,route='page_json';
   try{
     response=await fetch(new URL('/'+id+'?json',location.origin).href,{credentials:'same-origin',redirect:'error',signal:controller.signal});
-    if(!response.ok)return {status:response.status};
-    if(!/^application\/json\b/i.test(response.headers.get('content-type') || '') || Number(response.headers.get('content-length'))>2*1024*1024 || !response.body?.getReader)return {error:'NO_MEDIA'};
+    if(response.status===503){
+      await response.body?.cancel();if(!unchanged())return {error:'NO_MEDIA',route};
+      route='post_html';response=await fetch(new URL('/'+id,location.origin).href,{credentials:'same-origin',redirect:'error',headers:{Accept:'text/html'},signal:controller.signal});
+    }
+    if(!response.ok)return {status:response.status,route};
+    if(!(route==='post_html'?/^text\/html\b/i:/^application\/json\b/i).test(response.headers.get('content-type') || '') || Number(response.headers.get('content-length'))>2*1024*1024 || !response.body?.getReader)return {error:'NO_MEDIA',route};
     reader=response.body.getReader();const chunks=[];let size=0;
     for(;;){const {done,value}=await reader.read();if(controller.signal.aborted || !unchanged())return {error:'NO_MEDIA'};if(done)break;size+=value.length;if(size>2*1024*1024)return {error:'NO_MEDIA'};chunks.push(value);}
     const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
-    const data=JSON.parse(new TextDecoder().decode(bytes));
-    return unchanged() && String(data.id)===id?{url:data.full,id,status:200}:{error:'NO_MEDIA'};
-  }catch(_){return {error:controller.signal.aborted?'NETWORK_TIMEOUT':'NETWORK_ERROR'};}
+    const text=new TextDecoder().decode(bytes);
+    let full;
+    if(route==='post_html'){
+      const doc=new DOMParser().parseFromString(text,'text/html'),canonical=doc.querySelector('link[rel="canonical"]')?.getAttribute('href'),links=doc.querySelectorAll('#large a.preview[href]');
+      const canonicalUrl=new URL(canonical || '',location.origin);
+      if(canonicalUrl.origin!==post.origin || canonicalUrl.pathname!==post.pathname || links.length!==1)return {error:'NO_MEDIA',route};
+      full=links[0].getAttribute('href');
+    }else{const data=JSON.parse(text);if(String(data.id)!==id)return {error:'NO_MEDIA',route};full=data.full;}
+    return unchanged()?{url:full,id,status:200,route}:{error:'NO_MEDIA',route};
+  }catch(_){return {error:controller.signal.aborted?'NETWORK_TIMEOUT':'NETWORK_ERROR',route};}
   finally{clearTimeout(timer);controller.abort();try{if(reader)await reader.cancel();else await response?.body?.cancel();}catch(_){}}
 }
 
@@ -2748,10 +2759,11 @@ async function resolveZerochanPageOriginal({srcUrl,pageUrl,linkUrl,tabId,frameId
   let result;
   try{result=(await chrome.scripting.executeScript({target:{tabId,frameIds:[Number.isInteger(frameId)?frameId:0]},injectImmediately:true,func:readZerochanOriginal,args:[srcUrl,linkUrl,pageUrl]}))?.[0]?.result;}catch(_){return undefined;}
   if(!result)return undefined;
-  dbg('zerochan','original',result.url?'ok':'failed',result.error,()=>({http:result.status,host:result.url,route:'page_json'}),{tab:tabId,frame:frameId});
+  dbg('zerochan','original',result.url?'ok':'failed',result.error,()=>({http:result.status,host:result.url,route:result.route || 'page_json'}),{tab:tabId,frame:frameId});
   const original=parseZerochanMediaUrl(result.url);
   let url;try{url=new URL(result.url);}catch(_){}
   if(result.status===429 || result.status===401 || result.status===403)return adaptCandidateToGroup({url:srcUrl,score:0,tier:'preview',provider:'zerochan',error:result.status===429?'RATE_LIMIT':'AUTH_REQUIRED',_verificationStatus:result.status,_rateLimited:result.status===429});
+  if(result.status>=500)return adaptCandidateToGroup({url:srcUrl,score:0,tier:'preview',provider:'zerochan',error:'NETWORK_ERROR',_verificationStatus:result.status});
   if(!original?.isFull || original.id!==selected.id || String(result.id)!==selected.id || url?.protocol!=='https:' || url.username || url.password || url.port)return {provider:'zerochan',error:result.error || 'NO_MEDIA'};
   if(await resolveContextOwner(tabId,frameId,{src:srcUrl,link:''})!=='proven')return {provider:'zerochan',error:'NO_MEDIA'};
   const group=createZerochanOriginalGroup(selected.id,null,result.url);
@@ -11888,7 +11900,7 @@ async function onContextMenuClicked(info, tab) {
       }
 
       if (['sankaku','zerochan'].includes(mediaPlan?.provider) && ['NETWORK_TIMEOUT', 'NETWORK_ERROR'].includes(mediaPlan.error)) {
-        await fbFail(op, { stage: 'resolve', code: mediaPlan.error });
+        await fbFail(op, { stage: 'resolve', code: mediaPlan.error, status: mediaPlan._verificationStatus });
         await flashBadge('ERR', '#ef4444');
         return;
       }

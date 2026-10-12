@@ -62,5 +62,19 @@ function fixture(selected, unavailable = false) {
   context.fetch=async()=>new Response('oversized',{headers:{'content-type':'application/json','content-length':String(3*1024*1024)}});
   assert.equal((await read(selected.src,post,pageUrl)).error,'NO_MEDIA','Oversized page metadata is refused before reading');
   context.fetch=async()=>new Response(null,{status:429});assert.equal((await read(selected.src,post,pageUrl)).status,429,'Page rate-limit status survives');
+  let canonical=post,fulls=[selected.full],parsedText='';
+  context.DOMParser=class{parseFromString(text,type){assert.equal(type,'text/html');parsedText=text;return {querySelector:()=>({getAttribute:()=>canonical}),querySelectorAll:()=>fulls.map(full=>({getAttribute:()=>full}))};}};
+  const html='<link rel="canonical" href="'+post+'"><div id="large"><a class="preview" href="'+selected.full+'"></a></div>';
+  calls.length=0;context.fetch=async(url,opts)=>{calls.push({url,opts});return url.endsWith('?json')?new Response('Checking browser...',{status:503}):new Response(html,{headers:{'content-type':'text/html'}});};
+  const fallback=await read(selected.src,post,pageUrl);assert.equal(fallback.url,selected.full);assert.equal(fallback.route,'post_html');assert.equal(parsedText,html);
+  assert.equal(calls.length,2);assert.equal(calls[1].url,post);assert.equal(calls[1].opts.credentials,'same-origin');assert.equal(calls[0].opts.signal,calls[1].opts.signal,'JSON and HTML share one deadline');
+  canonical='https://www.zerochan.net/9999999';assert.equal((await read(selected.src,post,pageUrl)).error,'NO_MEDIA','Neighbor HTML canonical refuses original');canonical=post;
+  fulls=[selected.full,selected.full];assert.equal((await read(selected.src,post,pageUrl)).error,'NO_MEDIA','Ambiguous full links refuse selection');fulls=[selected.full];
+  let requests=0;context.fetch=async url=>{requests++;if(url.endsWith('?json')){image.currentSrc='changed';return new Response(null,{status:503});}throw Error('Must not request stale post');};
+  assert.equal((await read(selected.src,post,pageUrl)).error,'NO_MEDIA');assert.equal(requests,1,'Changed selection stops before HTML request');image.currentSrc=selected.src;
+  context.fetch=async()=>new Response('Checking browser...',{status:503});const blocked=await read(selected.src,post,pageUrl);assert.equal(blocked.status,503);assert.equal(blocked.route,'post_html','A blocked HTML response stays a failure, never executes challenge HTML');
+  for(const status of [401,403,429]){requests=0;context.fetch=async()=>{requests++;return new Response(null,{status});};assert.equal((await read(selected.src,post,pageUrl)).status,status);assert.equal(requests,1,'No HTML fallback after auth/rate failure');}
+  f.s.chrome.scripting.executeScript=async()=>[{result:{status:503,route:'post_html'}}];
+  const serverFailure=await f.s.resolveZerochanPageOriginal({srcUrl:selected.src,pageUrl,linkUrl:post,tabId:1});assert.equal(serverFailure.error,'NETWORK_ERROR');assert.equal(serverFailure._verificationStatus,503,'Observed server503 survives worker diagnostic');
   console.log('PASS: Zerochan session-backed original PNG resolution/export, metadata failure refusal and genuine original AVIF');
 })().catch(error => { console.error(error); process.exitCode = 1; });
