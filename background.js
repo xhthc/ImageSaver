@@ -2718,6 +2718,48 @@ async function resolvePixivUrl(urlObj, pageUrl, linkUrl) {
   return candidates;
 }
 
+async function readZerochanOriginal(srcUrl, linkUrl, pageUrl) {
+  if(location.href!==pageUrl || !/^https:\/\/(?:www\.)?zerochan\.net\//.test(location.href))return {error:'NO_MEDIA'};
+  const images=Array.from(document.images).filter(img=>(img.currentSrc || img.src)===srcUrl);
+  if(images.length!==1)return {error:'NO_MEDIA'};
+  const image=images[0],documentUrl=location.href,owner=image.closest('a[href]');
+  let post;try{post=new URL(owner?.href);}catch(_){return {error:'NO_MEDIA'};}
+  const id=/^\/(\d+)\/?$/.exec(post.pathname)?.[1];
+  if(!id || post.origin!==location.origin || (linkUrl && new URL(linkUrl,location.href).href!==post.href))return {error:'NO_MEDIA'};
+  const unchanged=()=>location.href===documentUrl && image.isConnected && (image.currentSrc || image.src)===srcUrl && image.closest('a[href]')===owner && owner.href===post.href;
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);let response,reader;
+  try{
+    response=await fetch(new URL('/'+id+'?json',location.origin).href,{credentials:'same-origin',redirect:'error',signal:controller.signal});
+    if(!response.ok)return {status:response.status};
+    if(!/^application\/json\b/i.test(response.headers.get('content-type') || '') || Number(response.headers.get('content-length'))>2*1024*1024 || !response.body?.getReader)return {error:'NO_MEDIA'};
+    reader=response.body.getReader();const chunks=[];let size=0;
+    for(;;){const {done,value}=await reader.read();if(controller.signal.aborted || !unchanged())return {error:'NO_MEDIA'};if(done)break;size+=value.length;if(size>2*1024*1024)return {error:'NO_MEDIA'};chunks.push(value);}
+    const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+    const data=JSON.parse(new TextDecoder().decode(bytes));
+    return unchanged() && String(data.id)===id?{url:data.full,id,status:200}:{error:'NO_MEDIA'};
+  }catch(_){return {error:controller.signal.aborted?'NETWORK_TIMEOUT':'NETWORK_ERROR'};}
+  finally{clearTimeout(timer);controller.abort();try{if(reader)await reader.cancel();else await response?.body?.cancel();}catch(_){}}
+}
+
+async function resolveZerochanPageOriginal({srcUrl,pageUrl,linkUrl,tabId,frameId}) {
+  const selected=parseZerochanMediaUrl(srcUrl);
+  if(!selected?.isThumbnail || !tabId || !/^https:\/\/(?:www\.)?zerochan\.net\//.test(pageUrl || ''))return undefined;
+  if(parseZerochanMediaUrl(pageUrl)?.id===selected.id)return undefined;
+  let result;
+  try{result=(await chrome.scripting.executeScript({target:{tabId,frameIds:[Number.isInteger(frameId)?frameId:0]},injectImmediately:true,func:readZerochanOriginal,args:[srcUrl,linkUrl,pageUrl]}))?.[0]?.result;}catch(_){return undefined;}
+  if(!result)return undefined;
+  dbg('zerochan','original',result.url?'ok':'failed',result.error,()=>({http:result.status,host:result.url,route:'page_json'}),{tab:tabId,frame:frameId});
+  const original=parseZerochanMediaUrl(result.url);
+  let url;try{url=new URL(result.url);}catch(_){}
+  if(result.status===429 || result.status===401 || result.status===403)return adaptCandidateToGroup({url:srcUrl,score:0,tier:'preview',provider:'zerochan',error:result.status===429?'RATE_LIMIT':'AUTH_REQUIRED',_verificationStatus:result.status,_rateLimited:result.status===429});
+  if(!original?.isFull || original.id!==selected.id || String(result.id)!==selected.id || url?.protocol!=='https:' || url.username || url.password || url.port)return {provider:'zerochan',error:result.error || 'NO_MEDIA'};
+  if(await resolveContextOwner(tabId,frameId,{src:srcUrl,link:''})!=='proven')return {provider:'zerochan',error:'NO_MEDIA'};
+  const group=createZerochanOriginalGroup(selected.id,null,result.url);
+  const candidate={url:result.url,source:'specialized_provider',finalScore:95,baseScore:95};
+  if(!await probeCandidate(candidate))return adaptCandidateToGroup({url:result.url,score:0,tier:'original',provider:'zerochan',error:candidate.status===429?'RATE_LIMIT':candidate.status===401 || candidate.status===403?'AUTH_REQUIRED':candidate.status?'NOT_FOUND':'NETWORK_ERROR',_rateLimited:candidate.status===429,_verificationStatus:candidate.status || 0,_verificationStatusObserved:Boolean(candidate.status)});
+  group.verified=true;Object.assign(group.metadata,{verified:true,verifiedUrl:result.url,contentType:candidate.contentType,contentLength:candidate.contentLength,mimeEvidence:MIME_EVIDENCE.HTTP_RESPONSE});return group;
+}
+
 /**
  * Strict Reddit domain validator.
  * Accepts reddit.com, redd.it, and all their legitimate subdomains.
@@ -8422,6 +8464,8 @@ async function resolveOriginalMediaPlanImpl(firstArg, secondArg, thirdArg, fourt
 
   const sankakuPlan = await resolveSankakuOriginalPlan({ srcUrl, pageUrl, linkUrl, tabId, frameId });
   if (sankakuPlan !== undefined) return sankakuPlan;
+  const zerochanPagePlan=await resolveZerochanPageOriginal({srcUrl,pageUrl,linkUrl,tabId,frameId});
+  if(zerochanPagePlan!==undefined)return zerochanPagePlan;
 
   // 1. Initial source URL
   if (srcUrl) {
@@ -11843,7 +11887,7 @@ async function onContextMenuClicked(info, tab) {
         return;
       }
 
-      if (mediaPlan?.provider === 'sankaku' && ['NETWORK_TIMEOUT', 'NETWORK_ERROR'].includes(mediaPlan.error)) {
+      if (['sankaku','zerochan'].includes(mediaPlan?.provider) && ['NETWORK_TIMEOUT', 'NETWORK_ERROR'].includes(mediaPlan.error)) {
         await fbFail(op, { stage: 'resolve', code: mediaPlan.error });
         await flashBadge('ERR', '#ef4444');
         return;

@@ -406,6 +406,7 @@ const mockChrome = {
   },
   scripting: {
     executeScript: async (opts) => {
+      if(opts?.func?.name==='readZerochanOriginal')return [{result:null}];
       if (mockScriptingResult !== null && mockScriptingResult !== undefined) {
         return [{ result: mockScriptingResult }];
       }

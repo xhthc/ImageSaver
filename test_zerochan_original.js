@@ -1,5 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
+const vm = require('node:vm');
 const { createTestEnv } = require('./test_context_target_avatar');
 
 const cases = [
@@ -46,5 +47,20 @@ function fixture(selected, unavailable = false) {
   const plan = await genuine.s.resolveOriginalMediaPlan({ srcUrl: original.full, pageUrl: 'https://www.zerochan.net/4731293' });
   assert.equal(plan.primaryUrl, original.full, 'Genuine original AVIF remains supported');
   assert.equal(plan.metadata.contentType, 'image/avif');
+  const selected=cases[0],f=fixture(selected,true),post='https://www.zerochan.net/'+selected.id,pageUrl='https://www.zerochan.net/';
+  f.s.chrome.scripting.executeScript=async options=>options.func.name==='readZerochanOriginal'?[{result:{id:selected.id,url:selected.full,status:200}}]:[];
+  assert.equal((await f.s.resolveOriginalMediaPlan({srcUrl:selected.src,pageUrl,linkUrl:post,tabId:1,frameId:0})).primaryUrl,selected.full,'Pinned page session recovers an original when extension metadata request is blocked');
+  f.s.chrome.scripting.executeScript=async()=>[{result:{id:selected.id,url:selected.full.replace(selected.id,'9999999'),status:200}}];
+  assert.equal((await f.s.resolveZerochanPageOriginal({srcUrl:selected.src,pageUrl,linkUrl:post,tabId:1})).error,'NO_MEDIA','A page reply cannot inject a neighboring original');
+  const owner={href:post},image={src:selected.src,currentSrc:selected.src,isConnected:true,closest:()=>owner},calls=[];
+  const context={URL,AbortController,TextDecoder,Uint8Array,setTimeout,clearTimeout,location:{href:pageUrl,origin:'https://www.zerochan.net'},document:{images:[image]},fetch:async(url,opts)=>{calls.push({url,opts});return new Response(JSON.stringify({id:Number(selected.id),full:selected.full}),{headers:{'content-type':'application/json'}});}};
+  vm.createContext(context);vm.runInContext('('+f.s.readZerochanOriginal.toString()+')',context);
+  const read=vm.runInContext('('+f.s.readZerochanOriginal.toString()+')',context);
+  assert.equal((await read(selected.src,post,pageUrl)).url,selected.full);assert.equal(calls[0].opts.credentials,'same-origin');assert.equal(calls[0].url,post+'?json');
+  context.fetch=async()=>{image.currentSrc='https://example.com/other.png';return new Response('{}',{headers:{'content-type':'application/json'}});};
+  assert.equal((await read(selected.src,post,pageUrl)).error,'NO_MEDIA','Changing the selected image during metadata lookup refuses the reply');image.currentSrc=selected.src;
+  context.fetch=async()=>new Response('oversized',{headers:{'content-type':'application/json','content-length':String(3*1024*1024)}});
+  assert.equal((await read(selected.src,post,pageUrl)).error,'NO_MEDIA','Oversized page metadata is refused before reading');
+  context.fetch=async()=>new Response(null,{status:429});assert.equal((await read(selected.src,post,pageUrl)).status,429,'Page rate-limit status survives');
   console.log('PASS: Zerochan session-backed original PNG resolution/export, metadata failure refusal and genuine original AVIF');
 })().catch(error => { console.error(error); process.exitCode = 1; });
