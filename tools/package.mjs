@@ -10,7 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const git = (...args) => execFileSync('git', args, { cwd: root, maxBuffer: 64 * 1024 * 1024 });
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const fixed = new Set(['manifest.json', 'background.js', 'offscreen.js', 'offscreen.html', 'LICENSE', 'THIRD_PARTY_NOTICES.txt']);
-const runtimeFile = file => fixed.has(file) || /^content_[a-z_]+\.js$/.test(file) ||
+const runtimeFile = file => fixed.has(file) || /^content\/content_[a-z_]+\.js$/.test(file) ||
   /^lib\/.+\.(?:js|mjs)$/.test(file) || /^lib\/vendor\/.+\/(?:LICENSE|PROVENANCE\.json)$/.test(file) ||
   /^popup\/(?:[^/]+\.html|THIRD_PARTY_NOTICES\.txt|assets\/[^/]+\.(?:js|css|png|svg|woff2?))$/.test(file) ||
   /^icons\/[^/]+\.png$/.test(file);
@@ -37,6 +37,13 @@ try {
     ...Object.values(manifest.icons || {}), ...Object.values(manifest.action?.default_icon || {}),
     ...(manifest.content_scripts || []).flatMap(item => [...(item.js || []), ...(item.css || [])])];
   for (const file of references) assert(typeof file === 'string' && files.has(file), `Missing manifest reference: ${file}`);
+  const worker = files.get(manifest.background.service_worker).toString();
+  for (const call of worker.matchAll(/\bimportScripts\(([^)]*)\)/g)) {
+    for (const ref of call[1].matchAll(/['"]([^'"]+)['"]/g)) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(manifest.background.service_worker), ref[1]));
+      assert(files.has(target), `Missing worker import: ${ref[1]}`);
+    }
+  }
   for (const file of ['lib/gifenc.js', 'popup/THIRD_PARTY_NOTICES.txt']) assert(files.has(file), `Missing bundled dependency/notice: ${file}`);
   for (const [file, bytes] of files) {
     if (file.endsWith('.html')) {

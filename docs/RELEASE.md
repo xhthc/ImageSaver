@@ -23,7 +23,7 @@ Never package arbitrary working-folder contents. Local agent files, recovery arc
 
 **English description:**
 
-> Save available original images, videos and GIFs with MediaLatch: Save media. Supported paths include X, Reddit, RedGIFs, Pawchive and selected Sankaku originals, plus generic image discovery. Selected animations can be saved as genuine GIFs. Organize files within Downloads, inspect save results and optionally keep seven days of local history. There is no telemetry or extension backend. Site access rules and format limits apply; universal stream/DRM downloading is not supported. See the repository for current coverage and privacy details.
+> Save available original images, videos and GIFs with MediaLatch: Save media. Supported paths include X, Reddit, RedGIFs, Pawchive and selected Sankaku originals, plus generic image discovery. Selected animations can be saved as genuine GIFs. Choose a writable destination or organize files within Downloads, inspect save results and optionally keep seven days of local history. There is no telemetry or extension backend. Site access rules and format limits apply; universal stream/DRM downloading is not supported. See the repository for current coverage and privacy details.
 
 **Russian description:**
 
@@ -35,7 +35,7 @@ Privacy URL: https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md
 
 Support URL: https://github.com/xhthc/MediaLatch/issues
 
-The v2.0.0.28 preview adds declared Sankaku originals from selected previews/samples, a bounded 20-second post lookup, and bounded generic MD5 metadata reads. It includes the earlier branding/localization, X/Reddit fixes, opt-in Debug and source MP4 fallback. The user reports working Sankaku image/video smoke tests in Helium; native Sankaku GIF testing remains pending due site search limits. It remains an early preview; store submission and the broader browser/site matrix are separate gates.
+The v2.0.0.29 preview ships the organized source and newer interface/manager work described in CHANGELOG.md and the English/Russian README. Validate the exact committed runtime ZIP, including relocated content scripts and imported worker modules. Prior native user checks remain scoped; crash/restart, quota stress, broader codecs/audio and store approval remain separate gates.
 
 ## Permission and privacy disclosures
 

@@ -17,7 +17,7 @@
   const MAX_TRAVERSAL_NODES = 60;    // Bounded selected-owner descendant scan
   const MAX_OBSERVED_ROOTS = 5;      // Max open shadow roots observed
 
-  // Reference thresholds aligned with production content_reddit.js RI constants
+  // Reference thresholds aligned with production content/content_reddit.js RI constants
   const RI_CONSTANTS = {
     SIZE: 32,      // Control button size
     CORNER: 3,    // Corner hit-test inset

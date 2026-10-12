@@ -52,13 +52,13 @@ if (only && (!tests.includes(only) || withUi)) {
 }
 for (const file of tests.filter(file => !only || file === only)) {
   // The inline suite has many real timing waits; 30 s reaches its last case before the deadline.
-  run(file.slice(0, -3), [file], { timeout: file === 'test_reddit_inline.js' ? 45000 : 30000 });
+  run(file.slice(0, -3), [`tests/${file}`], { timeout: file === 'test_reddit_inline.js' ? 45000 : 30000 });
 }
 if (withUi) {
   const ui = path.join(root, 'ui');
   run('ui-typecheck', ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.json'], { cwd: ui });
-  run('ui-render', ['test_ui_render.js'], { timeout: 120000 });
-  run('ui-notifications', ['test_notifications.js']);
+  run('ui-render', ['tests/test_ui_render.js'], { timeout: 120000 });
+  run('ui-notifications', ['tests/test_notifications.js']);
   run('ui-built', ['scripts/check-built.mjs'], { cwd: ui, timeout: 120000 });
 } else {
   console.log('UI typecheck, render and build parity: NOT RUN (use --ui after npm ci --prefix ui).');

@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the current development source, not a list of planned capabilities. Themes, all-time Statistics and staged downloads are not in the packaged v2.0.0.28 preview. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
+This document describes the source packaged in v2.0.0.29 preview, not a list of planned capabilities. It includes themes, all-time Statistics, staged downloads and page notices. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
 
 ## Runtime layout
 
@@ -8,9 +8,9 @@ This document describes the current development source, not a list of planned ca
 |---|---|
 | `manifest.json` | Manifest V3 permissions, classic service worker and content scripts |
 | `background.js` | Selected-target admission, provider/generic resolution, probes, naming, downloads, feedback and offscreen ownership |
-| `content_context_target.js` | Capture the pressed media/CSS/overlay target; re-prove ownership at save time |
-| `content_notifications.js` | Top-frame bounded page notices in closed Shadow DOM; original-origin delivery, dismiss/manager actions and paused timers |
-| `content_x.js`, `content_reddit.js`, `content_redgifs.js` | Provider evidence, selected-player recovery and inline controls |
+| `content/content_context_target.js` | Capture the pressed media/CSS/overlay target; re-prove ownership at save time |
+| `content/content_notifications.js` | Top-frame bounded page notices in closed Shadow DOM; original-origin delivery, dismiss/manager actions and paused timers |
+| `content/content_x.js`, `content/content_reddit.js`, `content/content_redgifs.js` | Provider evidence, selected-player recovery and inline controls |
 | Other `content_*.js` | Scoped site/link helpers; each script's messages define its contract |
 | `offscreen.js`, `offscreen.html` | Protected buffered fetches, genuine GIF encoding and Reddit HLS assembly |
 | `lib/download_manager.js`, `lib/staging.js` | Private persistent byte queue, streamed OPFS acquisition/validation, local Blob export and recovery |
@@ -22,7 +22,7 @@ This document describes the current development source, not a list of planned ca
 | `ui/src/core/` | Framework-neutral page controllers, including settings and release checks |
 | `ui/src/components/` | React rendering with Radix, shadcn/ui and Lucide |
 | `popup/` | Committed Vite output, loaded without a developer toolchain |
-| `tools/`, `test_*.js` | Offline checks, fixtures, build parity and commit-based packaging |
+| `tools/`, `tests/` | Offline checks, fixtures, build parity and commit-based packaging |
 
 ## Save flow
 
@@ -63,7 +63,7 @@ Settings use `chrome.storage.local`. A failed settings read keeps the form disab
 
 Session diagnostics use `chrome.storage.session` with the existing bounded retention. Legacy history APIs remain for compatibility/import; new Statistics use private IndexedDB aggregate counters without the old entry/time cap. Recording is configurable and clearable. A clear boundary excludes old operations from replay; only retained legacy data can be imported. See [Privacy](PRIVACY.md) for exact scope.
 
-Development notices use the originating tab's top frame and captured HTTP(S) origin, never the active unrelated tab or desktop notification API. The session record retains this route through worker restart; history, reports and statistics omit it. Closed, navigated or restricted tabs leave the outcome in Downloads and the failure badge. Success opt-out, terminal outcome timing, cancellation silence and the burst guard remain unchanged. The closed Shadow DOM renderer displays at most three notices, with localized dismiss/manager actions, current theme and reduced-motion support. Expiry pauses while hidden, hovered or keyboard-focused. Opening the manager validates the originating tab/origin and stored terminal operation again. This mechanism is not in the packaged v2.0.0.28 preview.
+Page notices use the originating tab's top frame and captured HTTP(S) origin, never the active unrelated tab or desktop notification API. The session record retains this route through worker restart; history, reports and statistics omit it. Closed, navigated or restricted tabs leave the outcome in Downloads and the failure badge. Success opt-out, terminal outcome timing, cancellation silence and the burst guard remain unchanged. The closed Shadow DOM renderer displays at most three notices, with localized dismiss/manager actions, current theme and reduced-motion support. Expiry pauses while hidden, hovered or keyboard-focused. Opening the manager validates the originating tab/origin and stored terminal operation again. This mechanism ships in v2.0.0.29 preview.
 
 Blue, Dark and Light themes persist and synchronize between pages. The toolbar popup shows byte-transfer controls; the full Downloads page merges progress, controls and expandable result/report details into one card per job. Retained notification deep links can still open old diagnostics. Removing a card first durably clears its terminal diagnostic, then removes the queue record/file; unreadable storage, active records or pending statistics delivery refuse deletion. Aggregate Statistics are not cleared by deleting download cards. Long localized tab names use a scrollable row with keyboard focus visibility.
 
@@ -88,3 +88,7 @@ All existing post-batch providers (Pixiv, Pawchive, X and Reddit) use the same 1
 X/Reddit batch ownership proofs retain their existing three-minute lifetime. A long-running batch can refuse later items after expiry or a changed owner/list; increasing the count does not extend stale proof validity. Progressive proof renewal and batch progress belong to a separate task.
 
 Zerochan feed metadata is read in the pinned selected page session, with a bounded same-origin JSON request and unchanged source/anchor/document checks. The worker validates the declared same-post HTTPS original and re-proves ownership before normal MIME probing. Opened-post selection retains the DOM original-link route; previews cannot become successful original saves when lookup fails.
+
+## Source organization
+
+Site content scripts live in `content/`; their manifest matching, injection order and frame scope are unchanged. Offline checks live in `tests/` and resolve fixtures from the repository root. The classic worker imports `lib/media_format.js` (signature/MIME/extension policy), `lib/download_paths.js` (destination and filename routing) and `lib/site_resolvers.js` (dedicated site adapters) once at their original initialization positions. These modules share the worker global scope; declarations are not duplicated in the entry point. Keep serialized `executeScript` functions self-contained. UI source and generated popup continue to use the existing React/Vite build.

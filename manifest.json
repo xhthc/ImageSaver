@@ -1,11 +1,16 @@
 {
   "manifest_version": 3,
   "name": "MediaLatch",
-  "version": "2.0.0.28",
+  "version": "2.0.0.29",
   "description": "Save available original images, videos and GIFs from the context menu, with selected site support and local save history.",
   "homepage_url": "https://github.com/xhthc/MediaLatch",
   "minimum_chrome_version": "120",
-  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
   "permissions": [
     "contextMenus",
     "downloads",
@@ -23,13 +28,22 @@
   },
   "action": {
     "default_title": "MediaLatch",
-    "default_icon": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png" },
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png"
+    },
     "default_popup": "popup/quick.html"
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content_notifications.js"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/content_notifications.js"
+      ],
       "run_at": "document_start"
     },
     {
@@ -37,7 +51,10 @@
         "http://*/*",
         "https://*/*"
       ],
-      "js": ["lib/debug_journal.js", "content_context_target.js"],
+      "js": [
+        "lib/debug_journal.js",
+        "content/content_context_target.js"
+      ],
       "all_frames": true,
       "run_at": "document_start"
     },
@@ -46,7 +63,11 @@
         "https://x.com/*",
         "https://twitter.com/*"
       ],
-      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_x.js"],
+      "js": [
+        "lib/debug_journal.js",
+        "lib/i18n.js",
+        "content/content_x.js"
+      ],
       "run_at": "document_start"
     },
     {
@@ -54,7 +75,11 @@
         "https://*.reddit.com/*",
         "https://reddit.com/*"
       ],
-      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_reddit.js"],
+      "js": [
+        "lib/debug_journal.js",
+        "lib/i18n.js",
+        "content/content_reddit.js"
+      ],
       "run_at": "document_start"
     },
     {
@@ -64,7 +89,11 @@
         "https://*.reddit.com/*",
         "https://reddit.com/*"
       ],
-      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_redgifs.js"],
+      "js": [
+        "lib/debug_journal.js",
+        "lib/i18n.js",
+        "content/content_redgifs.js"
+      ],
       "all_frames": true,
       "run_at": "document_start"
     },
@@ -72,7 +101,10 @@
       "matches": [
         "*://*.donmai.us/*"
       ],
-      "js": ["lib/debug_journal.js", "content_booru.js"],
+      "js": [
+        "lib/debug_journal.js",
+        "content/content_booru.js"
+      ],
       "run_at": "document_start"
     },
     {
@@ -80,7 +112,11 @@
         "https://*.instagram.com/*",
         "https://instagram.com/*"
       ],
-      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_instagram.js"],
+      "js": [
+        "lib/debug_journal.js",
+        "lib/i18n.js",
+        "content/content_instagram.js"
+      ],
       "run_at": "document_start"
     },
     {
@@ -88,7 +124,11 @@
         "https://*.tiktok.com/*",
         "https://tiktok.com/*"
       ],
-      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_tiktok.js"],
+      "js": [
+        "lib/debug_journal.js",
+        "lib/i18n.js",
+        "content/content_tiktok.js"
+      ],
       "run_at": "document_start"
     },
     {
@@ -96,7 +136,11 @@
         "https://*.youtube.com/*",
         "https://youtube.com/*"
       ],
-      "js": ["lib/debug_journal.js", "lib/i18n.js", "content_youtube.js"],
+      "js": [
+        "lib/debug_journal.js",
+        "lib/i18n.js",
+        "content/content_youtube.js"
+      ],
       "run_at": "document_start"
     }
   ]

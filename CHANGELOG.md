@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased — themes, Statistics and download manager
+## 2.0.0.29 — organized source and current interface
+
+- Organize site scripts in `content/` and offline checks in `tests/`; extract existing worker format, destination/naming and dedicated-site resolver modules without changing their behavior. Update runtime injection and commit-based packaging paths.
+- Make Violet the default theme, refresh saving/link settings and the EN/RU visual README. Add destination-folder selection and optional x.com author folders.
+- Receive files concurrently, support declared post batches up to 100 files, and clear the manager list immediately. Preserve selected-original and truthful format validation.
+- Replace desktop notifications with bounded MediaLatch page notices. Add short menu/disclosure/notice transitions and smooth committed language changes, respecting reduced motion and mounted drafts. Display x.com consistently.
 
 - Add persistent Blue, Dark and Light themes across extension pages.
 - Replace retained-history totals with configurable, clearable aggregate Statistics; import only legacy records still available locally.
@@ -8,7 +13,7 @@
 - Merge progress, controls and result/report details into one download card; fix long Russian tab labels and keyboard visibility on narrow windows.
 - Preserve pending statistics and refuse unpersisted record removal; keep signed source addresses out of public snapshots and reports.
 
-User-confirmed ordinary Helium checks and isolated native transfer/UI fixtures passed. Native crash/restart, quota stress and broad codec/audio acceptance remain pending. These changes are not in the packaged v2.0.0.28 preview.
+User-confirmed ordinary Helium checks and isolated native transfer/UI fixtures passed. Native crash/restart, quota stress and broad codec/audio acceptance remain pending. These changes ship in v2.0.0.29 preview; this is not complete browser or store acceptance.
 
 ## 2.0.0.28 — Sankaku originals and bounded metadata
 

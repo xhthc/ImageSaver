@@ -4,18 +4,17 @@
 
 MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**. Source discovery starts after you choose Save; the menu title stays fixed.
 
-> **Current preview: [v2.0.0.28](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.28).** Sankaku previews now save the selected post's declared original instead of the AVIF thumbnail. Slow post responses have a bounded 20-second deadline and explicit network diagnostics. Includes the earlier X/Reddit fixes, optional Debug journal and source MP4 fallback for oversized GIF conversions.
+> **Current preview: [v2.0.0.29](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.29).** Violet interface, parallel downloads, a chosen destination with x.com author folders, Pixiv albums and own page notices. Includes refreshed settings, Statistics, smooth language changes and organized source without a framework migration.
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
-> **Development source is newer than that ZIP.** Screenshots, selected-folder/X-author options and the manager below require a newer source build. Installing v2.0.0.28 does not add them.
 
 ## Quick start
 
 1. Install the runtime ZIP using the instructions below.
 2. Right-click an image, video or supported preview and choose **MediaLatch: Save media**. On X, try **Shift + right-click** if the site intercepts the menu.
-3. In the packaged preview, check the save notification; the toolbar popup opens settings and shows recent results when history is enabled. In a development build, the popup tracks downloads; **Open download manager** leads to details and recovery actions.
-4. In a development build, open **Saving**, choose a destination and organization, then press **Save settings**. Files default to `Downloads/SavedImages/`.
+3. Track downloads in the popup. **Open download manager** leads to details, cancellation and retrying export from prepared bytes. MediaLatch notices appear on the original page.
+4. Open **Saving**, choose a destination and organization, then press **Save settings**. Files default to `Downloads/SavedImages/`.
 
 An automatic first-run introduction is planned; this quick guide is available now.
 
@@ -28,11 +27,11 @@ An automatic first-run introduction is planned; this quick guide is available no
   </tr>
 </table>
 
-Development interface with demonstration settings. Violet by default, English/Russian localization and short transitions that respect reduced motion.
+Current interface with demonstration settings. Violet by default, English/Russian localization and short transitions that respect reduced motion.
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.28-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.29-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -48,7 +47,7 @@ The committed `popup/` pages are ready to use. Node/npm are needed only for deve
 
 ## Features
 
-The themes, all-time Statistics and staged download manager below describe the development source. They are not included in the packaged v2.0.0.28 preview above. The user confirmed themes, Statistics and ordinary downloads in Helium, including the corrected Russian tabs and unified download cards; browser-restart, quota and broader media checks remain pending.
+The packaged preview includes these features. Ordinary downloads, themes, Statistics, chosen-folder routing and Pixiv batches were checked in Helium. Native crash/restart, quota stress and broader codec/audio checks remain pending.
 
 ### Save the selected media
 
@@ -116,20 +115,20 @@ There is no telemetry or extension backend. Statistics and Debug recording are o
 
 ## Roadmap
 
-Statuses below describe development, not the packaged v2.0.0.28 ZIP. They describe direction, not promised dates or support for every layout. Reliability comes first; each capability needs a separate implementation and browser check.
+Statuses distinguish implemented features from future work. They describe direction, not promised dates or support for every layout. Reliability comes first; each capability needs a separate implementation and browser check.
 
 | Area | Planned result | Status |
 |---|---|---|
 | Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Next compatibility work |
 | Controls and selection | Small universal inline controls and optional post/media multi-selection | Planned |
-| Download manager | Extend the implemented file queue to paced post resolution, batch totals and proven transfer resume | File queue available in development; remaining work planned |
-| Complete-file staging | Disk-backed acquisition/validation before export and local retry; broaden native restart, quota and media checks | Implemented in development; ordinary Helium checks passed, stress checks pending |
+| Download manager | Extend the implemented file queue to paced post resolution, batch totals and proven transfer resume | File queue in preview; remaining work planned |
+| Complete-file staging | Disk-backed acquisition/validation before export and local retry; broaden native restart, quota and media checks | Included in preview; ordinary Helium checks passed, stress checks pending |
 | Batch archives | Selected-post/page batches, ZIP first; 7z only if a practical bounded implementation is justified | Planned |
 | Destination and naming | Writable base-directory selection and optional selected X author folders | User-confirmed external folder and X author saves in Helium; browser-restart permission recovery and broader layouts remain untested |
 | Kemono | Declared same-post originals and scoped feed behavior | Deferred until the site is usable |
 | Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
 | Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Planned; security/privacy gates first |
-| Settings and documentation | Compact settings groups, visual quick start and EN/RU README | Implemented in development; user visual acceptance pending |
+| Settings and documentation | Compact settings groups, visual quick start and EN/RU README | Included in preview; user visual acceptance pending |
 | First-run setup | Short introduction: choose a destination, learn context-menu/inline saving, open the manager and start a first download; skip or reopen the guide | Planned; separate task |
 
 The Telegram/VK roadmap concerns **publishing**.
@@ -141,6 +140,9 @@ Before submission: packaged-code/CSP checks, sender/action/frame validation, URL
 See [Security](docs/SECURITY.md), [Privacy](docs/PRIVACY.md) and [Release preparation](docs/RELEASE.md).
 
 ## Development
+
+Project layout: `content/` holds site scripts; `lib/` shared and worker modules; `ui/` interface source; `popup/` its committed build; `tests/` offline checks; `tools/` verification and packaging. `background.js` remains the worker entry point. Add new behavior to the relevant module.
+
 
 Use Node.js 26, or another runtime compatible with the UI lockfile.
 
@@ -155,7 +157,7 @@ Edit `ui/`, then rebuild `popup/`. Verification covers offline regressions, UI t
 
 [Architecture](docs/ARCHITECTURE.md) · [Release preparation](docs/RELEASE.md) · [Changelog](CHANGELOG.md)
 
-[Tests](test_suite.js): the main offline suite can also run directly with `node test_suite.js`.
+[Tests](tests/test_suite.js): the main offline suite can also run directly with `node tests/test_suite.js`.
 
 ## Credits
 
