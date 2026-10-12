@@ -308,7 +308,7 @@ function env(stored={jobs:[],paused:false}) {
     };
     const sandbox = {
       chrome, indexedDB: {}, crypto: { randomUUID: () => 'uuid' }, console: { log() {}, warn() {}, error() {} },
-      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_format|download_paths|site_resolvers|worker_offscreen|worker_providers|worker_pipeline|worker_animation)\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
+      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_format|download_paths|site_resolvers|toolbar_badge|worker_offscreen|worker_providers|worker_pipeline|worker_animation)\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
       ImageSaverFeedback: globalThis.ImageSaverFeedback,
       ImageSaverFeedbackTracker: globalThis.ImageSaverFeedbackTracker,
       MediaLatchDownloads: {

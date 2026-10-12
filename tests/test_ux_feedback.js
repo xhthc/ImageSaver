@@ -351,6 +351,9 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     assert(byId[c.downloadId].state === 'interrupted' && byId[c.downloadId].failure.category === 'download_interrupted', '5c: other interruption -> download_interrupted');
     assert(env.notifications.length === 2, '5d: cancelled downloads are not notified; real failures are (2 of 3)');
     await env.x.restoreOrClearBadge();
+    assert(env.badge.text === 'ERR', '5d2: routine restore preserves the readable error interval');
+    await new Promise(r => setTimeout(r, 2600));
+    await env.x.restoreOrClearBadge();
     assert((await env.sandbox.getUnseenFailureCount()) === 2 && env.badge.text === '!', '5e: unseen failures keep a persistent "!" badge even without notifications');
   }
 

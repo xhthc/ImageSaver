@@ -3636,7 +3636,6 @@ const activeProtectedBlobsByDownloadId = new Map();
 const activeGelbooruBlobsByDownloadId = activeProtectedBlobsByDownloadId;
 const earlyTerminalDownloadStates = new Map();
 let activeResolvingCount = 0;
-let flashBadgeTimeout = null;
 
 // The persisted id list is one document updated by read-modify-write. Concurrent saves (Save all runs two at once) each read the same
 // list and the last write won, dropping the other ids: the DL badge, which counts the persisted list, then under-reported running
@@ -3736,73 +3735,22 @@ async function getTrackedDownloadCount() {
   return updateTrackedIdsList(() => trackedDownloadIds.size);
 }
 
-async function setBadge(text, backgroundColor) {
-  if (typeof chrome === 'undefined' || !chrome.action?.setBadgeText) return;
-  try {
-    if (flashBadgeTimeout) {
-      clearTimeout(flashBadgeTimeout);
-      flashBadgeTimeout = null;
-    }
-    await chrome.action.setBadgeText({ text });
-    if (backgroundColor && chrome.action.setBadgeBackgroundColor) {
-      await chrome.action.setBadgeBackgroundColor({ color: backgroundColor });
-    }
-  } catch (err) {
-    console.warn('[MediaLatch] Не удалось установить бейдж:', err);
-  }
-}
-
-async function flashBadge(text, backgroundColor, durationMs = 2500) {
-  if (typeof chrome === 'undefined' || !chrome.action?.setBadgeText) return;
-  try {
-    if (flashBadgeTimeout) {
-      clearTimeout(flashBadgeTimeout);
-      flashBadgeTimeout = null;
-    }
-    await chrome.action.setBadgeText({ text });
-    if (backgroundColor && chrome.action.setBadgeBackgroundColor) {
-      await chrome.action.setBadgeBackgroundColor({ color: backgroundColor });
-    }
-
-    flashBadgeTimeout = setTimeout(async () => {
-      flashBadgeTimeout = null;
-      await restoreOrClearBadge();
-    }, durationMs);
-  } catch (err) {
-    console.warn('[MediaLatch] Не удалось обновить бейдж:', err);
-  }
-}
-
-async function restoreOrClearBadge() {
-  if (typeof chrome === 'undefined' || !chrome.action?.setBadgeText) return;
-  try {
-    if (flashBadgeTimeout) {
-      clearTimeout(flashBadgeTimeout);
-      flashBadgeTimeout = null;
-    }
-    const trackedCount = await getTrackedDownloadCount();
-    if (flashBadgeTimeout) return;
-    if (activeResolvingCount > 0) {
-      await chrome.action.setBadgeText({ text: '...' });
-      if (chrome.action.setBadgeBackgroundColor) {
-        await chrome.action.setBadgeBackgroundColor({ color: '#9333ea' });
-      }
-    } else if (trackedCount > 0) {
-      await chrome.action.setBadgeText({ text: 'DL' });
-      if (chrome.action.setBadgeBackgroundColor) {
-        await chrome.action.setBadgeBackgroundColor({ color: '#9333ea' });
-      }
-    } else if ((await getUnseenFailureCount()) > 0) {
-      // A failure the user has not looked at yet stays discoverable even without notifications.
-      await chrome.action.setBadgeText({ text: '!' });
-      if (chrome.action.setBadgeBackgroundColor) {
-        await chrome.action.setBadgeBackgroundColor({ color: '#f59e0b' });
-      }
-    } else {
-      await chrome.action.setBadgeText({ text: '' });
-    }
-  } catch (e) {}
-}
+if (typeof importScripts === 'function') importScripts('lib/toolbar_badge.js');
+const toolbarBadge = globalThis.MediaLatchToolbarBadge.create({
+  action: chrome.action,
+  readBusy: () => ({resolving: activeResolvingCount, downloads: trackedDownloadIds.size,
+    pending: typeof downloadManager !== 'undefined' && downloadManager ? downloadManager.activityCount() || (downloadManagerRecovering ? 1 : 0) : 0}),
+  readState: async () => ({
+    resolving: activeResolvingCount,
+    downloads: await getTrackedDownloadCount(),
+    pending: typeof downloadManager !== 'undefined' && downloadManager ? downloadManager.activityCount() || (downloadManagerRecovering ? 1 : 0) : 0,
+    failures: await getUnseenFailureCount()
+  }),
+  log: () => console.warn('[MediaLatch] Toolbar badge update failed')
+});
+async function setBadge(text, backgroundColor) { return toolbarBadge.set(text, backgroundColor); }
+async function flashBadge(text, backgroundColor, durationMs = 2500) { return toolbarBadge.flash(text, backgroundColor, durationMs); }
+async function restoreOrClearBadge(immediate = false) { return toolbarBadge.refresh(immediate); }
 
 async function clearBadge() {
   await restoreOrClearBadge();
@@ -4053,7 +4001,7 @@ if (typeof globalThis.ImageSaverFeedbackTracker?.createTracker === 'function') {
     peekEarlyTerminal: (id) => earlyTerminalDownloadStates.get(id),
     notify: (record, ...rest) => { dbg('notify', 'show', 'info', undefined, () => ({ state: record && record.state }), { op: record && record.id }); return feedbackNotifyRecord(record, ...rest); },
     onFinished: (record) => (statistics ? statistics.record(record) : false),
-    onChange: () => { if (!flashBadgeTimeout) restoreOrClearBadge(); try{chrome.runtime.sendMessage({action:'DOWNLOADS_CHANGED'}).catch(()=>{});}catch(_){} },
+    onChange: () => { if (!toolbarBadge.flashing) restoreOrClearBadge(); try{chrome.runtime.sendMessage({action:'DOWNLOADS_CHANGED'}).catch(()=>{});}catch(_){} },
     log: (...args) => console.warn('[MediaLatch] feedback:', ...args)
   });
 }
@@ -4125,8 +4073,8 @@ let downloadManagerRecovering = Boolean(globalThis.MediaLatchDownloads && typeof
 const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== 'undefined'
   ? MediaLatchDownloads.createManager({
     store:MediaLatchDownloads.database(indexedDB), id:()=>crypto.randomUUID(), sleep:ms=>new Promise(r=>setTimeout(r,ms)),
-    activity:on=>{downloadManagerBusy=on;if(!on)void closeOffscreenDocument().catch(()=>{});},
-    changed:()=>{try{chrome.runtime.sendMessage({action:'DOWNLOADS_CHANGED'}).catch(()=>{});}catch(_){}},
+    activity:on=>{downloadManagerBusy=on;void restoreOrClearBadge();if(!on)void closeOffscreenDocument().catch(()=>{});},
+    changed:()=>{void restoreOrClearBadge();try{chrome.runtime.sendMessage({action:'DOWNLOADS_CHANGED'}).catch(()=>{});}catch(_){}},
     stage:async (job,signal)=>{
       await ensureOffscreenDocument();
       if(signal.aborted)throw Error('CANCELLED');
@@ -4179,7 +4127,7 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
     failed:async j=>j.state==='cancelled'?fbCancel(j.op):fbFail(j.op,{stage:j.prepared?'save':'download',code:j.error}),
     error:()=>dbg('manager','queue','failed','STORAGE_FAILED')
   }) : null;
-downloadManager?.ready.then(()=>{downloadManagerRecovering=false;void closeOffscreenDocument().catch(()=>{});},()=>dbg('manager','load','failed','STORAGE_FAILED'));
+downloadManager?.ready.then(()=>{downloadManagerRecovering=false;void restoreOrClearBadge();void closeOffscreenDocument().catch(()=>{});},()=>dbg('manager','load','failed','STORAGE_FAILED'));
 
 async function searchDirectoryExport(id,url){
   const owner=acquireOffscreenTask();try{await ensureOffscreenDocument();const r=await offscreenRequest({action:'STAGING_DIRECTORY_SEARCH',id,url});if(!r?.success)throw Error(r?.error || 'DIRECTORY_WRITE_FAILED');return r.item;}finally{await releaseOffscreenTask(owner);}
@@ -4553,7 +4501,7 @@ if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
         activeDownloadsMetadata.delete(delta.id);
         if (errorCode === 'USER_CANCELED') {
           console.log(`[MediaLatch] Загрузка ${delta.id} отменена пользователем (USER_CANCELED)`);
-          await restoreOrClearBadge();
+          await restoreOrClearBadge(true);
         } else if (errorCode === 'SERVER_FORBIDDEN' || errorCode === 'SERVER_UNAUTHORIZED') {
           if (isRedditHostedMediaUrl(meta?.url)) {
             console.warn(`[MediaLatch] Reddit video requires an active Reddit session (${errorCode}):`, sanitizeUrlForLog(meta.url));
@@ -5365,7 +5313,7 @@ async function onContextMenuClicked(info, tab) {
     } finally {
       activeResolvingCount--;
       inFlightRequests.delete(dedupeKey);
-      if (!flashBadgeTimeout) {
+      if (!toolbarBadge.flashing) {
         await restoreOrClearBadge();
       }
     }
@@ -5478,7 +5426,7 @@ async function onContextMenuClicked(info, tab) {
         } finally {
           activeResolvingCount--;
           inFlightRequests.delete(dedupeKey);
-          if (!flashBadgeTimeout) {
+          if (!toolbarBadge.flashing) {
             await restoreOrClearBadge();
           }
         }
@@ -5608,7 +5556,7 @@ async function onContextMenuClicked(info, tab) {
         } finally {
           activeResolvingCount--;
           inFlightRequests.delete(dedupeKey);
-          if (!flashBadgeTimeout) {
+          if (!toolbarBadge.flashing) {
             await restoreOrClearBadge();
           }
         }
@@ -5652,7 +5600,7 @@ async function onContextMenuClicked(info, tab) {
         } finally {
           activeResolvingCount--;
           inFlightRequests.delete(dedupeKey);
-          if (!flashBadgeTimeout) {
+          if (!toolbarBadge.flashing) {
             await restoreOrClearBadge();
           }
         }
