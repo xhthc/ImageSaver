@@ -65,6 +65,7 @@ The themes, all-time Statistics and staged download manager below describe the d
 
 ### Settings and diagnostics
 
+- Own MediaLatch notices on the source page, with dismiss/manager buttons, synchronized themes and no Windows notifications. Closed or navigated tabs cannot display them; results and the failure badge remain in the extension. Success notices can be switched off independently.
 - Violet interface theme by default, with optional Blue, Dark and Light themes. Saved choices apply across the popup and settings page; existing preferences are preserved. Brief interface animations respect reduced motion.
 - Opt-in local statistics without an entry count or time limit, with recording and clear controls. Available old history is imported once; expired or removed records cannot be reconstructed.
 - Opt-in local Debug journal with filters, copy/export and clear controls: up to 2,000 events, 1 MiB and 24 hours. Full URLs, tokens, page text and local paths are excluded.

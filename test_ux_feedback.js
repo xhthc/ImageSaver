@@ -25,7 +25,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 // ---------------------------------------------------------------------------------------------------
 // Environment: production background.js + mocked Chrome
 // ---------------------------------------------------------------------------------------------------
-function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications = false, legacySink = false, indexedDB = idbDouble() } = {}) {
+function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications = false, legacySink = false, captureManager = false, indexedDB = idbDouble() } = {}) {
   const env = {
     downloadCalls: [],
     searchCalls: [],
@@ -45,6 +45,7 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
     messageListeners: [],
     notificationClickListeners: [],
     tabsMsgHandler: null,
+    tabUrls: new Map(),
     createdTabs: [],
     fetchImpl: null,
     session: { ...session },
@@ -102,7 +103,14 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
     tabs: {
       onActivated: { addListener() {} },
       onUpdated: { addListener() {} },
-      sendMessage: async (tabId, msg) => (env.tabsMsgHandler ? env.tabsMsgHandler(tabId, msg) : null),
+      get: async (id) => {if(env.closedTab===id)throw Error('TAB_CLOSED');return { id, url: env.tabUrls.get(id) || 'https://example.com/gallery/1' };},
+      sendMessage: async (tabId, msg, options) => {
+        if (msg?.action === 'MEDIALATCH_NOTICE') {
+          if (noNotifications || env.failNotificationCreate) throw Error('PAGE_UNAVAILABLE');
+          env.notifications.push({ id: msg.notice.id, opts: msg.notice, tabId, options }); return { success: true };
+        }
+        return env.tabsMsgHandler ? env.tabsMsgHandler(tabId, msg) : null;
+      },
       create: async (opts) => { env.createdTabs.push(opts); return { id: 1 }; }
     },
     scripting: { executeScript: async () => [{ result: null }] },
@@ -133,17 +141,6 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
       local: area(() => env.local, { get: () => env.failLocalGet, set: () => env.failLocalWrite })
     }
   };
-  if (!noNotifications) {
-    chrome.notifications = {
-      create: async (id, opts) => {
-        if (env.failNotificationCreate) throw new Error('NOTIFICATIONS_BLOCKED');
-        env.notifications.push({ id, opts });
-        return id;
-      },
-      clear: (id) => env.notificationClears.push(id),
-      onClicked: { addListener: (cb) => env.notificationClickListeners.push(cb) }
-    };
-  }
   env.chrome = chrome;
 
   const sandbox = {
@@ -159,14 +156,22 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
     document: { elementsFromPoint: () => [], querySelectorAll: () => [], querySelector: () => null, getElementById: () => null, createElement: () => ({ addEventListener() {}, removeAttribute() {}, load() {} }) }
   };
   // This suite isolates feedback/statistics from the separately tested disk acquisition queue.
-  sandbox.importScripts = (file) => { if(file !== 'lib/download_manager.js') vm.runInContext(read(file), sandbox); };
+  sandbox.importScripts = (file) => {
+    if(file !== 'lib/download_manager.js') vm.runInContext(read(file), sandbox);
+    else if(captureManager) sandbox.MediaLatchDownloads={database:()=>({}),createManager:deps=>{env.managerDeps=deps;return {ready:Promise.resolve(),list:async()=>({jobs:[]})};}};
+  };
   vm.createContext(sandbox);
   vm.runInContext(bgCode, sandbox);
+  const originalClick=env.contextMenuHandler;
+  env.contextMenuHandler=async(info,tab)=>{if(tab?.id)env.tabUrls.set(tab.id,tab.url);return originalClick(info,tab);};
   // Archived history/controller regressions inject their legacy sink explicitly;
   // section17 exercises the production statistics sink without this override.
   if (legacySink) sandbox.statistics = { record: record => sandbox.feedbackHistory.record(record) };
   env.sandbox = sandbox;
   env.x = sandbox.__exports;
+  const originalBegin=env.x.fbBegin;
+  // Manually created legacy fixture operations explicitly represent a source-tab click.
+  env.x.fbBegin=(info,tab)=>originalBegin(info,tab || {id:7,url:info.pageUrl});
   env.tracker = sandbox.feedbackTracker;
 
   env.emitDownload = async (delta) => { for (const l of env.downloadListeners) await l(delta); };
@@ -176,7 +181,7 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
     await env.emitDownload({ id, state: { current: state, previous: 'in_progress' }, ...(error ? { error: { current: error } } : {}) });
     await env.tracker.flush();
   };
-  env.click = async (info, tab) => { await env.contextMenuHandler(info, tab || { id: 7, url: info.pageUrl }); await env.tracker.flush(); };
+  env.click = async (info, tab) => { const target=tab || { id: 7, url: info.pageUrl };env.tabUrls.set(target.id,target.url);await env.contextMenuHandler(info,target); await env.tracker.flush(); };
   env.records = async () => env.tracker.list();
   env.last = async () => (await env.tracker.list())[0];
   env.ready = async () => { await env.tracker.ready(); await env.tracker.flush(); };
@@ -235,7 +240,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     assert(env.notifications.length === 0, '2b: no notification before the download actually completes');
     await env.finish(r.downloadId);
     r = await env.last();
-    assert(r.state === 'complete' && env.notifications.length === 1 && env.notifications[0].opts.silent === true, '2c: completion event -> complete + one silent success notification');
+    assert(r.state === 'complete' && env.notifications.length === 1 && env.notifications[0].opts.kind === 'success' && env.notifications[0].options.frameId === 0, '2c: completion event -> complete + one own success notice in the source top frame');
     assert(r.output.sizeBytes === 12345 && r.output.sizeKind === 'measured', '2d: size is the measured size of the saved file (downloads.search fileSize)');
     assert(r.output.type === 'pic' && r.output.ext === '.jpg', '2e: output type/extension come from the actual saved filename');
     assert(r.output.evidence !== 'verified_mime' || r.output.mime === 'image/jpeg', '2f: a MIME is shown only with verified evidence');
@@ -261,7 +266,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     let r = await env.last();
     assert(env.downloadCalls.length === 0 && ['failed'].includes(r.state), '3a: HTTP 429 before download -> failed, no download');
     assert(r.failure.category === 'rate_limited', '3b: HTTP 429 observed before download -> rate_limited');
-    assert(env.notifications.length === 1 && env.notifications[0].opts.silent === false && env.notifications[0].opts.priority === 1, '3c: failure produces a (non-silent) notification');
+    assert(env.notifications.length === 1 && env.notifications[0].opts.kind === 'error', '3c: failure produces an own error notice');
     assert(r.failure.status === 429 && r.failure.stage === 'resolve', '3d: the observed numeric status 429 is recorded with its stage');
 
     const env2 = makeEnv();
@@ -504,7 +509,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     const [b, a] = await env4.records();
     await env4.finish(a.downloadId);
     await env4.finish(b.downloadId, { state: 'interrupted', error: 'NETWORK_FAILED' });
-    assert(env4.notifications.length === 1 && env4.notifications[0].opts.silent === false, '9d: with routine success notifications off, success is silent in the UI but failures still notify');
+    assert(env4.notifications.length === 1 && env4.notifications[0].opts.kind === 'error', '9d: success notices off suppress success while errors still notify');
     assert((await env4.records()).some((r) => r.state === 'complete'), '9e: the successful save is still listed');
 
     const env5 = makeEnv();
@@ -528,6 +533,28 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     for (let i = 0; i < 7; i++) { await env6.click(imageClick('b' + i)); }
     for (const rr of await env6.records()) await env6.finish(rr.downloadId);
     assert(env6.notifications.length <= 4 && (await env6.records()).filter((r) => r.state === 'complete').length === 7, '9g: a burst of successes is throttled to at most 4 notifications (all remain listed)');
+    for (const closed of [false, true]) {
+      const away = makeEnv(); await away.ready(); await away.click(imageClick('away'));
+      const record = await away.last();
+      if (closed) away.closedTab = record.noticeTarget.tabId;
+      else away.tabUrls.set(record.noticeTarget.tabId, 'https://other.example/');
+      await away.finish(record.downloadId, { state: 'interrupted', error: 'NETWORK_FAILED' });
+      assert(away.notifications.length === 0 && (await away.last()).state === 'interrupted' && (await away.x.getUnseenFailureCount()) === 1, '9i: closed/navigated source never receives or redirects notices; failure and badge survive');
+    }
+    const retry = makeEnv({captureManager:true}); await retry.ready();
+    const oldOp=await retry.x.fbBegin({pageUrl:'https://example.com/post',sourceUrl:'https://cdn.example.com/file.png'});
+    await retry.x.fbFail(oldOp,{code:'NETWORK_FAILED'});await retry.tracker.flush();retry.notifications.length=0;
+    for(const action of ['newAttempt','recoverAttempt']) {
+      const op=await retry.managerDeps[action]({op:oldOp,source:'https://cdn.example.com/file.png',mime:'image/png'});
+      const rec=await retry.tracker.get(op);
+      assert(rec.noticeTarget?.tabId===7 && rec.noticeTarget.origin==='https://example.com','9j: production '+action+' retains original session route');
+      await retry.x.fbFail(op,{code:'NETWORK_FAILED'});await retry.tracker.flush();
+    }
+    assert(retry.notifications.length===2 && retry.notifications.every(n=>n.tabId===7),'9k: retry/recovery outcomes notify original tab');
+    const noRoute=await retry.managerDeps.newAttempt({op:'op-no-record',source:'https://cdn.example.com/file.png',mime:'image/png'});
+    assert(!(await retry.tracker.get(noRoute)).noticeTarget,'9l: expired operation never guesses a replacement route');
+    retry.tracker.get=async()=>{throw Error('FEEDBACK_UNAVAILABLE');};
+    assert(await retry.managerDeps.newAttempt({op:oldOp,source:'https://cdn.example.com/file.png',mime:'image/png'}),'9m: unavailable notification route does not prevent an explicit retry');
   }
 
   // =================================================================================================
@@ -684,20 +711,23 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     const [b, a] = await env.records();
     await env.finish(a.downloadId);
     await env.finish(b.downloadId, { state: 'interrupted', error: 'NETWORK_FAILED' });
-    const click = async (id) => { for (const l of env.notificationClickListeners) await l(id); };
-    await click('imgsaver:' + a.id);
-    await click('imgsaver:' + b.id);
+    const click = async (id, sender={id:'testid',tab:{id:7},frameId:0,url:'https://example.com/gallery/1'}) => { for (const l of env.messageListeners) await new Promise(resolve=>{const held=l({action:'MEDIALATCH_NOTICE_OPEN',id},sender,resolve);if(held!==true)resolve();}); };
+    await click(a.id);
+    await click(b.id);
     await click('someone-else:1');
-    await click('imgsaver:../../x');
-    assert(env.shown.length === 1 && env.shown[0] === a.downloadId, '13a: clicking a success reveals only the extension-owned file');
-    assert(env.createdTabs.length === 1 && env.createdTabs[0].url === `chrome-extension://testid/popup/popup.html?op=${encodeURIComponent(b.id)}#history`, '13b: clicking a failure opens the full page at that operation (history section); foreign IDs are ignored');
+    await click('../../x');
+    await click(a.id,{id:'testid',tab:{id:8},frameId:0,url:'https://example.com/gallery/1'});
+    await click(a.id,{id:'testid',tab:{id:7},frameId:1,url:'https://example.com/gallery/1'});
+    await click(a.id,{id:'testid',tab:{id:7},frameId:0,url:'https://other.example/'});
+    assert(env.shown.length === 0 && env.createdTabs.length === 2, '13a: own notice actions open manager for success/failure; invalid IDs, tabs, frames and origins are refused');
+    assert(env.createdTabs[1].url === `chrome-extension://testid/popup/popup.html?op=${encodeURIComponent(b.id)}#downloads`, '13b: manager opens the exact stored operation');
   }
 
   // =================================================================================================
   console.log('\n--- 14. Static contract: permissions, pages, no remote code ---');
   {
     const manifest = JSON.parse(read('manifest.json'));
-    assert(manifest.permissions.includes('notifications') && !manifest.permissions.includes('tabs') && !manifest.permissions.includes('history') && !manifest.permissions.includes('clipboardWrite'), '14a: only the narrow "notifications" permission was added (no tabs/history/clipboard permissions)');
+    assert(!manifest.permissions.includes('notifications') && !manifest.permissions.includes('tabs') && !manifest.permissions.includes('history') && !manifest.permissions.includes('clipboardWrite'), '14a: desktop-notification permission removed without new privileged permissions');
     assert(manifest.manifest_version === 3 && JSON.stringify(manifest.host_permissions) === JSON.stringify(['http://*/*', 'https://*/*']) && manifest.background.service_worker === 'background.js', '14b: MV3, host permissions and service worker are unchanged');
     assert(!manifest.content_scripts.some((c) => (c.js || []).some((f) => /feedback/.test(f))), '14c: no feedback code is injected into web pages');
     const popupHtml = read('popup/quick.html');
@@ -1181,7 +1211,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       getDownloadItem: async () => undefined, peekEarlyTerminal: () => undefined, notify: async () => {}, log: () => {}
     }, extra));
     const mkNotifier = (sink, { notifySuccess = true, lang = 'en' } = {}) => ctx.ImageSaverFeedbackTracker.createNotifier({
-      getPrefs: async () => ({ notifySuccess }), notifications: { create: async (id, o) => { sink.push({ id, o }); return id; } }, iconUrl: 'icon.png', lang
+      getPrefs: async () => ({ notifySuccess }), deliver: async (rec, o) => { sink.push({ id:rec.id, o }); return true; }, lang
     });
     const policyPatch = (d = 35, t = 30) => ({ conversion: 'none', reason: REASON, durationSec: d, thresholdSec: t,
       output: { type: 'video', ext: '.mp4', evidence: 'verified_mime', mime: 'video/mp4', durationSec: d, reason: REASON, thresholdSec: t } });

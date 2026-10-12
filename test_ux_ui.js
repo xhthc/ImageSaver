@@ -177,7 +177,7 @@ function makeChrome(state) {
     const quickHtml = read('popup/quick.html');
     const fullHtml = read('popup/popup.html');
     assert(manifest.action.default_popup === 'popup/quick.html' && fs.existsSync(path.resolve(ROOT, 'popup/quick.html')) && fs.existsSync(path.resolve(ROOT, 'popup/popup.html')), '21a: the toolbar popup is the compact quick.html; popup.html remains the full page');
-    assert(JSON.stringify([...manifest.permissions].sort()) === JSON.stringify(['contextMenus', 'declarativeNetRequest', 'downloads', 'notifications', 'offscreen', 'scripting', 'storage']) && JSON.stringify(manifest.host_permissions) === JSON.stringify(['http://*/*', 'https://*/*']), '21b: no permission or host-permission change');
+    assert(JSON.stringify([...manifest.permissions].sort()) === JSON.stringify(['contextMenus', 'declarativeNetRequest', 'downloads', 'offscreen', 'scripting', 'storage']) && JSON.stringify(manifest.host_permissions) === JSON.stringify(['http://*/*', 'https://*/*']), '21b: desktop notification permission removed; other permissions unchanged');
     assert(!manifest.content_security_policy && manifest.content_scripts.some((c) => (c.js || []).includes('content_youtube.js')) && !manifest.content_scripts.some((c) => (c.js || []).some((f) => /popup|feedback|history|app\.js|quick|assets/.test(f))), '21c: the default MV3 CSP is kept (not weakened); no UI code is injected into pages');
     assert(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(quickHtml + fullHtml) && !/\son\w+=/.test(quickHtml + fullHtml), '21d: no inline script or inline handler on either page (MV3 CSP)');
     assert(!/(?:src|href)="(?:https?:)?\/\//.test(quickHtml + fullHtml), '21e: no remote asset, script or stylesheet on either page');
@@ -1213,7 +1213,7 @@ function makeChrome(state) {
     const trackerCtx = (() => { const sb = { URL, console }; vm.createContext(sb); for (const f of ['lib/i18n.js', 'lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), sb); return sb; })();
     const notifyWith = async (deps) => {
       const sink = [];
-      const notify = trackerCtx.ImageSaverFeedbackTracker.createNotifier({ getPrefs: async () => ({ notifySuccess: true }), notifications: { create: async (id, o) => { sink.push(o); return id; } }, iconUrl: 'i.png', ...deps });
+      const notify = trackerCtx.ImageSaverFeedbackTracker.createNotifier({ getPrefs: async () => ({ notifySuccess: true }), deliver: async (rec, o) => { sink.push(o); return true; }, ...deps });
       await notify(trackerCtx.ImageSaverFeedback.sanitizeRecord(JSON.parse(JSON.stringify(failRec))));
       await notify(trackerCtx.ImageSaverFeedback.sanitizeRecord(JSON.parse(JSON.stringify(okRec))));
       return sink;

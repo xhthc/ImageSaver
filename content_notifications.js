@@ -1,0 +1,112 @@
+// Own page notices only; no media lookup, page event bridge or desktop notification API.
+(function () {
+  if (window.top !== window || globalThis.__mediaLatchNotices || !chrome.runtime?.onMessage) return;
+  globalThis.__mediaLatchNotices = true;
+  let host, shadow, stack, returnFocus, theme = 'violet';
+  const notices = new Map();
+  const palettes = {
+    violet: ['#19131f','#faf7ff','#bfb1cf','#44334f','#c084fc','#faf7ff','#141019','#f87171'],
+    blue: ['#131c31','#f1f5f9','#94a3b8','#334155','#60a5fa','#2563eb','#ffffff','#f87171'],
+    dark: ['#1b1b1f','#f4f4f5','#a1a1aa','#414149','#93c5fd','#2563eb','#ffffff','#f87171'],
+    light: ['#f8fafc','#172033','#475569','#b1bac7','#1d4ed8','#1d4ed8','#ffffff','#b91c1c']
+  };
+
+  function applyTheme(value) {
+    theme = Object.hasOwn(palettes, value) ? value : 'violet';
+    if (!host) return;
+    ['bg','fg','muted','border','ring','primary','on-primary','danger'].forEach((name,i)=>host.style.setProperty('--ml-'+name,palettes[theme][i]));
+    host.style.setProperty('color-scheme', theme === 'light' ? 'light' : 'dark');
+  }
+
+  function mount() {
+    if (host?.isConnected) return;
+    returnFocus = document.activeElement;
+    if (host) { document.documentElement.append(host); return; }
+    host = document.createElement('div');
+    host.style.cssText = 'all:initial!important;position:fixed!important;inset:auto 16px 16px auto!important;width:min(360px,calc(100vw - 32px))!important;max-height:calc(100vh - 32px)!important;z-index:2147483647!important;pointer-events:none!important;';
+    shadow = host.attachShadow({mode:'closed'});
+    const style = document.createElement('style');
+    style.textContent = `
+      :host{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px;color:var(--ml-fg)}
+      *{box-sizing:border-box} .stack{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 32px);overflow:auto;padding:4px}
+      .notice{background:var(--ml-bg);color:var(--ml-fg);border:1px solid var(--ml-border);border-radius:14px;padding:14px;box-shadow:0 8px 30px #0005;pointer-events:auto;animation:enter .18s ease-out}
+      .head{display:flex;align-items:center;gap:8px} .brand{font-size:12px;font-weight:600;flex:1;color:var(--ml-muted)}
+      .status{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;border:1px solid var(--ml-ring);color:var(--ml-ring);font-weight:700}
+      .error .status{border-color:var(--ml-danger);color:var(--ml-danger)}
+      .title{margin:8px 0 4px;font-size:14px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
+      .message{margin:0;color:var(--ml-muted);font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+      button{font:inherit;cursor:pointer;border-radius:7px;border:0;min-height:32px;transition:opacity .15s}
+      button:hover{opacity:.85} button:focus-visible{outline:2px solid var(--ml-ring);outline-offset:2px}
+      .close{width:32px;background:transparent;color:var(--ml-muted);font-size:22px;line-height:1;flex-shrink:0}
+      .open{margin-top:12px;padding:6px 12px;background:var(--ml-primary);color:var(--ml-on-primary);font-weight:600}
+      button:disabled{opacity:.6;cursor:wait}
+      @keyframes enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+      @media(prefers-reduced-motion:reduce){.notice{animation:none}button{transition:none}}
+    `;
+    stack = document.createElement('div'); stack.className = 'stack';
+    shadow.append(style, stack); document.documentElement.append(host); applyTheme(theme);
+  }
+
+  function pause(entry) {
+    if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; entry.remaining = Math.max(0, entry.remaining - (Date.now()-entry.started)); }
+  }
+  function resume(entry) {
+    if (entry.timer || document.hidden || entry.hover || entry.node.contains(shadow.activeElement)) return;
+    entry.started = Date.now(); entry.timer = setTimeout(()=>remove(entry.id),entry.remaining);
+  }
+  function remove(id) {
+    const entry = notices.get(id); if (!entry) return;
+    pause(entry);
+    const focused = entry.node.contains(shadow.activeElement);
+    entry.node.remove(); notices.delete(id);
+    if (focused) {
+      const next = notices.values().next().value;
+      if (next) next.node.querySelector('.close').focus();
+      else if (returnFocus?.isConnected) returnFocus.focus();
+    }
+    if (!notices.size) host.remove();
+  }
+
+  function show(notice) {
+    mount(); applyTheme(notice.theme); remove(notice.id); mount();
+    // Bounded stack: older dismissed/expired notices remain in the manager and failure badge.
+    if (notices.size >= 3) {
+      const oldest = [...notices.values()].find(e=>!e.hover && !e.node.contains(shadow.activeElement));
+      if (!oldest) return false;
+      remove(oldest.id);
+    }
+    const node=document.createElement('section'); node.className='notice '+notice.kind;
+    const head=document.createElement('div'); head.className='head';
+    const status=document.createElement('span'); status.className='status'; status.textContent=notice.kind==='error'?'!':'✓';status.setAttribute('aria-hidden','true');
+    const brand=document.createElement('span'); brand.className='brand'; brand.textContent='MediaLatch';
+    const close=document.createElement('button'); close.type='button';close.className='close';close.textContent='×';close.setAttribute('aria-label',notice.dismissLabel);close.addEventListener('click',()=>remove(notice.id));
+    head.append(status,brand,close);
+    const result=document.createElement('div');result.setAttribute('role',notice.kind==='error'?'alert':'status');result.setAttribute('aria-atomic','true');
+    const title=document.createElement('p');title.className='title';title.textContent=notice.title;
+    const message=document.createElement('p');message.className='message';message.textContent=notice.message;
+    result.append(title,message);
+    const open=document.createElement('button');open.type='button';open.className='open';open.textContent=notice.actionLabel;
+    open.addEventListener('click',async()=>{
+      open.disabled=true;
+      try { if ((await chrome.runtime.sendMessage({action:'MEDIALATCH_NOTICE_OPEN',id:notice.id}))?.success) {remove(notice.id);return;} } catch (_) {}
+      open.disabled=false;open.focus();
+    });
+    node.append(head,result,open);stack.append(node);
+    const entry={id:notice.id,node,remaining:notice.kind==='error'?12000:6000,timer:null,started:0,hover:false};notices.set(notice.id,entry);
+    node.addEventListener('mouseenter',()=>{entry.hover=true;pause(entry);});node.addEventListener('mouseleave',()=>{entry.hover=false;resume(entry);});
+    node.addEventListener('focusin',e=>{if(e.relatedTarget && e.relatedTarget!==host && !stack.contains(e.relatedTarget))returnFocus=e.relatedTarget;pause(entry);});node.addEventListener('focusout',()=>queueMicrotask(()=>{if(notices.has(entry.id))resume(entry);}));
+    node.addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();remove(entry.id);}});
+    resume(entry);
+    return true;
+  }
+
+  chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+    if(message?.action!=='MEDIALATCH_NOTICE')return false;
+    const n=message.notice;
+    if(sender?.id!==chrome.runtime.id || sender.tab || !n || n.origin!==location.origin || typeof n.id!=='string' || !/^[a-z0-9-]{6,48}$/.test(n.id) || !['success','error'].includes(n.kind) || !['title','message','actionLabel','dismissLabel'].every(k=>typeof n[k]==='string' && n[k].length>0 && n[k].length<=240)) {respond({success:false});return false;}
+    try {respond({success:show(n)});}catch(_){respond({success:false});}
+    return false;
+  });
+  document.addEventListener('visibilitychange',()=>notices.forEach(e=>document.hidden?pause(e):resume(e)));
+  chrome.storage?.onChanged?.addListener((changes,area)=>{if(area==='local' && changes.uiTheme)applyTheme(changes.uiTheme.newValue);});
+})();

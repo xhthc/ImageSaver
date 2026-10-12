@@ -110,7 +110,7 @@ async function main() {
   }
   // Real worker callers keep their frame/document and execution-world bindings while dispatching before document_idle.
   const schedulingCases = [
-    ['open-tab capture', b => b.injectContextTargetIntoOpenTabs(), { tabId: 1, allFrames: true }, ['lib/debug_journal.js', 'content_context_target.js']],
+    ['open-tab capture', b => b.injectContextTargetIntoOpenTabs(), { tabId: 1, allFrames: true }, ['lib/debug_journal.js', 'content_context_target.js', 'content_notifications.js']],
     ['selected owner', b => b.resolveContextOwner(1, 3, { src: 'https://cdn.example.test/selected.jpg' }), { tabId: 1, frameIds: [3] }, 'verifyContextOwner'],
     ['selected target', b => b.resolveContextMediaTarget(1, 3), { tabId: 1, frameIds: [3] }, 'readContextMediaTarget'],
     ['frame listener fallback', b => b.resolveFrameLocalMedia({ tabId: 1, frameId: 3, documentId: 'doc-selected', clickedSrc: 'blob:https://www.redgifs.com/selected' }), { tabId: 1, documentIds: ['doc-selected'] }, ['lib/debug_journal.js', 'lib/i18n.js', 'content_redgifs.js']],

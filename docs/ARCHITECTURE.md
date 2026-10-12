@@ -9,6 +9,7 @@ This document describes the current development source, not a list of planned ca
 | `manifest.json` | Manifest V3 permissions, classic service worker and content scripts |
 | `background.js` | Selected-target admission, provider/generic resolution, probes, naming, downloads, feedback and offscreen ownership |
 | `content_context_target.js` | Capture the pressed media/CSS/overlay target; re-prove ownership at save time |
+| `content_notifications.js` | Top-frame bounded page notices in closed Shadow DOM; original-origin delivery, dismiss/manager actions and paused timers |
 | `content_x.js`, `content_reddit.js`, `content_redgifs.js` | Provider evidence, selected-player recovery and inline controls |
 | Other `content_*.js` | Scoped site/link helpers; each script's messages define its contract |
 | `offscreen.js`, `offscreen.html` | Protected buffered fetches, genuine GIF encoding and Reddit HLS assembly |
@@ -61,6 +62,8 @@ The MediaLatch rename preserves existing internal message/DOM identifiers and st
 Settings use `chrome.storage.local`. A failed settings read keeps the form disabled and prevents saving defaults over unread preferences. Relative paths are validated by the same folder helper in UI/runtime.
 
 Session diagnostics use `chrome.storage.session` with the existing bounded retention. Legacy history APIs remain for compatibility/import; new Statistics use private IndexedDB aggregate counters without the old entry/time cap. Recording is configurable and clearable. A clear boundary excludes old operations from replay; only retained legacy data can be imported. See [Privacy](PRIVACY.md) for exact scope.
+
+Development notices use the originating tab's top frame and captured HTTP(S) origin, never the active unrelated tab or desktop notification API. The session record retains this route through worker restart; history, reports and statistics omit it. Closed, navigated or restricted tabs leave the outcome in Downloads and the failure badge. Success opt-out, terminal outcome timing, cancellation silence and the burst guard remain unchanged. The closed Shadow DOM renderer displays at most three notices, with localized dismiss/manager actions, current theme and reduced-motion support. Expiry pauses while hidden, hovered or keyboard-focused. Opening the manager validates the originating tab/origin and stored terminal operation again. This mechanism is not in the packaged v2.0.0.28 preview.
 
 Blue, Dark and Light themes persist and synchronize between pages. The toolbar popup shows byte-transfer controls; the full Downloads page merges progress, controls and expandable result/report details into one card per job. Retained notification deep links can still open old diagnostics. Removing a card first durably clears its terminal diagnostic, then removes the queue record/file; unreadable storage, active records or pending statistics delivery refuse deletion. Aggregate Statistics are not cleared by deleting download cards. Long localized tab names use a scrollable row with keyboard focus visibility.
 

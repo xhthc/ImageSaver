@@ -32506,8 +32506,8 @@ async function runTests() {
           await mockChrome.runtime._onInstalledCb({ reason: 'update' });
           await settle();
           assert(queries.length === 1 && JSON.stringify(queries[0]) === JSON.stringify({ url: ['http://*/*', 'https://*/*'] }), '265.12a: открытые вкладки запрашиваются только по http(s): ' + JSON.stringify(queries));
-          assert(JSON.stringify(execs.map((o) => o.target.tabId)) === JSON.stringify([11, 13, 14]) && execs.every((o) => o.target.allFrames === true && JSON.stringify(o.files) === JSON.stringify(['lib/debug_journal.js', 'content_context_target.js']) && o.world === undefined && o.func === undefined),
-            '265.12b: capture внедряется в каждую открытую вкладку (все кадры, только файл capture); отброшенная и безадресная вкладки пропущены, отказ одной вкладки не останавливает остальные: ' + JSON.stringify(execs.map((o) => o.target)));
+          assert(JSON.stringify(execs.map((o) => o.target.tabId)) === JSON.stringify([11, 13, 14]) && execs.every((o) => o.target.allFrames === true && JSON.stringify(o.files) === JSON.stringify(['lib/debug_journal.js', 'content_context_target.js', 'content_notifications.js']) && o.world === undefined && o.func === undefined),
+            '265.12b: capture и уведомления внедряются в открытые вкладки; отброшенная и безадресная вкладки пропущены, отказ одной вкладки не останавливает остальные: ' + JSON.stringify(execs.map((o) => o.target)));
           execs.length = 0; queries.length = 0;
           await mockChrome.runtime._onInstalledCb({ reason: 'install' });
           await settle();

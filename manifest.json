@@ -12,8 +12,7 @@
     "storage",
     "scripting",
     "declarativeNetRequest",
-    "offscreen",
-    "notifications"
+    "offscreen"
   ],
   "host_permissions": [
     "http://*/*",
@@ -28,6 +27,11 @@
     "default_popup": "popup/quick.html"
   },
   "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content_notifications.js"],
+      "run_at": "document_start"
+    },
     {
       "matches": [
         "http://*/*",

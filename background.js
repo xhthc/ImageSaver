@@ -1966,7 +1966,7 @@ async function injectContextTargetIntoOpenTabs() {
   try { tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] }); } catch (_) { return; }
   for (const tab of Array.isArray(tabs) ? tabs : []) {
     if (!tab || !Number.isInteger(tab.id) || tab.discarded) continue;
-    try { await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, injectImmediately: true, files: ['lib/debug_journal.js', 'content_context_target.js'] }); dbg('lifecycle', 'reinject', 'ok', undefined, { target: 'context_target' }, { tab: tab.id }); } catch (_) { dbg('lifecycle', 'reinject', 'failed', 'INJECT_FAILED', { target: 'context_target' }, { tab: tab.id }); }
+    try { await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, injectImmediately: true, files: ['lib/debug_journal.js', 'content_context_target.js', 'content_notifications.js'] }); dbg('lifecycle', 'reinject', 'ok', undefined, { target: 'context_target' }, { tab: tab.id }); } catch (_) { dbg('lifecycle', 'reinject', 'failed', 'INJECT_FAILED', { target: 'context_target' }, { tab: tab.id }); }
   }
 }
 
@@ -8243,7 +8243,7 @@ async function savePixivPostMedia(batch, info, tab) {
 }
 
 async function pawchiveItemFailed(info, tab, url, failure) {
-  const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: url, site: fbSiteOf(info.pageUrl || tab?.url, url), cid: info.dbgCid });
+  const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: url, site: fbSiteOf(info.pageUrl || tab?.url, url), cid: info.dbgCid }, tab);
   await fbFail(op, failure);
   await fbBadgeReporter(op)(failure.code === 'RATE_LIMIT' ? 'RATE' : 'ERR', failure.code === 'RATE_LIMIT' ? '#f59e0b' : '#ef4444');
 }
@@ -9385,9 +9385,16 @@ async function feedbackNotifyRecord(record) {
 
 var feedbackNotifier = (typeof globalThis.ImageSaverFeedbackTracker?.createNotifier === 'function')
   ? globalThis.ImageSaverFeedbackTracker.createNotifier({
-      notifications: typeof chrome !== 'undefined' ? chrome.notifications : null,
-      iconUrl: 'icons/notification.png',
-      autoClearMs: 8000,
+      deliver: async (record, options) => {
+        const target = record.noticeTarget;
+        if (!target || !chrome.tabs?.get || !chrome.tabs?.sendMessage) return false;
+        const tab = await chrome.tabs.get(target.tabId);
+        if (new URL(tab.url).origin !== target.origin || tab.discarded) return false;
+        let theme = 'violet';
+        try { const prefs = await chrome.storage.local.get({ uiTheme: 'violet' }); if (['violet', 'blue', 'dark', 'light'].includes(prefs.uiTheme)) theme = prefs.uiTheme; } catch (_) {}
+        const reply = await chrome.tabs.sendMessage(target.tabId, { action: 'MEDIALATCH_NOTICE', notice: { ...options, id: record.id, origin: target.origin, theme } }, { frameId: 0 });
+        return reply?.success === true;
+      },
       getPrefs: () => chrome.storage.local.get({ notifySuccess: true }),
       // the saved interface language; an invalid or unreadable value leaves the notifier on the browser-language rule
       getLang: async () => (await chrome.storage.local.get({ uiLanguage: null }))?.uiLanguage,
@@ -9462,9 +9469,11 @@ async function getUnseenFailureCount() {
 }
 
 // DEBUG-MENU-01: every operation boundary is also a journal event (operation id, the click/attempt id when the caller has one).
-async function fbBegin(info) {
+async function fbBegin(info, tab) {
   let op = null;
-  try { op = feedbackTracker ? await feedbackTracker.begin(info) : null; } catch (_) { op = null; }
+  let noticeTarget;
+  try { if (Number.isSafeInteger(tab?.id) && tab.id >= 0) noticeTarget = { tabId: tab.id, origin: new URL(tab.url).origin }; } catch (_) {}
+  try { op = feedbackTracker ? await feedbackTracker.begin({ ...info, noticeTarget }) : null; } catch (_) { op = null; }
   dbg('op', 'begin', op ? 'start' : 'failed', op ? undefined : 'NO_RECORD', () => ({ site: info && info.site, pageHost: info && info.pageUrl, srcHost: info && info.sourceUrl }), { op: op || undefined, cid: info && info.cid });
   return op;
 }
@@ -9551,14 +9560,15 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
     },
     cancelExport:id=>isFileExport(id)?offscreenRequest({action:'STAGING_ABORT',id:id.slice(5)}):chrome.downloads.cancel(id),
     forget:j=>directoryStore?.forget('file:'+j.id),
-    newAttempt:j=>{
+    newAttempt:async j=>{
+      const old=await feedbackTracker?.get(j.op).catch(()=>null);
       const m = j.mime || j.expectedMime || '';
-      return fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'});
+      return fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
     },
     recoverAttempt:async j=>{
       const old=await feedbackTracker?.get(j.op);
       const m = j.mime || j.expectedMime || '';
-      return old && (!FeedbackLib.isTerminal(old.state) || old.state==='complete')?j.op:fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'});
+      return old && (!FeedbackLib.isTerminal(old.state) || old.state==='complete')?j.op:fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
     },
     attach:async(j,id)=>isFileExport(id)?fbStage(j.op,'saving',{output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}):fbAttach(j.op,id,{filename:j.filename,output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}),
     complete:async(j,item)=>isFileExport(j.downloadId)?feedbackTracker?.completeFile(j.op,item,{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}):fbDownloadTerminal(j.downloadId,'complete'),
@@ -9755,25 +9765,19 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   });
 }
 
-// Notification click is an explicit user action: failures open the details page, successes reveal the file.
-if (typeof chrome !== 'undefined' && chrome.notifications?.onClicked?.addListener) {
-  chrome.notifications.onClicked.addListener(async (notificationId) => {
-    try {
-      const prefix = globalThis.ImageSaverFeedbackTracker.NOTIFY_PREFIX;
-      if (typeof notificationId !== 'string' || !notificationId.startsWith(prefix) || !feedbackTracker) return;
-      const id = notificationId.slice(prefix.length);
-      dbg('notify', 'click', 'info', undefined, null, { op: id });
-      const rec = await feedbackTracker.get(id);
-      if (!rec) return;
-      if (rec.state === 'complete' && Number.isInteger(rec.downloadId) && chrome.downloads?.show) {
-        chrome.downloads.show(rec.downloadId);
-      } else if (chrome.tabs?.create) {
-        await chrome.tabs.create({ url: chrome.runtime.getURL(`${FEEDBACK_DETAILS_PAGE}?op=${encodeURIComponent(id)}#history`) });
-      }
-      chrome.notifications.clear?.(notificationId);
-    } catch (_) {}
-  });
-}
+// Only the owning top-frame content script can open a notice's stored operation.
+if (chrome.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  if (message?.action !== 'MEDIALATCH_NOTICE_OPEN') return false;
+  (async () => {
+    if (sender?.id !== chrome.runtime.id || sender.frameId !== 0 || !Number.isSafeInteger(sender.tab?.id) || typeof message.id !== 'string' || !/^[a-z0-9-]{6,48}$/.test(message.id)) return { success: false };
+    const rec = await feedbackTracker?.get(message.id);
+    if (!rec?.noticeTarget || !FeedbackLib.isTerminal(rec.state) || rec.noticeTarget.tabId !== sender.tab.id || new URL(sender.url).origin !== rec.noticeTarget.origin) return { success: false };
+    await chrome.tabs.create({ url: chrome.runtime.getURL(`${FEEDBACK_DETAILS_PAGE}?op=${encodeURIComponent(rec.id)}#downloads`) });
+    dbg('notify', 'click', 'ok', undefined, null, { op: rec.id });
+    return { success: true };
+  })().then(respond, () => respond({ success: false }));
+  return true;
+});
 
 // ============================================================================
 // 9.1. Download Lifecycle Tracker: state monitoring via onChanged
@@ -11640,7 +11644,7 @@ async function onContextMenuClicked(info, tab) {
       console.warn(owner === 'preview'
         ? '[MediaLatch] The selected video is a seek preview, not the media of the post: save refused without requests'
         : '[MediaLatch] Владелец выбранной цели удалён, заменён или изменён после жеста — сохранение отклонено без запросов');
-      const staleOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, ''), cid: info.dbgCid });
+      const staleOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, ''), cid: info.dbgCid }, tab);
       await fbFail(staleOp, { stage: 'resolve', code: 'NO_MEDIA' });
       await fbBadgeReporter(staleOp)('ERR', '#ef4444');
       return;
@@ -11738,7 +11742,7 @@ async function onContextMenuClicked(info, tab) {
       // link (the only way the image entry is reached without media) is refused visibly, not silently.
       if (info.menuItemId === CSS_MEDIA_MENU_ID || info.menuItemId === 'save-image-item' || rawLinkUrl) {
         dbg('menu', 'click', 'refused', 'NO_MEDIA_ASSOCIATION', null, { cid: info.dbgCid, tab: tab && tab.id });
-        const noMediaOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, ''), cid: info.dbgCid });
+        const noMediaOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, ''), cid: info.dbgCid }, tab);
         await fbFail(noMediaOp, { stage: 'resolve', code: 'NO_MEDIA' });
         await fbBadgeReporter(noMediaOp)('ERR', '#ef4444');
       }
@@ -11758,7 +11762,7 @@ async function onContextMenuClicked(info, tab) {
     inFlightRequests.add(dedupeKey);
     activeResolvingCount++;
 
-    const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: rawImageUrl || rawLinkUrl, site: fbSiteOf(info.pageUrl || tab?.url, rawImageUrl || rawLinkUrl), cid: info.dbgCid });
+    const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: rawImageUrl || rawLinkUrl, site: fbSiteOf(info.pageUrl || tab?.url, rawImageUrl || rawLinkUrl), cid: info.dbgCid }, tab);
     const flashBadge = fbBadgeReporter(op);
 
     // Declared before the try so the catch block below can read it (it was try-scoped, which made the
@@ -12066,7 +12070,7 @@ async function onContextMenuClicked(info, tab) {
       return;
     }
 
-    const op = await fbBegin({ pageUrl: tab.url || info.pageUrl || '', sourceUrl: '', site: fbSiteOf(tab.url || info.pageUrl, ''), cid: info.dbgCid });
+    const op = await fbBegin({ pageUrl: tab.url || info.pageUrl || '', sourceUrl: '', site: fbSiteOf(tab.url || info.pageUrl, ''), cid: info.dbgCid }, tab);
     const flashBadge = fbBadgeReporter(op);
 
     try {
@@ -12424,7 +12428,7 @@ async function xInlineAsk(tab, sender, payload) {
 
 // A refused owner is visible: a failed operation and an ERR badge, never silence and never a request.
 async function xInlineRefuse(sender, cid) {
-  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid });
+  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid }, sender.tab);
   await fbFail(op, { stage: 'resolve', code: 'NO_MEDIA' });
   await fbBadgeReporter(op)('ERR', '#ef4444');
 }
@@ -12671,7 +12675,7 @@ function redditInlineSenderOk(message, sender) {
 
 // A refused owner or item is visible: a failed operation and an ERR badge, never silence and never a request.
 async function redditInlineRefuse(sender, code = 'NO_MEDIA', cid) {
-  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid });
+  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid }, sender.tab);
   await fbFail(op, { stage: 'resolve', code });
   await fbBadgeReporter(op)('ERR', '#ef4444');
 }
@@ -12817,7 +12821,7 @@ async function handleRedgifsInlineSave(message, sender) {
   // at most a few saves resolve at once; one more is a visible failure, never a silent drop
   if (redgifsInlineActive >= REDGIFS_INLINE_MAX_ACTIVE) {
     dbg('redgifs.inline', 'save', 'refused', 'RATE_LIMIT', { n: redgifsInlineActive }, { cid, tab: sender.tab.id });
-    const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid });
+    const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid }, sender.tab);
     await fbFail(op, { stage: 'resolve', code: 'RATE_LIMIT' });
     await fbBadgeReporter(op)('ERR', '#ef4444');
     return;

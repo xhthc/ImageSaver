@@ -33,6 +33,8 @@ Selecting a base folder grants local write access only after a browser picker ac
 
 ## Reports and diagnostics
 
+Current development uses MediaLatch notices on the source web page instead of desktop notifications. They show bounded site/type/result text, without filenames, paths or source URLs, in a closed Shadow DOM. Delivery is limited to the original tab and origin. Session feedback holds a tab ID and origin for delivery/restart; legacy history, reports and Statistics exclude this route. Closing/navigating the tab or a restricted page can prevent a notice; the manager and failure badge remain. Page notices are UI inside the website, not a confidential system surface. The packaged v2.0.0.28 preview still uses its older notification mechanism.
+
 Bug reports are created and copied only when requested. The report builder allows bounded fields and removes addresses, paths and token-bearing data from its structured output. Diagnostic log copies redact known signed query parameters; the exact request URL is preserved for the actual transfer.
 
 Review any text you choose to paste or share. Browser/developer logs and screenshots can contain context outside the generated report. The extension does not submit the report itself.
@@ -49,7 +51,6 @@ Debug events can be filtered, copied or exported only by user action. Exports co
 | `scripting` | Selected-frame provider discovery/recovery and content-script injection |
 | `declarativeNetRequest` | Scoped provider request-header adjustments, including required image referrers |
 | `offscreen` | Local binary processing, GIF encoding, supported HLS assembly and owned blob lifecycle |
-| `notifications` | Save feedback; success notifications can be disabled |
 | HTTP/HTTPS host access | Inspect supported media targets and contact their source/CDN across sites |
 
 ## Changes

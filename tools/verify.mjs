@@ -58,6 +58,7 @@ if (withUi) {
   const ui = path.join(root, 'ui');
   run('ui-typecheck', ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.json'], { cwd: ui });
   run('ui-render', ['test_ui_render.js'], { timeout: 120000 });
+  run('ui-notifications', ['test_notifications.js']);
   run('ui-built', ['scripts/check-built.mjs'], { cwd: ui, timeout: 120000 });
 } else {
   console.log('UI typecheck, render and build parity: NOT RUN (use --ui after npm ci --prefix ui).');

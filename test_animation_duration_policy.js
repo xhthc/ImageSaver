@@ -191,7 +191,8 @@ function createIntegratedEnvironment({
       onShown: { addListener: () => {} }
     },
     tabs: {
-      sendMessage: async () => null,
+      get: async id=>({id,url:env.noticePage}),
+      sendMessage: async (tabId,msg)=>{if(msg?.action!=='MEDIALATCH_NOTICE')return null;env.notifications.push({id:msg.notice.id,opts:msg.notice});return {success:true};},
       onActivated: { addListener: () => {} },
       onUpdated: { addListener: () => {} }
     },
@@ -250,16 +251,6 @@ function createIntegratedEnvironment({
         set: async () => {}
       }
     },
-    notifications: {
-      create: async (id, opts) => {
-        env.notifications.push({ id, opts });
-        return id;
-      },
-      clear: async (id) => {
-        env.notificationClears.push(id);
-      },
-      onClicked: { addListener: () => {} }
-    }
   };
 
   // Mock DOM for offscreen document
@@ -456,13 +447,15 @@ function createIntegratedEnvironment({
   env.offscreenTaskCount = () => vm.runInContext('activeOffscreenOwners.size', bgSandbox);
 
   env.saveRedditGif = async (url, pageUrl = 'https://reddit.com/r/test', settings = {}) => {
-    const op = await env.bg.fbBegin({ menuItemId: 'save-image-item', srcUrl: url, pageUrl });
+    env.noticePage=pageUrl;
+    const op = await env.bg.fbBegin({ menuItemId: 'save-image-item', srcUrl: url, pageUrl },{id:7,url:pageUrl});
     const res = await env.bg.executeRedditGifDownload(url, settings, { pageUrl, feedbackOp: op });
     return { ...res, op };
   };
 
   env.saveXTweetVideo = async (url, pageUrl = 'https://x.com/status/1', settings = {}) => {
-    const op = await env.bg.fbBegin({ menuItemId: 'save-image-item', srcUrl: url, pageUrl });
+    env.noticePage=pageUrl;
+    const op = await env.bg.fbBegin({ menuItemId: 'save-image-item', srcUrl: url, pageUrl },{id:7,url:pageUrl});
     const res = await env.bg.executeXTweetVideoGifDownload(url, settings, { pageUrl, feedbackOp: op });
     return { ...res, op };
   };
@@ -839,7 +832,8 @@ async function runSuite() {
       ['oversized stream without Content-Length', { inputHeaderBytes: 0, inputChunks: [oversizedChunk] }]
     ]) {
       const env = createIntegratedEnvironment(fixture);
-      const op = await env.bg.fbBegin({ menuItemId: 'save-image-item', srcUrl: prov.url, pageUrl: prov.page });
+      env.noticePage=prov.page;
+      const op = await env.bg.fbBegin({ menuItemId: 'save-image-item', srcUrl: prov.url, pageUrl: prov.page },{id:7,url:prov.page});
       const res = await env.bg[prov.fn](prov.url, { folderOrganizationMode: 'by_site_and_type' }, { pageUrl: prov.page, feedbackOp: op });
       testAssert(res.success === true && env.downloadCalls.length === 1 && env.downloadCalls[0].url === prov.url && /\/video\/[^/]+\.mp4$/i.test(env.downloadCalls[0].filename), `8a: ${prov.name} ${name}: one exact signed source MP4 in the video folder`);
       testAssert(env.notifications.length === 0, `8b: ${prov.name} ${name}: no premature completion notice`);
