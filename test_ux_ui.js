@@ -126,6 +126,16 @@ function makeChrome(state) {
     state.failSet = false;
     await made.chrome.storage.local.set({ [THEME_KEY]: 'blue' });
     assert(document.documentElement.dataset.theme === 'dark', 'theme5: disposed pages stop reacting to changes');
+    const violetDoc = doc();
+    const violet = createTheme({ chrome: made.chrome, document: violetDoc });
+    await violet.ready;
+    assert(await violet.setTheme('violet') && violetDoc.documentElement.dataset.theme === 'violet' && violetDoc.documentElement.classList.dark,
+      'theme-violet-save: Violet persists and applies dark widget variants');
+    violet.dispose();
+    const reopened = createTheme({ chrome: made.chrome, document: doc() });
+    await reopened.ready;
+    assert(reopened.store.getState().theme === 'violet', 'theme-violet-reopen: the stored Violet preference survives reopening');
+    reopened.dispose();
     const invalid = makeChrome({ session: [], history: [], local: { [THEME_KEY]: 'unsupported' } });
     const fallback = createTheme({ chrome: invalid.chrome, document: doc() });
     await fallback.ready;
@@ -595,7 +605,7 @@ function makeChrome(state) {
     assert(status.every((s) => surfaces.every((b) => C(s, b) >= 4.5)), '30d: status text and link colours (danger, success, warning, link) have contrast >= 4.5:1 on every surface');
     assert(contrast([255, 255, 255], over(rgb(tok.destructive), 0.6, rgb(tok.card))) >= 4.5 && C('primary-foreground', 'destructive') >= 4.5, '30e: white text on the destructive badge/button (also at 60% opacity over a card) has contrast >= 4.5:1');
     assert(C('border', 'background') >= 1.3 && C('ring', 'background') >= 3, `30f: borders are visible and the focus ring has contrast >= 3:1 against the page (${C('ring', 'background').toFixed(2)})`);
-    for (const theme of ['dark', 'light']) {
+    for (const theme of ['dark', 'light', 'violet']) {
       const palette = { ...tok };
       const block = new RegExp(':root\\[data-theme="' + theme + '"\\]\\s*\\{([^}]*)\\}').exec(css)[1];
       for (const m of block.matchAll(/--([a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) palette[m[1]] = m[2];

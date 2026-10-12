@@ -198,7 +198,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
 (async () => {
   // The real page components apply themes to both documents and expose one labelled choice in settings.
   {
-    for (const theme of ['blue', 'dark', 'light']) {
+    for (const theme of ['blue', 'dark', 'light', 'violet']) {
       const full = await page('full', { session: [], history: [], local: { historyEnabled: true, uiTheme: theme, uiLanguage: 'en' } });
       const quick = await page('quick', { session: [], history: [], local: { historyEnabled: true, uiTheme: theme, uiLanguage: 'en' } });
       assert(full.doc.documentElement.dataset.theme === theme && quick.doc.documentElement.dataset.theme === theme,

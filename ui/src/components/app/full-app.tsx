@@ -78,7 +78,7 @@ export function FullApp({ settings }: { settings: SettingsController }) {
         </header>
 
         <Tabs value={section} onValueChange={select} className="flex-1 gap-4">
-          <TabsList variant="line" aria-label={t("app.sections")} className="w-full min-w-0 flex-nowrap justify-start gap-1 overflow-x-auto border-b pb-0 group-data-[orientation=horizontal]/tabs:h-auto">
+          <TabsList aria-label={t("app.sections")} className="w-full min-w-0 flex-nowrap justify-start gap-1.5 overflow-x-auto bg-transparent p-1 group-data-[orientation=horizontal]/tabs:h-auto">
             {SECTIONS.map((name) => {
               const Icon = TAB_ICONS[name]
               return (
@@ -87,7 +87,7 @@ export function FullApp({ settings }: { settings: SettingsController }) {
                   value={name}
                   data-section={name}
                   onFocus={(event) => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}
-                  className="h-9 flex-none px-2 data-[state=active]:text-foreground data-[state=active]:after:opacity-100 after:!bottom-[-1px]"
+                  className="h-10 flex-none px-2"
                 >
                   <Icon aria-hidden="true" />
                   {t(`tab.${name}`)}

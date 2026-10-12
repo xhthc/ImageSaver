@@ -2,7 +2,7 @@ import { createStore } from './store.js';
 import { watchStorage } from './keys.js';
 
 export const THEME_KEY = 'uiTheme';
-export const THEMES = Object.freeze(['blue', 'dark', 'light']);
+export const THEMES = Object.freeze(['blue', 'dark', 'light', 'violet']);
 const clean = value => THEMES.includes(value) ? value : 'blue';
 
 /** The preference changes only after a successful write; newer storage events win over older reads/writes. */

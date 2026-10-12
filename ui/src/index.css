@@ -6,7 +6,7 @@
 /* The saved theme sets the dark class; the operating-system preference does not override it. */
 @custom-variant dark (&:is(.dark *));
 
-/* Image Saver keeps its dark slate identity (#0f172a surface, blue accent). The shadcn tokens below are the standard
+/* Blue retains the slate identity (#0f172a surface, blue accent). The shadcn tokens below are the standard
    semantic variables; contrast of the pairs used for text is >= 4.5:1 (checked by test_ux_ui.js, section 30). */
 :root {
   color-scheme: dark;
@@ -75,6 +75,29 @@
   --ring: #1d4ed8;
 }
 
+/* WebShift-inspired palette; semantic colors remain readable rather than copying translucent site text. */
+:root[data-theme="violet"] {
+  --background: #141019;
+  --foreground: #faf7ff;
+  --card: #19131f;
+  --card-foreground: #faf7ff;
+  --popover: #251c30;
+  --popover-foreground: #faf7ff;
+  --primary: #faf7ff;
+  --primary-foreground: #141019;
+  --secondary: #2a2035;
+  --secondary-foreground: #eee5f7;
+  --muted: #2a2035;
+  --muted-foreground: #bfb1cf;
+  --accent: #342342;
+  --accent-foreground: #faf7ff;
+  --border: #44334f;
+  --input: #867194;
+  --ring: #c084fc;
+  --brand-start: #a855f7;
+  --brand-end: #7e22ce;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -130,6 +153,84 @@
   }
 }
 
+/* A compact application interpretation of the reference: framed tabs, calm cards and a soft header glow. */
+[data-popup] > header {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: radial-gradient(ellipse at 15% 0%, color-mix(in srgb, var(--ring) 12%, transparent), transparent 70%), var(--card);
+}
+[data-popup="full"] [data-slot="tabs-trigger"] {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--card);
+  box-shadow: none;
+}
+[data-popup="full"] [data-slot="tabs-trigger"][data-state="active"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+[data-popup="full"] [data-slot="tabs-trigger"]::after {
+  display: none;
+}
+[data-slot="card"], [data-slot="recent"], [data-slot="saving"], [data-slot="stats"], [data-slot="debug"] {
+  border-radius: 20px;
+  box-shadow: none;
+}
+[data-popup="quick"] > header {
+  padding: 12px;
+  border-radius: 16px;
+}
+[data-popup] > header h1 {
+  letter-spacing: -0.03em;
+}
+[data-slot="card-title"] {
+  line-height: 1.4;
+}
+[data-slot="select-trigger"], [data-slot="button"] {
+  border-radius: 10px;
+}
+:root[data-theme="violet"] progress {
+  accent-color: var(--ring);
+}
+
+/* Animate presentation only: no delayed actions, hidden controls or ownership tied to a view. */
+@keyframes medialatch-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes medialatch-expand {
+  from { height: 0; }
+  to { height: var(--radix-collapsible-content-height); }
+}
+@keyframes medialatch-collapse {
+  from { height: var(--radix-collapsible-content-height); }
+  to { height: 0; }
+}
+[data-slot="tabs-content"][data-state="active"] {
+  animation: medialatch-enter 180ms ease-out;
+}
+[data-slot="collapsible-content"] {
+  overflow: hidden;
+}
+[data-slot="collapsible-content"][data-state="open"] {
+  animation: medialatch-expand 180ms ease-out;
+}
+[data-slot="collapsible-content"][data-state="closed"] {
+  animation: medialatch-collapse 140ms ease-in;
+}
+[data-slot="button"] {
+  transition: background-color 140ms, color 140ms, border-color 140ms, box-shadow 140ms, transform 140ms;
+}
+[data-slot="button"]:active:not(:disabled) {
+  transform: translateY(1px);
+}
+[data-popup="full"] [data-slot="tabs-trigger"]:hover:not([data-state="active"]) {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
 /* Reduced motion: no animation or transition survives the user's preference. */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -137,7 +238,12 @@
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    animation: none !important;
     transition-duration: 0.01ms !important;
+    transition: none !important;
     scroll-behavior: auto !important;
+  }
+  [data-slot="button"]:active:not(:disabled) {
+    transform: none;
   }
 }
