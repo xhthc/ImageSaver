@@ -29,13 +29,14 @@
     style.textContent = `
       :host{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px;color:var(--ml-fg)}
       *{box-sizing:border-box} .stack{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 32px);overflow:auto;padding:4px}
-      .notice{background:var(--ml-bg);color:var(--ml-fg);border:1px solid var(--ml-border);border-radius:14px;padding:14px;box-shadow:0 8px 30px #0005;pointer-events:auto;animation:enter .18s ease-out}
+      .notice{background:var(--ml-bg);color:var(--ml-fg);border:1px solid var(--ml-border);border-radius:14px;padding:14px;box-shadow:0 8px 30px #0005;pointer-events:auto;animation:enter .18s cubic-bezier(.16,1,.3,1)}
+      .notice[data-closing]{pointer-events:none}
       .head{display:flex;align-items:center;gap:8px} .brand{font-size:12px;font-weight:600;flex:1;color:var(--ml-muted)}
       .status{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;border:1px solid var(--ml-ring);color:var(--ml-ring);font-weight:700}
       .error .status{border-color:var(--ml-danger);color:var(--ml-danger)}
       .title{margin:8px 0 4px;font-size:14px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
       .message{margin:0;color:var(--ml-muted);font-size:13px;line-height:1.5;overflow-wrap:anywhere}
-      button{font:inherit;cursor:pointer;border-radius:7px;border:0;min-height:32px;transition:opacity .15s}
+      button{font:inherit;cursor:pointer;border-radius:7px;border:0;min-height:32px;transition:opacity .12s cubic-bezier(.16,1,.3,1)}
       button:hover{opacity:.85} button:focus-visible{outline:2px solid var(--ml-ring);outline-offset:2px}
       .close{width:32px;background:transparent;color:var(--ml-muted);font-size:22px;line-height:1;flex-shrink:0}
       .open{margin-top:12px;padding:6px 12px;background:var(--ml-primary);color:var(--ml-on-primary);font-weight:600}
@@ -54,26 +55,32 @@
     if (entry.timer || document.hidden || entry.hover || entry.node.contains(shadow.activeElement)) return;
     entry.started = Date.now(); entry.timer = setTimeout(()=>remove(entry.id),entry.remaining);
   }
-  function remove(id) {
+  function remove(id, animate = true) {
     const entry = notices.get(id); if (!entry) return;
     pause(entry);
     const focused = entry.node.contains(shadow.activeElement);
-    entry.node.remove(); notices.delete(id);
+    notices.delete(id); entry.node.inert = true; entry.node.setAttribute('aria-hidden','true'); entry.node.setAttribute('data-closing','');
     if (focused) {
       const next = notices.values().next().value;
       if (next) next.node.querySelector('.close').focus();
       else if (returnFocus?.isConnected) returnFocus.focus();
     }
-    if (!notices.size) host.remove();
+    const done=()=>{entry.node.remove();if(!stack.childElementCount)host.remove();};
+    if(animate && !window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches && typeof entry.node.animate==='function') {
+      try {entry.node.animate([{opacity:1,transform:'translateY(0)'},{opacity:0,transform:'translateY(4px)'}],{duration:120,easing:'cubic-bezier(.4,0,1,1)'}).finished.then(done,done);return;}catch(_){}
+    }
+    done();
   }
 
   function show(notice) {
-    mount(); applyTheme(notice.theme); remove(notice.id); mount();
+    mount(); applyTheme(notice.theme); remove(notice.id,false); mount();
+    // New arrivals retire fading cards immediately so the visible stack never exceeds three.
+    stack.querySelectorAll('[data-closing]').forEach(node=>node.remove());
     // Bounded stack: older dismissed/expired notices remain in the manager and failure badge.
     if (notices.size >= 3) {
       const oldest = [...notices.values()].find(e=>!e.hover && !e.node.contains(shadow.activeElement));
       if (!oldest) return false;
-      remove(oldest.id);
+      remove(oldest.id,false);
     }
     const node=document.createElement('section'); node.className='notice '+notice.kind;
     const head=document.createElement('div'); head.className='head';

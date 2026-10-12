@@ -69,6 +69,8 @@ Blue, Dark and Light themes persist and synchronize between pages. The toolbar p
 
 The UI build targets Chromium 120 and emits local scripts/styles with no remote runtime code. `npm run build --prefix ui` regenerates `popup/`; the parity check rebuilds into a temporary folder and compares bytes. Notices are generated separately after dependencies or their licences change.
 
+UI motion uses shared 120ms feedback/exit and 180ms entry/disclosure timings with consistent easing. CSS animates Radix menus/tooltips through their existing mount/unmount lifecycle; disclosure padding stays inside the measured wrapper to avoid a closing jump. Panels remain mounted, and byte progress and bulk removal are not delayed by animation. Page-notice dismissal releases focus/actions immediately while its visual card fades for 120ms; new arrivals retire fading cards before admission to preserve the three-card bound. Reduced motion removes effects, including notice exits, without changing the outcome or controls. Native browser popup windows and context menus retain browser-controlled behavior.
+
 GitHub checks use the fixed `xhthc/MediaLatch` releases endpoint. The old repository cache is ignored. No release-supplied HTML or navigation URL is trusted, and no extension code is installed by this controller.
 
 ## Release and validation

@@ -132,8 +132,8 @@ export function ResultRow({
         {actions}
         </div>
         {children}
-        <CollapsibleContent className="px-3 pb-3">
-          <ResultDetails record={record} env={env} showPost={showPost} onOpenFull={onOpenFull} />
+        <CollapsibleContent>
+          <div className="px-3 pb-3"><ResultDetails record={record} env={env} showPost={showPost} onOpenFull={onOpenFull} /></div>
         </CollapsibleContent>
       </Collapsible>
     </li>

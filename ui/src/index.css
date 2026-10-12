@@ -10,6 +10,10 @@
    semantic variables; contrast of the pairs used for text is >= 4.5:1 (checked by test_ux_ui.js, section 30). */
 :root {
   color-scheme: dark;
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-exit: cubic-bezier(0.4, 0, 1, 1);
   --radius: 0.625rem;
   --background: #0f172a;
   --foreground: #f1f5f9;
@@ -208,23 +212,48 @@
   from { height: var(--radix-collapsible-content-height); }
   to { height: 0; }
 }
+@keyframes medialatch-menu-enter {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes medialatch-menu-exit {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.98); }
+}
+[data-slot="select-content"], [data-slot="tooltip-content"] {
+  transform-origin: var(--radix-select-content-transform-origin, var(--radix-tooltip-content-transform-origin, center));
+}
+[data-slot="select-content"][data-state="open"],
+[data-slot="tooltip-content"][data-state="delayed-open"],
+[data-slot="tooltip-content"][data-state="instant-open"] {
+  animation: medialatch-menu-enter var(--motion-normal) var(--motion-enter);
+}
+[data-slot="select-content"][data-state="closed"], [data-slot="tooltip-content"][data-state="closed"] {
+  animation: medialatch-menu-exit var(--motion-fast) var(--motion-exit);
+  pointer-events: none;
+}
 [data-slot="tabs-content"][data-state="active"] {
-  animation: medialatch-enter 180ms ease-out;
+  animation: medialatch-enter var(--motion-normal) var(--motion-enter);
 }
 [data-slot="collapsible-content"] {
   overflow: hidden;
 }
 [data-slot="collapsible-content"][data-state="open"] {
-  animation: medialatch-expand 180ms ease-out;
+  animation: medialatch-expand var(--motion-normal) var(--motion-enter);
 }
 [data-slot="collapsible-content"][data-state="closed"] {
-  animation: medialatch-collapse 140ms ease-in;
+  animation: medialatch-collapse var(--motion-fast) var(--motion-exit);
 }
-[data-slot="button"] {
-  transition: background-color 140ms, color 140ms, border-color 140ms, box-shadow 140ms, transform 140ms;
+[data-slot="button"], [data-slot="tabs-trigger"], [data-slot="select-trigger"], [data-slot="select-item"], [data-slot="switch"], [data-slot="switch-thumb"] {
+  transition-property: background-color, color, border-color, box-shadow, transform, translate;
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--motion-enter);
 }
 [data-slot="button"]:active:not(:disabled) {
   transform: translateY(1px);
+}
+body, [data-popup] > header, [data-slot="card"], [data-slot="saving"], [data-slot="recent"], [data-slot="embed"], [data-slot="stats"], [data-slot="debug"] {
+  transition: background-color var(--motion-normal), color var(--motion-normal), border-color var(--motion-normal);
 }
 [data-popup="full"] [data-slot="tabs-trigger"]:hover:not([data-state="active"]) {
   background: var(--accent);

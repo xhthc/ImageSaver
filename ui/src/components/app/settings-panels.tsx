@@ -293,14 +293,16 @@ export function EmbedPanel({ settings }: { settings: SettingsController }) {
               <ChevronDown className="size-4 transition-transform group-data-[state=open]:rotate-180" aria-hidden="true" />
             </Button>
           </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-3 pt-3">
-            <Hint>{t("embed.services")}</Hint>
-            {EMBED_FIELDS.map((f) => (
-              <div key={f.key} className="space-y-1">
-                <p className="text-xs font-medium">{t(f.label)}</p>
-                <Hint>{t(f.hint)}</Hint>
-              </div>
-            ))}
+          <CollapsibleContent>
+            <div className="space-y-3 pt-3">
+              <Hint>{t("embed.services")}</Hint>
+              {EMBED_FIELDS.map((f) => (
+                <div key={f.key} className="space-y-1">
+                  <p className="text-xs font-medium">{t(f.label)}</p>
+                  <Hint>{t(f.hint)}</Hint>
+                </div>
+              ))}
+            </div>
           </CollapsibleContent>
         </Collapsible>
       </CardContent>
