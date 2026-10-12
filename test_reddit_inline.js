@@ -1550,10 +1550,10 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
         return g;
       }],
       ['declared 3 but one slide has no identifiable slot', (env, id) => galleryPost(env, id, [gal3(id)[0], gal3(id)[1], `https://www.reddit.com/media?url=${encodeURIComponent(`https://i.redd.it/${id}_w.jpg`)}`], { declared: 3 })],
-      ['declared 21 with 21 rendered (over the bound)', (env, id) => galleryPost(env, id, Array.from({ length: 21 }, (_, i) => `https://i.redd.it/${id}_b${i}.jpg`), { declared: 21 })],
+      ['declared 101 with 101 rendered (over the bound)', (env, id) => galleryPost(env, id, Array.from({ length: 101 }, (_, i) => `https://i.redd.it/${id}_b${i}.jpg`), { declared: 101 })],
       ['declared 1 with one rendered slide', (env, id) => galleryPost(env, id, [gal3(id)[0]], { declared: 1 })],
       ['a pager text that is no "n/N" (Photo 3)', (env, id) => galleryPost(env, id, gal3(id), { declared: null, extra: (car) => { const pg = env.context.document.createElement('div'); pg.setAttribute('data-testid', 'carousel-pager'); pg.textContent = 'Photo 3'; car.appendChild(pg); } })],
-      ['declared 3 but the node bound cut the enumeration (85 extra images)', (env, id) => galleryPost(env, id, gal3(id), { declared: 3, extra: (car) => { for (let i = 0; i < 85; i++) { const x = env.context.document.createElement('img'); x.src = `https://styles.redditmedia.com/t5_x/styles/communityIcon_${i}.png`; R(x, 0, 0, 10, 10); car.appendChild(x); } } })]
+      ['declared 3 but the node bound cut the enumeration (405 extra images)', (env, id) => galleryPost(env, id, gal3(id), { declared: 3, extra: (car) => { for (let i = 0; i < 405; i++) { const x = env.context.document.createElement('img'); x.src = `https://styles.redditmedia.com/t5_x/styles/communityIcon_${i}.png`; R(x, 0, 0, 10, 10); car.appendChild(x); } } })]
     ];
     let n = 0;
     for (const [name, build] of cases) {
@@ -1590,14 +1590,14 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     }
   });
 
-  await itAsync('9.8c Save all up to the bound: 20 declared and rendered are saved whole', async () => {
+  await itAsync('9.8c larger gallery: 28 declared and rendered are saved whole', async () => {
     const w = await world();
-    const urls = Array.from({ length: 20 }, (_, i) => `https://i.redd.it/big_${i}.jpg`);
-    galleryPost(w.env, 'big20', urls, { declared: 20 });
+    const urls = Array.from({ length: 28 }, (_, i) => `https://i.redd.it/big_${i}.jpg`);
+    galleryPost(w.env, 'big28', urls, { declared: 28 });
     await hover(w.env);
     assert(hasAll(w));
-    const r = await saveAllClick(w, 20);
-    assert.strictEqual(r.d.length, 20);
+    const r = await saveAllClick(w, 28);
+    assert.strictEqual(r.d.length, 28);
     assert.deepStrictEqual(r.d.map((x) => x.url).sort(), urls.slice().sort());
     assert(r.ops.every((o) => o.state === 'complete'));
   });
@@ -2508,7 +2508,7 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       ['the same asset in two slides', (env, id) => { const s = gifSlides(ids); s[4] = { ...s[1] }; return nativeGallery(env, id, s); }],
       ['a second carousel in the same post', (env, id) => { const g = nativeGallery(env, id, gifSlides(ids)); const c2 = env.context.document.createElement('gallery-carousel'); R(c2, 0, 0, 10, 10); g.post.appendChild(c2); return g; }],
       ['a conflicting total from another source (total-items 6)', (env, id) => { const g = nativeGallery(env, id, gifSlides(ids)); g.carousel.setAttribute('total-items', '6'); return g; }],
-      ['21 slides (over the bound)', (env, id) => nativeGallery(env, id, gifSlides(Array.from({ length: 21 }, (_, i) => `many${i}xx`), 21))],
+      ['101 slides (over the bound)', (env, id) => nativeGallery(env, id, gifSlides(Array.from({ length: 101 }, (_, i) => `many${i}xx`), 101))],
       ['a single slide', (env, id) => nativeGallery(env, id, gifSlides(ids.slice(0, 1)))],
       ['one slide holds more nodes than the slide bound (13 extra decorative images)', (env, id) => { const g = nativeGallery(env, id, gifSlides(ids)); for (let i = 0; i < 13; i++) { const x = env.context.document.createElement('img'); x.setAttribute('alt', ''); x.src = `https://preview.redd.it/deco${i}.png`; R(x, 0, 0, 5, 5); g.slides[2].li.appendChild(x); } return g; }],
       ['a nested crosspost\'s carousel declares the total, the post\'s own has none', (env, id) => {

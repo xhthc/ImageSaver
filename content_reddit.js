@@ -1091,13 +1091,13 @@
     SETTLE_MAX: 12,
     DEPTH: 40,
     BATCH_MIN: 2,
-    BATCH_MAX: 20,
+    BATCH_MAX: 100,
     BATCH_TTL: 180000,
     MULTI_W: 104,
     MULTI_H: 60,
     COMPACT_W: 80,
     COMPACT_H: 32,
-    ENUM_NODES: 80,
+    ENUM_NODES: 400,
     EVIDENCE_CONTAINERS: 8,
     EVIDENCE_PAGERS: 4,
     TOL: 2,
@@ -1671,7 +1671,7 @@
     return totals.size === 1 ? totals.values().next().value : null;
   }
 
-  // The list is the whole gallery only when the declared total equals the enumerated distinct slots (2..20, every slot identifiable,
+  // The list is the whole gallery only when the declared total equals the enumerated distinct slots (2..100, every slot identifiable,
   // enumeration not cut). Anything else is Save this only; a count of rendered images is never evidence.
   function riGalleryProof(owner, items, truncated = false) {
     const n = items ? items.length : 0;

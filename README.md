@@ -32,12 +32,14 @@ The themes, all-time Statistics and staged download manager below describe the d
 | X / Twitter | Selected images/videos, confirmed MP4 animations, inline saving and post batches |
 | Reddit | Originals, animations, inline saving; selected finite, unencrypted H.264/AAC Reddit HLS streams assembled into MP4 |
 | RedGIFs | Selected clip and same-clip video renditions; inline saving; provider audio recovery where available |
-| Pawchive | Declared post originals from previews or individual attachments; batches capped at 20, with spaced starts and a rate-limit stop |
+| Pawchive | Declared post originals from previews or individual attachments; common 100-file batch limit, with spaced starts and a rate-limit stop |
 | Sankaku | Selected preview/sample to declared same-post original via the context menu in feeds/opened posts; image/video smoke tests reported working in Helium, native GIF test pending |
-| Pixiv | Feed previews save the post's declared original pages (up to 20); an image selected inside an opened artwork remains single |
+| Pixiv | Feed previews save the post's declared original pages (up to 100); an image selected inside an opened artwork remains single |
 | Other sites | Generic discovery plus existing rules, including selected booru paths; coverage varies |
 
 Kemono is deferred while the site is unavailable. Broader booru compatibility needs separate integration and live validation. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
+
+Existing post batches on X, Reddit, Pixiv and Pawchive share a limit of 100 owned items. Completeness and per-item ownership checks remain; a larger limit does not turn a whole feed into a download batch. Source preparation stays bounded and HTTP 429 stops further admission where supported.
 
 ## Install
 

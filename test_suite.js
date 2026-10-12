@@ -28317,10 +28317,15 @@ async function runTests() {
           }
           {
             const w = mkWorld();
-            const g = gridPost(w, '2019', Array.from({ length: 13 }, (_, i) => phs(w, `BIG_${i}`)));
+            const g = gridPost(w, '2019', Array.from({ length: 101 }, (_, i) => phs(w, `BIG_${i}`)));
             installNet(); attach(w);
             hoverTile(w, g, 0);
-            assert(w.hosts().length === 1 && w.buttonAll().getAttribute('hidden') !== null && w.labelOf(w.button()) === '', '252.B16: тринадцать медиа (больше предела 12): «Save all» не предлагается (число не усекается молча), «Save this» остаётся');
+            assert(w.hosts().length === 1 && w.buttonAll().getAttribute('hidden') !== null && w.labelOf(w.button()) === '', '252.B16: 101 медиа превышает общий предел100: Save all не предлагается, Save this остаётся');
+          }
+          {
+            const w=mkWorld(),g=gridPost(w,'2029',Array.from({length:28},(_,i)=>phs(w,`ALBUM_${i}`)));
+            installNet();attach(w);hoverTile(w,g,0);
+            assert(w.buttonAll().getAttribute('hidden')===null,'252.B16b: an owned 28-item X post offers Save all under the common bound');
           }
 
           // ---- keyboard order and untrusted input ----
@@ -29234,7 +29239,7 @@ async function runTests() {
         w.move(300, 600);
         assert(w.hosts().length === 0, '252.6j: a foreign overlay at the pointer blocks inference even when the media corners are uncovered');
         w.stackHook = () => [tile, p.quote, p.art, w.body, w.root];
-        for (let i = 0; i < 80; i++) photo(w, tile, 'OUT_OF_POINT_' + i, R(60, 1000 + i * 10, 500, 200));
+        for (let i = 0; i < 400; i++) photo(w, tile, 'OUT_OF_POINT_' + i, R(60, 1000 + i * 10, 500, 200));
         w.move(300, 600);
         assert(w.hosts().length === 0, '252.6k: a subtree over the scan bound is refused instead of silently omitting a possible second media');
       }
@@ -29906,9 +29911,11 @@ async function runTests() {
         const twenty = Array.from({ length: 20 }, (_, i) => IMG('t' + i));
         const all20 = await saveAll(gallery(twenty), okSender, { action: 'REDDIT_INLINE_SAVE_ALL', token: tok('2') }, 20);
         assert(all20.d.length === 20 && twenty.every((e) => all20.d.filter((x) => x.url === e.url).length === 1), '253.7f: a complete gallery of 20 is saved whole, every item once');
-        const twentyOne = Array.from({ length: 21 }, (_, i) => IMG('u' + i));
+        const twentyOne = Array.from({ length: 101 }, (_, i) => IMG('u' + i));
         const all21 = await saveAll(gallery(twentyOne), okSender, { action: 'REDDIT_INLINE_SAVE_ALL', token: tok('3') });
-        assert(all21.d.length === 0 && all21.fetched.length === 0 && itemAsks().length === 0 && failedCodes(all21.ops).join() === 'NO_MEDIA', '253.7g: 21 items exceed the bound: refused whole as one failed operation, no item is proven, requested or saved (no silent truncation)');
+        assert(all21.d.length === 0 && all21.fetched.length === 0 && itemAsks().length === 0 && failedCodes(all21.ops).join() === 'NO_MEDIA', '253.7g: 101 items exceed the bound: refused whole, zero item requests or saves');
+        const twentyEight=Array.from({length:28},(_,i)=>IMG('extended'+i)),extended=await saveAll(gallery(twentyEight),okSender,{action:'REDDIT_INLINE_SAVE_ALL',token:tok('0')},28);
+        assert(extended.d.length===28 && twentyEight.every(e=>extended.d.filter(x=>x.url===e.url).length===1),'253.7h: 28 proven Reddit items use the common post bound and save once each');
       }
 
       // ===== 253.8: the batch proof is bounded and comes from the document only =====
@@ -32368,11 +32375,13 @@ async function runTests() {
         dl = await click(card16);
         assert(dl.length === 0 && calls.length === 1, '265.16l: оригинал на чужом хосте — отказ всей страницы, ничего не запрашивается и не сохраняется');
 
-        // safety cap: at most 20 items are probed and saved
-        const many16 = Array.from({ length: 22 }, (_, i) => (i + 16).toString(16).padStart(2, '0').repeat(32)).map((h) => [node2(h, 'p.png'), thumb(h, 'png'), 'p.png']);
+        // Common bound: an oversized post is refused as a whole, never silently truncated.
+        const many16 = Array.from({ length: 101 }, (_, i) => (i + 16).toString(16).padStart(2, '0').repeat(32)).map((h) => [node2(h, 'p.png'), thumb(h, 'png'), 'p.png']);
         reset({ [P16]: html(page16({ files: many16 })), ...Object.fromEntries(many16.map(([o]) => [o, media('image/png')])) });
         dl = await click({ ...card16, srcUrl: many16[0][1] });
-        assert(dl.length === 20 && calls.filter((c) => c.method === 'HEAD').length === 20 && !calls.some((c) => c.url === many16[20][0] || c.url === many16[21][0]), '265.16m: не больше 20 оригиналов за пакет: ' + dl.length);
+        assert(dl.length===0 && calls.filter(c=>c.method==='HEAD').length===0,'265.16m: 101 declared Pawchive items exceed the common bound; no media is probed or saved');
+        const accepted28=many16.slice(0,28);reset({[P16]:html(page16({files:accepted28})),...Object.fromEntries(accepted28.map(([o])=>[o,media('image/png')]))});dl=await click({...card16,srcUrl:accepted28[0][1]});
+        assert(dl.length===28 && accepted28.every(([o])=>dl.filter(d=>d.url===o).length===1),'265.16m2: 28 declared Pawchive originals save as a complete batch');
 
         // pacing between items is kept
         const stamps = [];

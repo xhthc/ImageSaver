@@ -28,7 +28,9 @@ function fixture(body=items.map(original=>({urls:{original}}))){
   const f=fixture([{urls:{original:items[0]}},{urls:{original}}]);const bad=await f.s.resolvePixivPostMedia({srcUrl:src,pageUrl:feed,linkUrl:post});assert.equal(bad.error,'POST_MEDIA_MISMATCH');assert.equal(f.e.downloadedCalls.length,0);
  }
  const empty=fixture([]);assert.equal((await empty.s.resolvePixivPostMedia({srcUrl:src,pageUrl:feed,linkUrl:post})).error,'POST_MEDIA_UNAVAILABLE');
- const capped=fixture(Array.from({length:21},()=>({urls:{original:items[0]}})));assert.equal((await capped.s.resolvePixivPostMedia({srcUrl:src,pageUrl:feed,linkUrl:post})).error,'BATCH_LIMIT');
+ const pages28=Array.from({length:28},(_,i)=>({urls:{original:items[0].replace('_p0','_p'+i)}})),album=fixture(pages28);
+ assert.equal((await album.s.resolvePixivPostMedia({srcUrl:src,pageUrl:feed,linkUrl:post})).pixivPostMedia.items.length,28,'An owned 28-page post is saved as a complete batch');
+ const capped=fixture(Array.from({length:101},()=>({urls:{original:items[0]}})));assert.equal((await capped.s.resolvePixivPostMedia({srcUrl:src,pageUrl:feed,linkUrl:post})).error,'BATCH_LIMIT');
  const mismatch=fixture();assert.equal((await mismatch.s.resolvePixivPostMedia({srcUrl:src,pageUrl:feed,linkUrl:post.replace(id,'999999999')})).error,'POST_MEDIA_MISMATCH');assert.equal(mismatch.calls.length,0);
  const stale=fixture();let proofs=0;stale.s.resolveContextOwner=async()=>++proofs===1?'proven':'refused';await stale.s.onContextMenuClicked({menuItemId:'save-image-item',srcUrl:src,pageUrl:feed,linkUrl:post,mediaType:'image',frameId:0},{id:1,url:feed});assert.equal(stale.e.downloadedCalls.length,0,'Owner changing during API request prevents every batch export');
  const refused=fixture();refused.s.resolveContextOwner=async()=> 'refused';await refused.s.onContextMenuClicked({menuItemId:'save-image-item',srcUrl:src,pageUrl:feed,linkUrl:post,mediaType:'image',frameId:0},{id:1,url:feed});assert.equal(refused.calls.length,0,'Refused gesture makes zero metadata requests');

@@ -1602,7 +1602,7 @@
   // again and to build the descriptor with the same builder the context menu uses, then runs the same X pipeline. No URL from
   // this message is ever trusted, no cursor state of the context menu is reused and no contextmenu event is simulated.
   const XI_PROMOTED = ['ad', 'promoted', 'реклама'];
-  const XI = { HOVER_MS: 60, MAX_STACK: 24, MIN_W: 96, MIN_H: 64, TOKEN_TTL: 15000, CLICK_GAP: 1500, CHAIN: 14, INSET: 8, SIZE: 32, Z: 1, SETTLE_MS: 100, SETTLE_MAX: 12, DEPTH: 40, BATCH_MAX: 12, BATCH_TTL: 180000, MULTI_W: 104, MULTI_H: 60, COMPACT_W: 80, COMPACT_H: 32, ENUM_NODES: 80, TOL: 2, CORNER: 3 };
+  const XI = { HOVER_MS: 60, MAX_STACK: 24, MIN_W: 96, MIN_H: 64, TOKEN_TTL: 15000, CLICK_GAP: 1500, CHAIN: 14, INSET: 8, SIZE: 32, Z: 1, SETTLE_MS: 100, SETTLE_MAX: 12, DEPTH: 40, BATCH_MAX: 100, BATCH_TTL: 180000, MULTI_W: 104, MULTI_H: 60, COMPACT_W: 80, COMPACT_H: 32, ENUM_NODES: 400, TOL: 2, CORNER: 3 };
   const xiState = { host: null, btn: null, btnAll: null, lbl: null, lblAll: null, count: 0, compact: false, snap: null, el: null, observer: null, timer: null, settleTimer: null, settleN: 0, rearmTimer: null, rearmN: 0, sig: '', href: '', x: 0, y: 0, busyKey: '', busyAt: 0, busyTimer: null, keyEl: null, dismissed: null };
   const xiPending = new Map();
   const xiPromotedCache = new WeakMap();
@@ -1828,7 +1828,9 @@
     if (!owner || typeof owner.querySelectorAll !== 'function') return [];
     const out = [];
     const seen = new Map();
-    for (const el of Array.from(owner.querySelectorAll('video, img')).slice(0, XI.ENUM_NODES)) {
+    const nodes=Array.from(owner.querySelectorAll('video, img'));
+    if(nodes.length>XI.ENUM_NODES)return [];
+    for (const el of nodes) {
       const o = xiOwnerOf(el);
       if (!o || o.owner !== owner || typeof el.getBoundingClientRect !== 'function') continue;
       const r = el.getBoundingClientRect();

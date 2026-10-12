@@ -2630,7 +2630,7 @@ async function resolvePixivPostMedia({ srcUrl, pageUrl, linkUrl }) {
   const id=selected[1];
   const data=await fetchResolverMetadata(`https://www.pixiv.net/ajax/illust/${id}/pages`,{timeoutMs:4000,credentials:'include'});
   if(data?.error || !Array.isArray(data?.body) || !data.body.length)return {error:'POST_MEDIA_UNAVAILABLE'};
-  if(data.body.length>PAWCHIVE_POST_MEDIA_MAX)return {error:'BATCH_LIMIT'};
+  if(data.body.length>POST_MEDIA_MAX)return {error:'BATCH_LIMIT'};
   const items=[];
   for(let i=0;i<data.body.length;i++){
     const raw=data.body[i]?.urls?.original;
@@ -8193,9 +8193,9 @@ async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPost
 
 // The explicit save of a feed preview whose post declares several originals: every distinct video, image or GIF (by hash) is its own item. Items are verified
 // one after the other (the shared probe with its per-kind MIME check, then the shared verify/download/feedback path of a single save), paced, at most
-// PAWCHIVE_POST_MEDIA_MAX of them; an item that fails or is refused is reported as its own failed operation and never touches the others. A probe HTTP429
+// POST_MEDIA_MAX of them; an item that fails or is refused is reported as its own failed operation and never touches the others. A probe HTTP429
 // stops remaining batch discovery; already admitted transfers may continue. A repeated declaration is saved once (one entry per hash).
-const PAWCHIVE_POST_MEDIA_MAX = 20;
+const POST_MEDIA_MAX = 100;
 let PAWCHIVE_POST_MEDIA_PACE_MS = 1000;
 const postMediaItemInfos = new WeakSet();
 
@@ -8224,7 +8224,8 @@ async function pawchiveItemFailed(info, tab, url, failure) {
 }
 
 async function savePawchivePostMedia(batch, info, tab) {
-  const urls = batch.items.slice(0, PAWCHIVE_POST_MEDIA_MAX);
+  if(batch.items.length>POST_MEDIA_MAX){await pawchiveItemFailed(info,tab,batch.postUrl,{stage:'resolve',code:'BATCH_LIMIT'});return;}
+  const urls = batch.items;
   const pending = [];
   const tally = { items: batch.items.length, verified: 0, refused: 0, rateLimited: 0, skipped: batch.items.length - urls.length };
   let limited = false;
@@ -8249,7 +8250,6 @@ async function savePawchivePostMedia(batch, info, tab) {
     postMediaItemInfos.add(itemInfo);
     pending.push(onContextMenuClicked(itemInfo, tab).then(() => null, error => error));
   }
-  if (batch.items.length > urls.length) await pawchiveItemFailed(info, tab, batch.postUrl, { stage: 'resolve', code: 'NO_MEDIA' });
   // a partly imported post: the originals the site has not imported are one failed operation of their own
   if (typeof batch.missingCode === 'string' && /^NOT_ARCHIVED(?:_P\d{1,3}_V\d{1,3})?$/.test(batch.missingCode)) {
     tally.notArchived = batch.missingCode;
@@ -12323,7 +12323,7 @@ const xInlineInfos = new WeakSet();
 const xInlineBusy = new Set();
 const X_INLINE_TOKEN = /^[a-f0-9]{32}$/;
 // Save all: at most this many items per post and this many items in flight at once.
-const X_INLINE_BATCH_MAX = 12;
+const X_INLINE_BATCH_MAX = POST_MEDIA_MAX;
 const X_INLINE_BATCH_CONCURRENCY = 2;
 
 function sanitizeXInlineMedia(raw) {
@@ -12497,9 +12497,9 @@ let redgifsInlineActive = 0;
 const redditInlineBusy = new Set();
 const REDDIT_INLINE_TOKEN = /^[a-f0-9]{32}$/;
 const REDDIT_INLINE_OWNER_ID = /^t3_[a-z0-9]{1,12}$/;
-// Save all: a complete gallery is 2..20 items (Reddit's own gallery limit); two items are in flight at once.
+// Save all: a complete owned gallery is 2..100 items; two items are in flight at once.
 const REDDIT_INLINE_BATCH_MIN = 2;
-const REDDIT_INLINE_BATCH_MAX = 20;
+const REDDIT_INLINE_BATCH_MAX = POST_MEDIA_MAX;
 const REDDIT_INLINE_BATCH_CONCURRENCY = 2;
 
 function isRedditPageUrl(url) {
