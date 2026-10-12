@@ -12,7 +12,16 @@ runs message-provided commands.
 
 ## Install for your extension
 
-Build with the Windows .NET Framework compiler:
+Download and extract `MediaLatch-Explorer-Windows-2.0.0.31-*.zip` from the
+same GitHub release as the extension. Open PowerShell in the extracted companion
+folder, then install for your actual extension ID:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -ExtensionId YOUR_32_LETTER_ID
+```
+
+The companion ZIP includes the executable, GPL licence, sources and build
+instructions. For a source checkout, build with the Windows .NET Framework compiler:
 
 ```powershell
 ./native/windows/build.ps1 -Output ./local-notes/explorer-companion

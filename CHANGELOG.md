@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0.31 — manager-return notices and Windows Explorer
+
+- Keep page notices working after opening the download manager and returning to the source page. Opening the manager retires the current card; later results still share one activity card. Explicit close/Escape retains series suppression.
+- Replace the chosen-folder file picker with an optional Windows Explorer companion for both download managers. Link a saved destination once; verify the exact extension origin, fresh directory proof and completed relative file before opening its parent. Ordinary browser Downloads keep their existing reveal action.
+- Provide the Windows companion as a separate release ZIP with installation instructions. Missing helper/binding keeps download cards and gives localized recovery. The extension now declares `nativeMessaging`.
+
+The user confirmed the manager-return notification fix. Automated68/68 checks and isolated native manager navigation/host communication passed. Actual Explorer/external-folder proof/toolbar lifetime and broader site/audio/crash/quota checks remain pending; this is a preview. Earlier release tags and assets stay unchanged.
+
 ## 2.0.0.30 — grouped notices and file locations
 
 - Separate worker provider, pipeline, animation and offscreen lifetime modules; share checked download contracts with the UI while preserving media guards and existing save behavior.

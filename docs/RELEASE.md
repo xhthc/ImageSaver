@@ -35,7 +35,7 @@ Privacy URL: https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md
 
 Support URL: https://github.com/xhthc/MediaLatch/issues
 
-The v2.0.0.30 preview ships the worker refactoring, grouped page notices, stable toolbar badge and file-location actions described in CHANGELOG.md and the English/Russian README. Validate the exact committed runtime ZIP, including relocated content scripts and imported worker modules. Prior native user checks remain scoped; crash/restart, quota stress, broader codecs/audio and store approval remain separate gates.
+The v2.0.0.31 preview ships the manager-return notification fix and optional Windows Explorer companion described in CHANGELOG.md and the English/Russian README. Validate the exact committed runtime ZIP, including imported worker modules. Build the separate companion ZIP from that same accepted commit's Windows sources, include its licence/installer/source instructions, and record both archive hashes and the executable/source provenance. Do not bundle installed manifests or private bindings. The user confirmed the notice fix; actual Explorer/external-folder/toolbar lifetime, crash/restart, quota stress, broader codecs/audio and store approval remain separate gates.
 
 ## Permission and privacy disclosures
 
