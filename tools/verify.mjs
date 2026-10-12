@@ -37,6 +37,7 @@ if (!only) for (const file of syntaxFiles) run(`syntax-${file.replaceAll('/', '-
 const tests = [
   'test_download_manager.js',
   'test_statistics.js',
+  'test_sankaku_original.js',
   'test_suite.js', 'test_animation_duration_policy.js', 'test_context_target_avatar.js', 'test_debug_journal.js',
   'test_resolver_metadata.js', 'test_generic_context_boundary.js', 'test_offscreen_resources.js', 'test_reddit_frame_lifecycle.js',
   'test_reddit_inline_diagnostic.js', 'test_reddit_inline.js', 'test_redgifs_reinjection.js', 'test_redgifs_selected_target.js', 'test_redgifs_inline.js', 'test_reddit_hls.js',
@@ -52,7 +53,6 @@ for (const file of tests.filter(file => !only || file === only)) {
 }
 if (withUi) {
   const ui = path.join(root, 'ui');
-  run('sankaku-original', ['test_sankaku_original.js']);
   run('ui-typecheck', ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.json'], { cwd: ui });
   run('ui-render', ['test_ui_render.js'], { timeout: 120000 });
   run('ui-built', ['scripts/check-built.mjs'], { cwd: ui, timeout: 120000 });
