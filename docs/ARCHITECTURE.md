@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the current development source. Published v2.0.0.29 includes themes, all-time Statistics, staged downloads and individual page notices; the newer worker refactoring and grouped notices remain local pending manual acceptance and publication. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
+This document describes development `main`, including further worker refactoring, grouped notices, toolbar badge stabilization and file-location actions. The published v2.0.0.29 ZIP includes the earlier staged-download interface and individual page notices; its immutable assets/tag do not contain these newer changes. Windows file-location dialogs, actual toolbar-popup lifetime and broader manual regression gates remain pending. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
 
 ## Runtime layout
 

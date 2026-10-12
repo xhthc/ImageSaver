@@ -21,6 +21,8 @@ MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible 
 
 > **Current preview: [v2.0.0.29](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.29).** Violet interface, a chosen destination, Pixiv albums and notices on the original page. English/Russian settings, Statistics and smooth transitions that respect reduced motion.
 
+Development `main` also includes grouped bulk-save notices, a steadier toolbar badge, file-location buttons and further worker refactoring. These changes are not yet included in the downloadable preview. Windows file-location dialogs and broader manual regression checks remain pending.
+
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
 ---
