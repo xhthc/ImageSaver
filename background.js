@@ -167,7 +167,11 @@ async function probeCandidate(candidate) {
   return ok;
 }
 async function resolveOriginalMediaPlan(...args) {
-  const plan = await resolveOriginalMediaPlanImpl(...args);
+  let plan = await resolveOriginalMediaPlanImpl(...args);
+  const selected = parseZerochanMediaUrl(typeof args[0] === 'object' && args[0] ? args[0].srcUrl : args[0]);
+  const original = parseZerochanMediaUrl(plan?.primaryUrl);
+  // A missing site session must not turn a Zerochan preview into a successful original save.
+  if (selected?.isThumbnail && !plan?.error && (!original?.isFull || original.id !== selected.id)) plan = null;
   dbg('plan', 'select', plan && !plan.error ? 'ok' : 'failed', plan ? dbgCode(plan.error) : 'NO_PLAN', () => (plan ? {
     provider: plan.provider, tier: plan.tier, transport: plan.transport, host: plan.primaryUrl, score: plan.score, http: plan._verificationStatus,
     items: plan.pawchivePostMedia && Array.isArray(plan.pawchivePostMedia.items) ? plan.pawchivePostMedia.items.length : undefined,
@@ -3458,6 +3462,7 @@ const KNOWN_SITE_RESOLVERS = [
         const controller = new AbortController();
         timeoutId = setTimeout(() => controller.abort(), 3000);
         const res = await fetch(`https://www.zerochan.net/${postId}?json`, {
+          credentials: 'include',
           signal: controller.signal
         });
         if (res.ok) {
