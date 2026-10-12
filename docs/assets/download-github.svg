@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="152" height="44" viewBox="0 0 152 44" role="img" aria-label="Download preview on GitHub">
+  <rect x=".5" y=".5" width="151" height="43" rx="22" fill="#21162d" stroke="#a855f7"/>
+  <g fill="none" stroke="#faf5ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M24 12v14m-5-5 5 5 5-5m-12 8v3h14v-3"/>
+  </g>
+  <g fill="#faf5ff" font-family="Arial, Helvetica, sans-serif">
+    <text x="43" y="17" font-size="8" letter-spacing="1.2">DOWNLOAD ON</text>
+    <text x="43" y="33" font-size="18" font-weight="700">GitHub</text>
+  </g>
+</svg>

@@ -1,22 +1,29 @@
-<p align="center"><img src="docs/assets/banner.svg" alt="MediaLatch — save available originals" width="880"></p>
+<div align="center">
+  <img src="icons/128.png" width="120" height="120" alt="MediaLatch">
+  <h1>MediaLatch</h1>
+  <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
+  <p>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.29"><img src="https://img.shields.io/badge/preview-v2.0.0.29-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Preview v2.0.0.29"></a>
+    <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
+    <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
+    <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
+  </p>
+  <p>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.29"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Chrome Web Store distribution planned; not yet available">
+    <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
+  </p>
+  <p><a href="README.ru.md">Русский</a> · <a href="#quick-start">Quick start</a> · <a href="#install">Installation</a> · <a href="#roadmap">Roadmap</a> · <a href="docs/PRIVACY.md">Privacy</a></p>
+</div>
 
-<p align="center"><a href="README.ru.md">Русский</a> · <a href="https://github.com/xhthc/MediaLatch/releases">Download preview</a> · <a href="#quick-start">Quick start</a> · <a href="#roadmap">Roadmap</a> · <a href="docs/PRIVACY.md">Privacy</a></p>
+MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**, track parallel downloads and choose where files go — including **a folder for each x.com author**.
 
-MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**. Source discovery starts after you choose Save; the menu title stays fixed.
-
-> **Current preview: [v2.0.0.29](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.29).** Violet interface, parallel downloads, a chosen destination with x.com author folders, Pixiv albums and own page notices. Includes refreshed settings, Statistics, smooth language changes and organized source without a framework migration.
+> **Current preview: [v2.0.0.29](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.29).** Violet interface, a chosen destination, Pixiv albums and notices on the original page. English/Russian settings, Statistics and smooth transitions that respect reduced motion.
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
-
-## Quick start
-
-1. Install the runtime ZIP using the instructions below.
-2. Right-click an image, video or supported preview and choose **MediaLatch: Save media**. On X, try **Shift + right-click** if the site intercepts the menu.
-3. Track downloads in the popup. **Open download manager** leads to details, cancellation and retrying export from prepared bytes. MediaLatch notices appear on the original page.
-4. Open **Saving**, choose a destination and organization, then press **Save settings**. Files default to `Downloads/SavedImages/`.
-
-An automatic first-run introduction is planned; this quick guide is available now.
+---
 
 ## Interface
 
@@ -28,6 +35,19 @@ An automatic first-run introduction is planned; this quick guide is available no
 </table>
 
 Current interface with demonstration settings. Violet by default, English/Russian localization and short transitions that respect reduced motion.
+
+---
+
+## Quick start
+
+1. Install the runtime ZIP using the instructions below.
+2. Right-click an image, video or supported preview and choose **MediaLatch: Save media**. On X, try **Shift + right-click** if the site intercepts the menu.
+3. Track downloads in the popup. **Open download manager** leads to details, cancellation and retrying export from prepared bytes. MediaLatch notices appear on the original page.
+4. Open **Saving**, choose a destination and organization, then press **Save settings**. Files default to `Downloads/SavedImages/`.
+
+An automatic first-run introduction is planned; this quick guide is available now.
+
+---
 
 ## Install
 
@@ -44,6 +64,8 @@ git clone https://github.com/xhthc/MediaLatch.git
 To update an unpacked installation, replace the files in its existing folder, then click **Reload** on the browser's extensions page and refresh site tabs. Keep the same folder to retain the extension's identity and settings.
 
 The committed `popup/` pages are ready to use. Node/npm are needed only for development. Unpacked installs update manually; store updates will be a separate distribution path.
+
+---
 
 ## Features
 
@@ -71,6 +93,8 @@ The packaged preview includes these features. Ordinary downloads, themes, Statis
 - Supported post-link copying on X, Instagram, TikTok and YouTube Shorts, with optional preview-link hosts.
 - GitHub release checks manually or on opening Updates, at most daily. Downloaded extension code is not installed automatically.
 
+---
+
 ## Site coverage
 
 | Source | Current behavior |
@@ -86,6 +110,8 @@ The packaged preview includes these features. Ordinary downloads, themes, Statis
 Kemono is deferred while the site is unavailable. Broader booru compatibility needs separate integration and live validation. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
 
 Existing post batches on X, Reddit, Pixiv and Pawchive share a limit of 100 owned items. Completeness and per-item ownership checks remain; a larger limit does not turn a whole feed into a download batch. Source preparation stays bounded and HTTP 429 stops further admission where supported.
+
+---
 
 ## Use and settings
 
@@ -105,6 +131,8 @@ Directory selection requires a browser supporting the File System Access API. Se
 
 Failed exports retain prepared bytes for explicit retry; removing a record deletes its temporary file, not your saved download. Interrupted remote acquisition restarts from the exact source on explicit retry; partial transfer resume is not promised. Recovery reconciles owned browser exports instead of launching duplicate saves. A lost selection or expired source can require a fresh click on the site. Details and reports remain on the full Downloads page.
 
+---
+
 ## Limits and privacy
 
 DRM, access bypass, arbitrary blob/MSE players and general HLS/DASH downloads are not supported. Separate audio tracks are assembled only within the supported Reddit HLS path. Missing files, rate limits and permission failures cannot be guaranteed away.
@@ -112,6 +140,8 @@ DRM, access bypass, arbitrary blob/MSE players and general HLS/DASH downloads ar
 GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output, 15 MiB encoded output and 45 seconds of processing. Buffered Pixiv images have a 50 MiB ceiling. These are limits of specific processing paths, not every direct browser download.
 
 There is no telemetry or extension backend. Statistics and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
+
+---
 
 ## Roadmap
 
@@ -133,11 +163,15 @@ Statuses distinguish implemented features from future work. They describe direct
 
 The Telegram/VK roadmap concerns **publishing**.
 
+---
+
 ## Security before store submission
 
 Before submission: packaged-code/CSP checks, sender/action/frame validation, URL/redirect and private-network boundaries, minimum permissions, dependency/release integrity, malformed-media and resource-exhaustion checks. Broad HTTP/HTTPS access needs particular review. This is **a readiness plan, not a completed security audit or store approval**. Executable code is bundled locally; release checks read metadata and never install code.
 
 See [Security](docs/SECURITY.md), [Privacy](docs/PRIVACY.md) and [Release preparation](docs/RELEASE.md).
+
+---
 
 ## Development
 
@@ -159,9 +193,13 @@ Edit `ui/`, then rebuild `popup/`. Verification covers offline regressions, UI t
 
 [Tests](tests/test_suite.js): the main offline suite can also run directly with `node tests/test_suite.js`.
 
+---
+
 ## Credits
 
 README organization and compact settings composition were inspired by [Libre Manga Translator](https://github.com/mrdhnto/libre-manga-translator). MediaLatch keeps its own implementation, assets and Violet theme.
+
+---
 
 ## License
 
