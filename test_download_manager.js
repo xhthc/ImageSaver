@@ -281,6 +281,16 @@ function env(stored={jobs:[],paused:false}) {
     assert(capturedAdapter && typeof capturedAdapter.newAttempt === 'function');
     assert(capturedAdapter && typeof capturedAdapter.recoverAttempt === 'function');
 
+    // The media-plan acknowledgment belongs to this export, never another queued transfer.
+    let drainCalls=0;
+    vm.runInContext('downloadManager.drain=async()=>{globalThis.fixtureDrain();}',sandbox);
+    sandbox.fixtureDrain=()=>{drainCalls++;};
+    const actualExecute=sandbox.executeMediaPlanImpl;
+    sandbox.executeMediaPlanImpl=async()=>({success:true,downloadId:123});
+    assert.equal((await sandbox.executeMediaPlan({})).downloadId,123);
+    assert.equal(drainCalls,0,'unrelated queue drain is not awaited');
+    sandbox.executeMediaPlanImpl=actualExecute;
+
     const origBegin = sandbox.feedbackTracker.begin.bind(sandbox.feedbackTracker);
     let beginCalls = [];
     sandbox.feedbackTracker.begin = async opts => { beginCalls.push(opts); return origBegin(opts); };

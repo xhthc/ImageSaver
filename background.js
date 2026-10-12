@@ -210,7 +210,6 @@ async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
 async function executeMediaPlan(plan, settings = {}, rawImageUrl = '', options = {}) {
   dbg('plan', 'execute', 'start', undefined, () => ({ provider: plan && plan.provider, tier: plan && plan.tier, transport: plan && plan.transport, host: plan && plan.primaryUrl, count: plan && Array.isArray(plan.variants) ? plan.variants.length : undefined }), { op: options && options.feedbackOp });
   const r = await executeMediaPlanImpl(plan, settings, rawImageUrl, options);
-  if(downloadManager && r?.downloadId)await downloadManager.drain();
   dbg('plan', 'execute', r && r.success ? 'ok' : (r && r.cancelled ? 'skipped' : 'failed'), r && r.success ? undefined : (r && r.cancelled ? 'CANCELLED' : dbgCode(r && r.error)), () => (r ? {
     http: r.status, mime: r.normalizedMime, bytes: r.size, downloadId: r.downloadId, fallback: r.isFallback === true, transport: r.transport
   } : null), { op: options && options.feedbackOp });
