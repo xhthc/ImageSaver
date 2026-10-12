@@ -11,11 +11,6 @@ if (reply.success) {
 }
 const pause: DownloadRequest = {action:'DOWNLOADS_COMMAND', command:'pause'};
 void pause;
-const location: DownloadRequest = {action:'DOWNLOADS_LOCATION',id:'job-owned'};
-void location;
-void controller.reveal('job-owned');
-// @ts-expect-error Location requests select managed jobs, never arbitrary native IDs.
-void controller.reveal(42);
 // @ts-expect-error Unknown worker commands must not enter the typed UI controller.
 void controller.command('restartEverything');
 // @ts-expect-error Job identifiers are strings, not native browser download IDs.

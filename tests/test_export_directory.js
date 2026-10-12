@@ -16,13 +16,6 @@ const until=async fn=>{for(let n=0;n<100;n++){if(await fn())return;await new Pro
 (async()=>{
  const f=fixture(),j=job(),id=await f.exporter.write(j,'blob:prepared');assert.equal(id,'file:job-one');
  const parent=f.dir.entries.get('SavedImages').entries.get('author'),file=await parent.entries.get('photo.png').getFile();assert.deepEqual(Buffer.from(await file.arrayBuffer()),Buffer.from(await f.source.arrayBuffer()));assert.equal((await f.exporter.search(id)).state,'complete');
- assert.equal(await f.exporter.location(id),parent,'Location resolves the actual existing nested parent');
- await assert.rejects(f.exporter.location('file:job-foreign'),/INVALID_STATE/);
- f.permission='denied';await assert.rejects(f.exporter.location(id),/DIRECTORY_ACCESS_REQUIRED/);f.permission='granted';
- const oldReceipt=structuredClone(f.receipts.get(id));
- for(const filename of ['../escape.png','a//file.png','C:\\outside.png']){f.receipts.set(id,{...oldReceipt,filename});await assert.rejects(f.exporter.location(id),/INVALID_FILENAME/);}
- f.receipts.set(id,{...oldReceipt,state:'writing'});await assert.rejects(f.exporter.location(id),/INVALID_STATE/);
- f.receipts.set(id,oldReceipt);const savedHandle=parent.entries.get('photo.png');parent.entries.delete('photo.png');await assert.rejects(f.exporter.location(id));parent.entries.set('photo.png',savedHandle);
  await f.exporter.write(job('two'),'blob:second');assert(parent.entries.has('photo (1).png'));assert.equal(parent.entries.get('photo.png').bytes.length,140001,'Existing file remains intact');
  const unicode=fixture(),longName='a'+'😀'.repeat(117)+'.png';await unicode.exporter.write({...job('unicode'),filename:longName},'blob:u');await unicode.exporter.write({...job('unicode2'),filename:longName},'blob:u2');const renamed=unicode.receipts.get('file:job-unicode2').filename;assert(renamed.length<=240 && !/[\uD800-\uDBFF] \(1\)/.test(renamed),'Collision truncation keeps surrogate pairs intact');
  const reopened=createExporter(f.deps);assert.equal((await reopened.search(id)).state,'complete','Receipt survives exporter restart');

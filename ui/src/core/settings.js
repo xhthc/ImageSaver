@@ -50,7 +50,7 @@ export function createSettings(deps) {
     loaded: false,
     ...DEFAULTS,
     saving: false,
-    directoryName:'',picking:false,linking:false,directoryError:'',
+    directoryName:'',picking:false,directoryError:'',
     status: { message: '', type: '' }, // message: catalogue key or { key, vars }; type: 'success' | 'error' | ''
     notify: { checked: true, error: '' }, // error: catalogue key
   });
@@ -188,18 +188,5 @@ export function createSettings(deps) {
   }
   function resetDirectory(){pendingHandle=null;store.setState({saveDirectoryId:'',directoryName:'',directoryError:''});}
 
-  async function linkExplorer(){
-    const s=store.getState();if(!s.loaded || s.saving || s.picking || s.linking)return;
-    store.setState({linking:true,directoryError:''});
-    try{
-      const saved=await chromeApi.storage.local.get({saveDirectoryId:''});
-      if(pendingHandle || saved.saveDirectoryId!==s.saveDirectoryId || !s.saveDirectoryId)throw Error('SAVE_FIRST');
-      const r=await chromeApi.runtime.sendMessage({action:'DIRECTORY_NATIVE_LINK',directoryId:s.saveDirectoryId});
-      if(!r?.success && r?.error!=='NATIVE_CANCELLED')throw Error(r?.error || 'FAILED');
-      if(r?.success && !disposed && store.getState().saveDirectoryId===s.saveDirectoryId)showMessage('saving.explorerLinked');
-    }catch(e){if(!disposed)store.setState({directoryError:e.message==='SAVE_FIRST'?'saving.explorerSaveFirst':e.message==='NATIVE_HOST_REQUIRED'?'downloads.nativeRequired':'saving.explorerLinkFailed'});}
-    finally{if(!disposed)store.setState({linking:false});}
-  }
-
-  return { store, load, setField, save, preview, setNotifySuccess, describeRootError, pickDirectory, resetDirectory, linkExplorer, dispose };
+  return { store, load, setField, save, preview, setNotifySuccess, describeRootError, pickDirectory, resetDirectory, dispose };
 }

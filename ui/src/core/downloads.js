@@ -29,7 +29,7 @@ export function createDownloads({ chrome }) {
         }
         catch (_) {
             if (!disposed)
-                store.setState({ status: 'error', error: store.getState().error || 'downloads.unavailable' });
+                store.setState({ status: 'error', error: store.getState().error === 'downloads.commandFailed' ? 'downloads.commandFailed' : 'downloads.unavailable' });
         }
         finally {
             loading = false;
@@ -81,16 +81,5 @@ export function createDownloads({ chrome }) {
                 store.setState({ busy: false });
         }
     }
-    /** @param {string} id */
-    async function reveal(id) {
-        if(disposed || store.getState().busy)return;
-        store.setState({busy:true,error:''});
-        try {
-            const r=await chrome.runtime.sendMessage({action:'DOWNLOADS_LOCATION',id});
-            if(!r?.success)throw Error(r?.error || 'LOCATION_FAILED');
-        } catch(error) {
-            if(!disposed)store.setState({error:error instanceof Error && error.message==='NATIVE_HOST_REQUIRED'?'downloads.nativeRequired':error instanceof Error && error.message==='DIRECTORY_LINK_REQUIRED'?'downloads.nativeLinkRequired':'downloads.locationFailed'});
-        } finally { if(!disposed)store.setState({busy:false}); }
-    }
-    return { store, load, command, reveal, dispose() { disposed = true; chrome.runtime.onMessage?.removeListener(changed); } };
+    return { store, load, command, dispose() { disposed = true; chrome.runtime.onMessage?.removeListener(changed); } };
 }

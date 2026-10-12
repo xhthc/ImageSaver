@@ -178,7 +178,7 @@ function makeChrome(state) {
     const quickHtml = read('popup/quick.html');
     const fullHtml = read('popup/popup.html');
     assert(manifest.action.default_popup === 'popup/quick.html' && fs.existsSync(path.resolve(ROOT, 'popup/quick.html')) && fs.existsSync(path.resolve(ROOT, 'popup/popup.html')), '21a: the toolbar popup is the compact quick.html; popup.html remains the full page');
-    assert(JSON.stringify([...manifest.permissions].sort()) === JSON.stringify(['contextMenus', 'declarativeNetRequest', 'downloads', 'nativeMessaging', 'offscreen', 'scripting', 'storage']) && JSON.stringify(manifest.host_permissions) === JSON.stringify(['http://*/*', 'https://*/*']), '21b: scoped Explorer companion requires nativeMessaging; web hosts and remaining permissions unchanged');
+    assert(JSON.stringify([...manifest.permissions].sort()) === JSON.stringify(['contextMenus', 'declarativeNetRequest', 'downloads', 'offscreen', 'scripting', 'storage']) && JSON.stringify(manifest.host_permissions) === JSON.stringify(['http://*/*', 'https://*/*']), '21b: desktop notification permission removed; other permissions unchanged');
     assert(!manifest.content_security_policy && manifest.content_scripts.some((c) => (c.js || []).includes('content/content_youtube.js')) && !manifest.content_scripts.some((c) => (c.js || []).some((f) => /popup|feedback|history|app\.js|quick|assets/.test(f))), '21c: the default MV3 CSP is kept (not weakened); no UI code is injected into pages');
     assert(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(quickHtml + fullHtml) && !/\son\w+=/.test(quickHtml + fullHtml), '21d: no inline script or inline handler on either page (MV3 CSP)');
     assert(!/(?:src|href)="(?:https?:)?\/\//.test(quickHtml + fullHtml), '21e: no remote asset, script or stylesheet on either page');
@@ -388,13 +388,8 @@ function makeChrome(state) {
     let cancelPick=false;
     const dirDeps={directory:{get:async id=>handles.get(id),set:async(id,h)=>handles.set(id,h)},chooseDirectory:async()=>{if(cancelPick)throw Object.assign(Error(),{name:'AbortError'});return handle;},id:()=> 'chosen'};
     const picked=await mountSettings({},dirDeps);assert(await picked.settings.pickDirectory() && picked.calls.localSets.length===0 && handles.size===0,'26folder1: picker changes only draft, not persisted destination');
-    const links=[];let linkReply={success:true};picked.chrome.runtime.sendMessage=async m=>{links.push(m);return linkReply;};
-    await picked.settings.linkExplorer();assert(!links.length && picked.st().directoryError==='saving.explorerSaveFirst','26explorer1: an unsaved destination cannot be bound');
     picked.settings.setField('xAuthorFolders',true);assert(picked.settings.preview('en').text==='My media/SavedImages/username/photo.jpg','26folder2: custom base and author preview compose');
     assert(await picked.settings.save() && picked.state.local.saveDirectoryId==='directory-chosen' && handles.get('directory-chosen')===handle && picked.state.local.xAuthorFolders===true,'26folder3: explicit Save stores handle, folder and author preference');
-    await picked.settings.linkExplorer();assert(links.length===1 && links[0].action==='DIRECTORY_NATIVE_LINK' && links[0].directoryId==='directory-chosen' && picked.st().status.message==='saving.explorerLinked' && !picked.st().linking,'26explorer2: saved destination binds through the worker and releases its button');
-    linkReply={success:false,error:'NATIVE_HOST_REQUIRED'};await picked.settings.linkExplorer();assert(picked.st().directoryError==='downloads.nativeRequired','26explorer3: missing helper shows installation recovery');
-    linkReply={success:false,error:'NATIVE_CANCELLED'};await picked.settings.linkExplorer();assert(!picked.st().directoryError && !picked.st().linking,'26explorer4: native link cancellation is silent');
     const reopen=await mountSettings(picked.state.local,dirDeps);assert(reopen.st().directoryName==='My media' && reopen.st().xAuthorFolders===true,'26folder4: reopen restores destination and author preference');
     cancelPick=true;assert(!await reopen.settings.pickDirectory() && reopen.st().saveDirectoryId==='directory-chosen' && !reopen.st().directoryError,'26folder5: cancellation preserves selected destination');
     reopen.settings.resetDirectory();assert(reopen.calls.localSets.length===0 && reopen.st().saveDirectoryId==='' && reopen.state.local.saveDirectoryId==='directory-chosen','26folder6: reset is a draft until Save');
@@ -487,13 +482,6 @@ function makeChrome(state) {
     const listeners=[];let replies={success:true,jobs:[{id:'job-test',filename:'file.png',state:'receiving',received:5,total:null}],paused:false},fail=false,calls=[];
     const chrome={runtime:{onMessage:{addListener:cb=>listeners.push(cb),removeListener:cb=>listeners.splice(listeners.indexOf(cb),1)},sendMessage:async m=>{calls.push(m);if(fail)throw Error('FAILED');return replies;}}};
     const c=createDownloads({chrome});await c.load();
-    const locate=createDownloads({chrome});
-    await locate.load();await locate.reveal('job-test');assert(calls.at(-1).action==='DOWNLOADS_LOCATION' && calls.at(-1).id==='job-test','location-ui-native: worker owns reveal of the selected job');
-    fail=true;await locate.reveal('job-test');assert(locate.store.getState().error==='downloads.locationFailed' && !locate.store.getState().busy && locate.store.getState().jobs.length===1,'location-ui-failed: refusal retains cards and releases controls');
-    fail=false;const goodReply=replies;replies={success:false,error:'NATIVE_HOST_REQUIRED'};
-    await locate.reveal('job-test');assert(locate.store.getState().error==='downloads.nativeRequired','location-ui-helper: missing native helper gives installation recovery');
-    replies={success:false,error:'DIRECTORY_LINK_REQUIRED'};await locate.reveal('job-test');assert(locate.store.getState().error==='downloads.nativeLinkRequired','location-ui-link: unbound destination gives Saving recovery');
-    replies=goodReply;await locate.reveal('job-test');assert(!locate.store.getState().error && !locate.store.getState().busy,'location-ui-recovery: a later successful reveal clears the error');locate.dispose();
     assert(c.store.getState().jobs.length===1 && c.store.getState().jobs[0].total===null,'manager-ui-1: operational jobs visible without a statistics preference');
     replies={success:true,jobs:[],paused:true};listeners[0]({action:'DOWNLOADS_CHANGED'});await settle();
     assert(c.store.getState().paused && !c.store.getState().jobs.length,'manager-ui-2: worker events refresh queue');

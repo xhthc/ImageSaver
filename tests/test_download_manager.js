@@ -1,6 +1,6 @@
 // Queue and production disk-transfer regressions; native byte/export evidence is recorded separately.
 const assert=require('node:assert/strict');
-require('../lib/download_manager.js');require('../lib/staging.js');require('../lib/feedback.js');require('../lib/feedback_tracker.js');require('../lib/statistics.js');require('../lib/folder_path.js');require('../lib/export_directory.js');
+require('../lib/download_manager.js');require('../lib/staging.js');require('../lib/feedback.js');require('../lib/feedback_tracker.js');require('../lib/statistics.js');
 const {sniffMediaMagicBytes,isMalformedMediaContainer}=require('../offscreen.js');
 const {createManager}=MediaLatchDownloads,{createStaging}=MediaLatchStaging;
 const wait=()=>new Promise(r=>setTimeout(r,5));
@@ -50,8 +50,6 @@ function env(stored={jobs:[],paused:false}) {
   assert.deepEqual(m.output(101),{mime:'image/png',evidence:'verified_mime',type:'pic',sizeBytes:png.length,sizeKind:'measured'});
   assert(!JSON.stringify(await m.list()).includes('signature=') && !JSON.stringify(await m.list()).includes('folder/'));
   e.native.get(101).state='complete';await b;assert.equal(e.stages,2);e.native.get(102).state='complete';await m.drain();assert((await m.list()).jobs.every(x=>x.state==='complete'));
-  assert.equal(await m.location('job-1'),101);assert.equal((await m.list()).jobs.find(j=>j.id==='job-1').location,'browser');
-  await assert.rejects(m.location('foreign'),/INVALID_STATE/);
   // A stalled origin cannot monopolize all three slots; only two jobs from one origin run.
   {
   const parallel=env({jobs:[],paused:true}),holds=new Map(),started=[];
@@ -310,12 +308,11 @@ function env(stored={jobs:[],paused:false}) {
     };
     const sandbox = {
       chrome, indexedDB: {}, crypto: { randomUUID: () => 'uuid' }, console: { log() {}, warn() {}, error() {} },
-      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_format|download_paths|site_resolvers|toolbar_badge|native_explorer|worker_offscreen|worker_providers|worker_pipeline|worker_animation)\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
+      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_format|download_paths|site_resolvers|toolbar_badge|worker_offscreen|worker_providers|worker_pipeline|worker_animation)\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
       ImageSaverFeedback: globalThis.ImageSaverFeedback,
       ImageSaverFeedbackTracker: globalThis.ImageSaverFeedbackTracker,
-      MediaLatchDirectory: globalThis.MediaLatchDirectory,
       MediaLatchDownloads: {
-        createManager: adapter => { capturedAdapter = adapter; return { ready: Promise.resolve(), activityCount:()=>0, location:async id=>{if(id==='job-browser')return 401;if(id==='job-directory')return 'file:job-directory';throw Error('INVALID_STATE');}, drain: async () => {}, command:async(...args)=>commands.push(args), list: async () => ({ jobs: [], paused: false }) }; },
+        createManager: adapter => { capturedAdapter = adapter; return { ready: Promise.resolve(), drain: async () => {}, command:async(...args)=>commands.push(args), list: async () => ({ jobs: [], paused: false }) }; },
         database: () => ({ get: async () => ({ jobs: [], paused: false }), set: async () => {} })
       }
     };
@@ -362,25 +359,10 @@ function env(stored={jobs:[],paused:false}) {
     assert.equal(beginCalls.at(-1).expectedType, 'gif');
 
     // Feedback-only removal invokes the real authenticated worker handler and persisted tracker.
-    const handler=listeners.find(fn=>fn.toString().includes("m.action==='DOWNLOADS_LOCATION'"));
+    const handler=listeners.find(fn=>fn.toString().includes("m?.action!=='DOWNLOADS_LIST'"));
     const sender={id:'testid',url:chrome.runtime.getURL('popup/popup.html')};
+    for(const action of ['DOWNLOADS_LOCATION','DIRECTORY_NATIVE_LINK'])assert.equal(handler({action,id:'saved',directoryId:'directory-test'},sender,()=>{throw Error('Removed action must not run');}),false,'Retired location/link messages are no longer admitted');
     const command=(id,from=sender)=>new Promise(resolve=>handler({action:'DOWNLOADS_COMMAND',command:'remove',id},from,resolve));
-    const reveal=(id,from=sender)=>new Promise(resolve=>handler({action:'DOWNLOADS_LOCATION',id},from,resolve));
-    const link=from=>new Promise(resolve=>handler({action:'DIRECTORY_NATIVE_LINK',directoryId:'directory-test'},from,resolve));
-    sandbox.fixtureLinks=[];vm.runInContext('nativeExplorer.link=async id=>fixtureLinks.push(id)',sandbox);
-    assert.equal((await link(sender)).success,true);assert.equal(sandbox.fixtureLinks[0],'directory-test');
-    assert.equal((await link({...sender,url:chrome.runtime.getURL('popup/quick.html')})).error,'FORBIDDEN');
-    assert.equal((await link({...sender,url:'https://media.test/'})).error,'FORBIDDEN');assert.equal(sandbox.fixtureLinks.length,1);
-    sandbox.fixtureReveals=[];vm.runInContext('nativeExplorer.reveal=async id=>fixtureReveals.push(id)',sandbox);
-    const shown=[];let item={id:401,byExtensionId:'testid',state:'complete',exists:true};
-    chrome.downloads.show=id=>shown.push(id);chrome.downloads.search=async()=>item?[item]:[];
-    assert.equal((await reveal('job-browser')).success,true);assert.deepEqual(shown,[401]);
-    assert.equal((await reveal('job-directory')).success,true);assert.equal(sandbox.fixtureReveals[0],'file:job-directory');assert.deepEqual(shown,[401]);
-    assert.equal((await reveal('job-browser',{id:'testid',url:'https://media.test/'})).error,'FORBIDDEN');
-    assert.equal((await reveal('job-browser',{...sender,id:'foreign'})).error,'FORBIDDEN');
-    assert.equal((await reveal('not-owned')).success,false);
-    for(const patch of [{byExtensionId:'other'},{state:'in_progress'},{exists:false}]){const previous=item;item={...item,...patch};assert.equal((await reveal('job-browser')).success,false);item=previous;}
-    item=null;assert.equal((await reveal('job-browser')).success,false);assert.deepEqual(shown,[401]);
     const failed=await sandbox.feedbackTracker.begin({sourceUrl:'https://media.test/failure.png'});
     await sandbox.feedbackTracker.fail(failed,{code:'NO_MEDIA'});await sandbox.feedbackTracker.flush();
     assert((await sandbox.downloadManagerSnapshot()).jobs.some(j=>j.id===failed && j.managed===false));

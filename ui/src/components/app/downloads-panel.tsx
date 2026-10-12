@@ -1,5 +1,5 @@
 import {useEffect,useState} from "react"
-import {Download, Pause, Play, RotateCcw, X, Trash2, FolderOpen} from "lucide-react"
+import {Download, Pause, Play, RotateCcw, X, Trash2} from "lucide-react"
 import {Button} from "@/components/ui/button"
 import {Alert, AlertDescription} from "@/components/ui/alert"
 import {createDownloads} from "@/core/downloads.js"
@@ -36,7 +36,6 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
       const seconds=j.total && j.speed>0?Math.ceil((j.total-j.received)/j.speed):null
       const record=records.find(r=>r.id===(j.op || j.id))
       const actions=<>
-        {j.state==='complete' && j.location?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t('downloads.showFolder')} title={t('downloads.showFolder')} onClick={()=>void controller.reveal(j.id)}><FolderOpen/></Button>:null}
         {active && j.managed!==false?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t('downloads.cancel')} onClick={()=>void controller.command('cancel',j.id)}><X/></Button>:null}
         {j.state==='failed' && j.managed!==false && j.error!=='EXPORT_UNCERTAIN'?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t(j.ready?'downloads.exportAgain':'downloads.retry')} onClick={()=>void controller.command('retry',j.id)}><RotateCcw/></Button>:null}
         {!active?<Button variant="ghost" size="icon" disabled={s.busy} aria-label={t(j.managed===false?'downloads.removeRecord':'downloads.remove')} onClick={()=>void controller.command('remove',j.id)}><Trash2/></Button>:null}

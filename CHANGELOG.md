@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0.32 — remove Explorer integration
+
+- Remove the Windows Explorer companion, native messaging permission and destination-link setup. Saving to custom folders and per-author subfolders remains available without companion software.
+- Remove file-location folder icons from both download managers and retire their worker/controller actions. Existing downloads, saved files, preferences and manager-return notices are retained.
+- Withdraw the v2.0.0.31 companion release assets. Earlier runtime archives remain historical builds; use v2.0.0.32 for the rollback.
+
+This is a preview. Automated checks do not establish broad live-site or installed-popup acceptance.
+
 ## 2.0.0.31 — manager-return notices and Windows Explorer
 
 - Keep page notices working after opening the download manager and returning to the source page. Opening the manager retires the current card; later results still share one activity card. Explicit close/Escape retains series suppression.

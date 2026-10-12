@@ -3,14 +3,14 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.31"><img src="https://img.shields.io/badge/preview-v2.0.0.31-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Preview v2.0.0.31"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.32"><img src="https://img.shields.io/badge/preview-v2.0.0.32-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Preview v2.0.0.32"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.31"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.32"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
     <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Chrome Web Store distribution planned; not yet available">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
@@ -19,9 +19,9 @@
 
 MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**, track parallel downloads and choose where files go — including **a folder for each x.com author**.
 
-> **Current preview: [v2.0.0.31](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.31).** Notices keep working after returning from the manager. Chosen-folder location buttons can open Windows Explorer through the optional companion. Violet interface, parallel saves and English/Russian settings.
+> **Current preview: [v2.0.0.32](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.32).** Notices keep working after returning from the manager. Explorer integration and file-location buttons have been removed; saving requires no companion software. Violet interface, parallel saves and English/Russian settings.
 
-The runtime ZIP includes the current worker refactoring and interface changes. Actual Windows Explorer launch/external-folder proof, toolbar-popup lifetime and broader manual regression checks remain pending.
+The runtime ZIP includes the current worker refactoring and interface changes. Toolbar-popup lifetime and broader manual regression checks remain pending.
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
@@ -53,11 +53,10 @@ An automatic first-run introduction is planned; this quick guide is available no
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.31-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.32-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
-For the **folder button on chosen-directory files in Windows**, also extract `MediaLatch-Explorer-Windows-2.0.0.31-*.zip` and follow the [companion installation guide](native/windows/README.md). Install for your actual extension ID, then use **Link folder to Explorer** in Saving. The companion is optional for saving files; ordinary browser Downloads reveal without it.
 
 Alternatively, clone and load the repository root:
 
@@ -73,7 +72,7 @@ The committed `popup/` pages are ready to use. Node/npm are needed only for deve
 
 ## Features
 
-The packaged preview includes these features. Ordinary downloads, themes, Statistics, chosen-folder routing and Pixiv batches were checked in Helium; the user confirmed notices after manager return. Isolated Windows host communication passed; actual Explorer launch/external-folder proof/toolbar lifetime, native crash/restart, quota stress and broader codec/audio checks remain pending.
+The packaged preview includes these features. Ordinary downloads, themes, Statistics, chosen-folder routing and Pixiv batches were checked in Helium; the user confirmed notices after manager return. Toolbar lifetime, native crash/restart, quota stress and broader codec/audio checks remain pending.
 
 ### Save the selected media
 
@@ -87,7 +86,6 @@ The packaged preview includes these features. Ordinary downloads, themes, Statis
 
 - Choose a writable base folder, an optional subfolder and site/type organization. X can also use folders named after the selected post author. Save results and redacted error reports stay in the manager.
 - Download manager with received/total bytes, speed and approximate remaining time when measurable. Complete files are staged locally before browser export; failed export can retry from retained bytes without another source download.
-- Folder icons on completed files: browser downloads reveal the file in the OS manager; chosen-folder saves open Windows Explorer through the optional installed companion and linked destination. Missing helper, binding or file retains the card with recovery instructions.
 
 ### Settings and diagnostics
 
