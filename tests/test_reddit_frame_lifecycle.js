@@ -651,7 +651,8 @@ console.log('=== Running Reddit Frame & Pinned-Document Lifecycle Suite ===\n');
     assert.strictEqual(h.fetches[0].url, 'https://media.redgifs.com/EvilUnequaledBufflehead.mp4');
     assert(h.injections.some((inj) => inj.target?.documentIds?.includes('doc-393-fresh')),
       'Attempt 2 must be pinned strictly to fresh documentId doc-393-fresh');
-    assert(h.badges.some((b) => b.text === 'OK'), 'Attempt 2 must flash OK badge on completion');
+    assert(h.badges.at(-1).text === 'ERR' && !h.badges.some(b => b.text === 'OK'),
+      'A successful immediate retry must preserve the prior error display interval');
   });
 
   // ---- BUGFIX-MULTISITE-01: the first inline click on a lazily (re)loaded embed (r/rule34/s/PJkWkA6Phd, serviceworker-02.md lines 1460-1483) ----

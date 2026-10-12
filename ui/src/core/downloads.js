@@ -1,7 +1,8 @@
 // @ts-check
 import { createStore } from './store.js';
-/** @param {{chrome: import('../../../lib/download_contracts').DownloadsChrome}} dependencies */
-export function createDownloads({ chrome }) {
+import { openStoredLocation } from './fileLocation.js';
+/** @param {{chrome: import('../../../lib/download_contracts').DownloadsChrome, openLocation?: (exportId:string)=>Promise<void>}} dependencies */
+export function createDownloads({ chrome, openLocation=openStoredLocation }) {
     const store = createStore(/** @type {import('../../../lib/download_contracts').DownloadsViewState} */ ({ jobs: [], paused: false, status: 'loading', error: '', busy: false, removingIds: [], dismissedIds: [] }));
     let disposed = false, loading = false, again = false;
     /** @type {import('../../../lib/download_contracts').DownloadJob[]} */
@@ -29,7 +30,7 @@ export function createDownloads({ chrome }) {
         }
         catch (_) {
             if (!disposed)
-                store.setState({ status: 'error', error: store.getState().error === 'downloads.commandFailed' ? 'downloads.commandFailed' : 'downloads.unavailable' });
+                store.setState({ status: 'error', error: store.getState().error || 'downloads.unavailable' });
         }
         finally {
             loading = false;
@@ -81,5 +82,18 @@ export function createDownloads({ chrome }) {
                 store.setState({ busy: false });
         }
     }
-    return { store, load, command, dispose() { disposed = true; chrome.runtime.onMessage?.removeListener(changed); } };
+    /** @param {string} id */
+    async function reveal(id) {
+        if(disposed || store.getState().busy)return;
+        store.setState({busy:true,error:''});
+        try {
+            const r=await chrome.runtime.sendMessage({action:'DOWNLOADS_LOCATION',id});
+            if(!r?.success)throw Error();
+            if(disposed)return;
+            if(r.exportId)await openLocation(r.exportId);
+        } catch(error) {
+            if(!disposed && !(error instanceof Error && error.name==='AbortError'))store.setState({error:'downloads.locationFailed'});
+        } finally { if(!disposed)store.setState({busy:false}); }
+    }
+    return { store, load, command, reveal, dispose() { disposed = true; chrome.runtime.onMessage?.removeListener(changed); } };
 }

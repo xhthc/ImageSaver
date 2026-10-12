@@ -69,7 +69,8 @@ function makeChrome(state) {
       sendMessage: async (msg) => {
         calls.messages.push(msg.action);
         if (state.failMessages) throw new Error('MESSAGING_DOWN');
-        if(msg.action === 'DOWNLOADS_LIST' || msg.action === 'DOWNLOADS_COMMAND') {
+        if(msg.action === 'DOWNLOADS_LIST' || msg.action === 'DOWNLOADS_COMMAND' || msg.action === 'DOWNLOADS_LOCATION') {
+          if(msg.action==='DOWNLOADS_LOCATION' && state.failLocation)return {success:false};
           if(msg.command==='remove'){if(state.failRemoval)return {success:false};const op=state.jobs?.find(j=>j.id===msg.id)?.op || msg.id;if(state.jobs)state.jobs=state.jobs.filter(j=>j.id!==msg.id);state.session=state.session.filter(r=>r.id!==op);}
           return {success:true,jobs:state.jobs || state.session.map(r=>({id:r.id,op:r.id,managed:false,filename:r.filename || 'media',state:r.state==='saving'?'receiving':r.state==='interrupted'?'failed':r.state,received:1024,total:r.state==='saving'?null:2048,speed:0,error:'',ready:false})).reverse(),paused:false};
         }
@@ -234,6 +235,14 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const preparation=await page('quick',{session:[],history:[],local:{},jobs:[{id:'op-preparation',managed:false,filename:'',state:'converting',received:0,total:null}]});
     assert(preparation.text().includes('Обработка медиа') && preparation.text().includes('Выбранное медиа') && preparation.text().includes('после подготовки'),'manager-render-8: processing is visible without invented byte progress or controls');
     assert(!preparation.q('button[aria-label="Отменить загрузку"]') && !preparation.q('progress').hasAttribute('value'),'manager-render-9: preparation does not promise transport cancellation');await preparation.unmount();
+    for(const lang of ['en','ru']) {
+      const jobs=[{id:'saved',filename:'a.png',state:'complete',location:'browser'},{id:'active',filename:'b.png',state:'receiving'},{id:'bad',filename:'c.png',state:'failed'},{id:'old',filename:'d.png',state:'complete'}];
+      const state={session:[],history:[],jobs,local:{uiLanguage:lang},failLocation:true};const p=await page('quick',state);
+      const label=lang==='ru'?'Показать расположение файла':'Show file location';
+      const buttons=p.qa(`button[aria-label="${label}"]`);assert(buttons.length===1,'location-render: only a completed locatable file has a labelled folder icon');
+      await p.click(buttons[0]);assert(p.calls.messages.includes('DOWNLOADS_LOCATION') && p.q('[role="alert"]') && p.qa('[data-job]').length===4,'location-render-failed: click dispatches location and refused action keeps every card visible');
+      await p.unmount();
+    }
   }
 
 

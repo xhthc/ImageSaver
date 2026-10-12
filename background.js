@@ -4150,9 +4150,17 @@ if(chrome.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListener(
     if(sender?.id!==chrome.runtime.id || sender?.url!==chrome.runtime.getURL('offscreen.html'))return false;
     downloadManager?.progress(m.id,m.progress).then(()=>respond({success:true}),()=>respond({success:false}));return true;
   }
-  if(m?.action!=='DOWNLOADS_LIST' && m?.action!=='DOWNLOADS_COMMAND')return false;
+  if(!['DOWNLOADS_LIST','DOWNLOADS_COMMAND','DOWNLOADS_LOCATION'].includes(m?.action))return false;
   if(sender?.id!==chrome.runtime.id || !['popup/popup.html','popup/quick.html'].some(p=>sender.url?.split(/[?#]/)[0]===chrome.runtime.getURL(p)) || !downloadManager){respond({success:false,error:'FORBIDDEN'});return false;}
   (async()=>{
+    if(m.action==='DOWNLOADS_LOCATION') {
+      const id=await downloadManager.location(m.id);
+      if(isFileExport(id))return {success:true,exportId:id};
+      const item=await readDownloadItem(id);
+      if(!item || item.byExtensionId!==chrome.runtime.id || item.state!=='complete' || item.exists===false)throw Error('FILE_NOT_FOUND');
+      await chrome.downloads.show(id);
+      return {success:true};
+    }
     if(m.action==='DOWNLOADS_COMMAND') {
       if(m.command==='remove') {
         const job=(await downloadManager.list()).jobs.find(j=>j.id===m.id);
