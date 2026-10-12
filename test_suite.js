@@ -472,6 +472,7 @@ const sandbox = {
   chrome: mockChrome,
   console: {
     log: () => {},
+    info: () => {},
     warn: () => {},
     error: () => {}
   },
@@ -32378,6 +32379,17 @@ async function runTests() {
         vm.runInContext('PAWCHIVE_POST_MEDIA_PACE_MS = 40', sandbox);
         try { dl = await click(card16); } finally { vm.runInContext('PAWCHIVE_POST_MEDIA_PACE_MS = 0', sandbox); }
         assert(dl.length === 3 && stamps.length === 3 && stamps[1] - stamps[0] >= 30 && stamps[2] - stamps[1] >= 30, '265.16n: между элементами пакета сохраняется пауза: ' + JSON.stringify(stamps.map((t) => t - stamps[0])));
+        const originalHandler = sandbox.onContextMenuClicked;
+        let finishFirst; const holdFirst = new Promise(resolve => { finishFirst = resolve; });
+        const admitted = [];
+        sandbox.onContextMenuClicked = async item => { admitted.push(item.srcUrl); if (admitted.length === 1) await holdFirst; };
+        try {
+          reset({ ...Object.fromEntries(O16.slice(0, 2).map(o => [o, media('image/gif')])) });
+          const postSave = sandbox.savePawchivePostMedia({ postUrl: P16, items: O16.slice(0, 2) }, card16, { id: 26516 });
+          await new Promise(resolve => setTimeout(resolve, 30));
+          assert(admitted.length === 2, '265.16o: second verified post item is admitted while the first transfer is still pending');
+          finishFirst(); await postSave;
+        } finally { finishFirst(); sandbox.onContextMenuClicked = originalHandler; }
       }
 
       // 265.10: an ordinary non-Pawchive save is untouched by the resolver (generic pipeline, no Pawchive requests)

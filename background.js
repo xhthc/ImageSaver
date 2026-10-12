@@ -8118,8 +8118,8 @@ async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPost
 
 // The explicit save of a feed preview whose post declares several originals: every distinct video, image or GIF (by hash) is its own item. Items are verified
 // one after the other (the shared probe with its per-kind MIME check, then the shared verify/download/feedback path of a single save), paced, at most
-// PAWCHIVE_POST_MEDIA_MAX of them; an item that fails or is refused is reported as its own failed operation and never touches the others. After HTTP 429 no
-// further request is made: every remaining item is reported as a rate-limited failed operation. A repeated declaration is saved once (one entry per hash).
+// PAWCHIVE_POST_MEDIA_MAX of them; an item that fails or is refused is reported as its own failed operation and never touches the others. A probe HTTP429
+// stops remaining batch discovery; already admitted transfers may continue. A repeated declaration is saved once (one entry per hash).
 const PAWCHIVE_POST_MEDIA_MAX = 20;
 let PAWCHIVE_POST_MEDIA_PACE_MS = 1000;
 const pawchiveItemInfos = new WeakSet();
@@ -8132,6 +8132,7 @@ async function pawchiveItemFailed(info, tab, url, failure) {
 
 async function savePawchivePostMedia(batch, info, tab) {
   const urls = batch.items.slice(0, PAWCHIVE_POST_MEDIA_MAX);
+  const pending = [];
   const tally = { items: batch.items.length, verified: 0, refused: 0, rateLimited: 0, skipped: batch.items.length - urls.length };
   let limited = false;
   for (let i = 0; i < urls.length; i++) {
@@ -8153,7 +8154,7 @@ async function savePawchivePostMedia(batch, info, tab) {
     if (out.fail && out.fail._rateLimited === true) { limited = true; tally.rateLimited++; } else if (out.plan) tally.verified++; else tally.refused++;
     const itemInfo = { menuItemId: 'save-image-item', srcUrl: url, pageUrl: info.pageUrl, frameId: info.frameId, pawchivePlan: plan };
     pawchiveItemInfos.add(itemInfo);
-    await onContextMenuClicked(itemInfo, tab);
+    pending.push(onContextMenuClicked(itemInfo, tab).then(() => null, error => error));
   }
   if (batch.items.length > urls.length) await pawchiveItemFailed(info, tab, batch.postUrl, { stage: 'resolve', code: 'NO_MEDIA' });
   // a partly imported post: the originals the site has not imported are one failed operation of their own
@@ -8161,6 +8162,8 @@ async function savePawchivePostMedia(batch, info, tab) {
     tally.notArchived = batch.missingCode;
     await pawchiveItemFailed(info, tab, batch.postUrl, { stage: 'resolve', code: batch.missingCode });
   }
+  const rejected = (await Promise.all(pending)).find(Boolean);
+  if (rejected) throw rejected;
   console.info('[MediaLatch] Pawchive post media:', tally);
   dbg('pawchive', 'batch', 'ok', undefined, { items: tally.items, verified: tally.verified, refused: tally.refused, rateLimited: tally.rateLimited, skipped: tally.skipped, partial: Boolean(tally.notArchived), error: dbgCode(tally.notArchived) }, { cid: info && info.dbgCid, tab: tab && tab.id });
 }

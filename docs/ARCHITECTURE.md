@@ -28,7 +28,7 @@ This document describes the current development source, not a list of planned ca
 2. Choosing **MediaLatch: Save media** revalidates that evidence. Removed, changed or ambiguous owners are refused; another post's media is never substituted.
 3. Provider or generic discovery produces candidates. Preserve declared signed URLs exactly; diagnostic redaction changes only log copies.
 4. Probe candidates and choose an admitted plan. A confirmed original's failure is reported rather than silently becoming a preview.
-5. Prepare supported converted/assembled output if needed, then enqueue the resolved source. One job acquires the complete file into offscreen OPFS storage and validates its measured bytes and media signature/container before export.
+5. Prepare supported converted/assembled output if needed, then enqueue the resolved source. Up to three jobs (two per source origin) acquire complete files into offscreen OPFS storage and validate their measured bytes and media signature/container before export.
 6. Persist export intent, give the browser a typed local Blob backed by that prepared file, and attach the browser download ID to feedback. Keep the offscreen owner alive until the native terminal result; completed/cancelled jobs release their temporary files and private source addresses.
 
 There is no hover-based media-title network prefetch. The save item has a fixed title. Context availability remains best effort; save-time ownership checks are authoritative.

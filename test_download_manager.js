@@ -43,13 +43,36 @@ function env(stored={jobs:[],paused:false}) {
   const quota=disk(async()=>new Response(png,{headers:{'content-length':String(png.length)}}),100);await assert.rejects(quota.s.stage({id:'job-quota',source:'https://media.test/x'},async()=>{}),/STORAGE_QUOTA/);
   const binary=disk(async()=>new Response(png));assert.equal((await binary.s.stage({id:'job-binary',source:'https://media.test/x',expectedMime:'application/octet-stream'},async()=>{})).mime,'image/png');
   const cancelled=disk(async()=>new Response(png));await cancelled.s.abort('job-cancel','attempt-1');await assert.rejects(cancelled.s.stage({id:'job-cancel',attempt:'attempt-1',source:'https://media.test/x'},async()=>{}),/CANCELLED/);assert.equal(cancelled.fetches,0);
-  // One acquisition/export at a time; ready is not synonymous with saved.
+  // Independent exports overlap; ready is not synonymous with saved.
   const e=env();e.autoComplete=false;const m=createManager(e.d);await m.ready;
   const a=m.enqueue({url:'https://media.test/a?signature=preserve',filename:'folder/a.png'},{mime:'image/png'});
-  const b=m.enqueue({url:'https://media.test/b',filename:'b.png'});await a;assert.equal(e.stages,1);assert.equal((await m.list()).jobs.find(x=>x.filename==='a.png').state,'exporting');
+  const b=m.enqueue({url:'https://media.test/b',filename:'b.png'});await Promise.all([a,b]);assert.equal(e.stages,2);assert.equal((await m.list()).jobs.find(x=>x.filename==='a.png').state,'exporting');
   assert.deepEqual(m.output(101),{mime:'image/png',evidence:'verified_mime',type:'pic',sizeBytes:png.length,sizeKind:'measured'});
   assert(!JSON.stringify(await m.list()).includes('signature=') && !JSON.stringify(await m.list()).includes('folder/'));
   e.native.get(101).state='complete';await b;assert.equal(e.stages,2);e.native.get(102).state='complete';await m.drain();assert((await m.list()).jobs.every(x=>x.state==='complete'));
+  // A stalled origin cannot monopolize all three slots; only two jobs from one origin run.
+  {
+  const parallel=env({jobs:[],paused:true}),holds=new Map(),started=[];
+  parallel.d.stage=async(j,signal)=>{started.push(j.source);return new Promise((resolve,reject)=>{holds.set(j.id,()=>resolve({size:png.length,mime:'image/png'}));signal.addEventListener('abort',()=>reject(Error('CANCELLED')),{once:true});});};
+  const pm3=createManager(parallel.d);await pm3.ready;
+  const responses=['https://a.test/one','https://a.test/two','https://a.test/three','https://b.test/one','https://c.test/one'].map((url,i)=>pm3.enqueue({url,filename:'parallel-'+i+'.png'}).catch(e=>e.message));
+  await until(async()=> (await pm3.list()).jobs.length===5);await pm3.command('pause');await until(()=>started.length===3);
+  assert.deepEqual(started,['https://a.test/one','https://a.test/two','https://b.test/one']);
+  const activeJobs=(await pm3.list()).jobs.filter(j=>j.state==='receiving');assert.equal(activeJobs.length,3);
+  await pm3.command('pause');const bjob=activeJobs.find(j=>j.filename==='parallel-3.png');holds.get(bjob.id)();await until(async()=> (await pm3.list()).jobs.find(j=>j.id===bjob.id).state==='complete');
+  assert.equal(started.length,3,'Pause keeps queued transfers waiting while active transfers complete');
+  await pm3.command('cancel',activeJobs.find(j=>j.filename==='parallel-0.png').id);await until(async()=> (await pm3.list()).jobs.some(j=>j.state==='cancelled'));
+  assert((await pm3.list()).jobs.some(j=>j.filename==='parallel-1.png' && j.state==='receiving'),'Cancelling one active transfer keeps its peer alive');
+  await pm3.command('pause');await until(()=>started.length===5);for(const finish of holds.values())finish();await Promise.all(responses);await pm3.drain();
+  assert.equal((await pm3.list()).jobs.filter(j=>j.state==='complete').length,4);
+  // A 429 blocks that source origin while another origin can still finish.
+  const limited=env({jobs:[],paused:true});let attempts=0;
+  const fastStage=limited.d.stage;limited.d.stage=async(j,...args)=>{if(j.filename==='limit.png' && !attempts++)throw Object.assign(Error('RATE_LIMIT'),{retryAt:Date.now()+150});return fastStage(j,...args);};
+  const lm=createManager(limited.d);await lm.ready;
+  const waits=['https://limited.test/a','https://limited.test/b','https://other.test/c'].map((url,i)=>lm.enqueue({url,filename:i===0?'limit.png':i===1?'peer.png':'other.png'}));
+  await until(async()=> (await lm.list()).jobs.length===3);await lm.command('pause');await until(async()=> (await lm.list()).jobs.some(j=>j.filename==='other.png' && j.state==='complete'));
+  assert.equal((await lm.list()).jobs.find(j=>j.filename==='peer.png').state,'queued');await Promise.all(waits);await lm.drain();
+  }
   // Local export failure retains full bytes. Explicit retry does not receive remotely again.
   const f=env();const exportFile=f.d.export;let fail=true;f.d.export=async(...args)=>{if(fail)throw Error('EXPORT_FAILED');return exportFile(...args)};
   const fm=createManager(f.d);await fm.ready;await assert.rejects(fm.enqueue({url:'https://media.test/retry',filename:'retry.png'}),/EXPORT_FAILED/);await fm.drain();
