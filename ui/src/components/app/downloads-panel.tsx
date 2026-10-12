@@ -17,7 +17,7 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
   const jobs=s.jobs.slice()
   // Keep old notification deep links inspectable even after their byte-queue record was removed.
   const focused=records.find(r=>r.id===focusId)
-  if(focused && !jobs.some((j:any)=>(j.op || j.id)===focusId))jobs.push({id:focused.id,op:focused.id,managed:false,state:focused.state==='interrupted'?'failed':focused.state,received:0})
+  if(focused && !s.removingIds?.includes(focused.id) && !s.dismissedIds?.includes(focused.id) && !jobs.some((j:any)=>(j.op || j.id)===focusId))jobs.push({id:focused.id,op:focused.id,managed:false,state:focused.state==='interrupted'?'failed':focused.state,received:0})
   return <section aria-label={t('downloads.heading')} className="space-y-3" data-slot={full?'results-section':undefined}>
     <div className="flex items-center justify-between gap-2">
       <h2 className="text-sm font-semibold">{t('downloads.heading')}</h2>

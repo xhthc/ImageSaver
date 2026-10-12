@@ -480,11 +480,25 @@ function makeChrome(state) {
     assert(c.store.getState().error==='downloads.commandFailed','manager-ui-4a: automatic progress does not erase a refused action');
     await c.command('pause');assert(!c.store.getState().error,'manager-ui-4b: the next successful explicit action clears the error');
     replies={success:true,jobs:[{id:'done',state:'complete'},{id:'bad',state:'failed'},{id:'stopped',state:'cancelled'},{id:'live',state:'receiving'},{id:'waiting',state:'queued'}],paused:false};
+    const terminalFixture=replies.jobs.slice();chrome.runtime.sendMessage=async m=>{calls.push(m);if(m.action==='DOWNLOADS_COMMAND')replies.jobs=replies.jobs.filter(j=>j.id!==m.id);return replies;};
     await c.load();calls=[];await c.command('clearFinished');
     assert(calls.filter(m=>m.action==='DOWNLOADS_COMMAND').map(m=>m.id).join(',')==='done,bad,stopped' && calls.filter(m=>m.action==='DOWNLOADS_COMMAND').every(m=>m.command==='remove'),'manager-ui-clear: bulk clear uses validated removal only for terminal records');
-    const selected=[];chrome.runtime.sendMessage=async m=>{if(m.action==='DOWNLOADS_COMMAND'){selected.push(m.id);return {success:m.id!=='bad'};}return {...replies,jobs:replies.jobs.filter(j=>j.id!=='done')};};
+    replies.jobs=terminalFixture;await c.load();const selected=[];chrome.runtime.sendMessage=async m=>{if(m.action==='DOWNLOADS_COMMAND'){selected.push(m.id);return {success:m.id!=='bad'};}return {...replies,jobs:replies.jobs.filter(j=>j.id!=='done')};};
     await c.command('clearFinished');
     assert(selected.join(',')==='done,bad' && c.store.getState().error==='downloads.commandFailed' && !c.store.getState().busy && !c.store.getState().jobs.some(j=>j.id==='done') && c.store.getState().jobs.some(j=>j.id==='bad'),'manager-ui-clear-failure: partial clear stops on refusal, refreshes surviving records and exposes failure');
+    replies={success:true,jobs:[{id:'first',op:'op-first',state:'complete'},{id:'second',state:'failed'},{id:'active',state:'receiving'}],paused:false};
+    let release;const pending=new Promise(resolve=>release=resolve);
+    chrome.runtime.sendMessage=async m=>{if(m.action==='DOWNLOADS_COMMAND'){if(m.id==='first'){await pending;replies.jobs=replies.jobs.filter(j=>j.id!=='first');return {success:true};}return {success:false};}return replies;};
+    await c.load();const clearing=c.command('clearFinished');
+    assert(c.store.getState().jobs.map(j=>j.id).join(',')==='active' && c.store.getState().busy && c.store.getState().removingIds.includes('op-first'),'manager-ui-clear-instant: every terminal card and its focused detail disappear before the first durable reply');
+    listeners[0]({action:'DOWNLOADS_CHANGED'});await settle();
+    assert(c.store.getState().jobs.map(j=>j.id).join(',')==='active','manager-ui-clear-refresh: pending cards stay hidden during progress updates');
+    release();await clearing;
+    assert(c.store.getState().jobs.map(j=>j.id).join(',')==='second,active' && c.store.getState().error==='downloads.commandFailed' && !c.store.getState().removingIds.length && !c.store.getState().busy,'manager-ui-clear-rollback: refused survivor returns, confirmed removal stays gone and active job remains');
+    assert(c.store.getState().dismissedIds.includes('op-first') && !c.store.getState().dismissedIds.includes('second'),'manager-ui-clear-focus: confirmed removed details stay hidden even if feedback is stale; refused details remain available');
+    let complete;const held=new Promise(resolve=>complete=resolve);chrome.runtime.sendMessage=async m=>{if(m.action==='DOWNLOADS_COMMAND'){await held;return {success:false};}throw Error('UNAVAILABLE');};
+    const refusedClear=c.command('clearFinished');assert(c.store.getState().jobs.map(j=>j.id).join(',')==='active','manager-ui-clear-hide-second-attempt: survivors hide immediately on retry');complete();await refusedClear;
+    assert(c.store.getState().jobs.some(j=>j.id==='second') && c.store.getState().error==='downloads.commandFailed','manager-ui-clear-read-failure: failed removal is restored even if subsequent list read fails');
     c.dispose();assert(!listeners.length,'manager-ui-5: closed pages remove subscriptions');
     await c.load();assert(!listeners.length,'manager-ui-6: disposed controller is inert');
   }

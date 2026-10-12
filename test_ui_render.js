@@ -267,6 +267,12 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const deep=await page('full',{session:[saved],history:[],local:{},jobs:[]},{search:`?op=${saved.id}`});
     assert(deep.rows().length===1 && deep.rows()[0].querySelector('button[aria-expanded="true"]') && !deep.q('button[aria-label="Удалить запись и временный файл"]'),'manager-unified-7: an old notification deep link still opens retained details without a fabricated queue action');
     await deep.unmount();
+    const focusedRecord=rec({filename:'focused-clear.png'}),focusedState={session:[focusedRecord],history:[],local:{},jobs:[{id:'job-focus',op:focusedRecord.id,state:'complete',filename:'focused-clear.png',received:10,total:10}]};
+    const clearing=await page('full',focusedState,{hash:'#downloads',search:`?op=${focusedRecord.id}`});
+    const clear=clearing.q('button[aria-label="Очистить завершённые записи (файлы и статистика останутся)"]');
+    await clearing.click(clear);
+    assert(!clearing.rows().length && !clearing.qa('[data-job]').length,'manager-clear-focus-stale: successful bulk removal cannot reconstruct a deep-linked card from the independent old feedback snapshot');
+    await clearing.unmount();
   }
   {
     const fail = unnamedFailure();
