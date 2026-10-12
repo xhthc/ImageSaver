@@ -18,7 +18,7 @@ The themes, all-time Statistics and staged download manager below describe the d
 - Compact inline save controls on X, Reddit and RedGIFs, with bounded post batches on X and Reddit.
 - All distinct declared original media from a Pawchive feed preview, including the original cover. Selecting an individual attachment saves that attachment.
 - A Downloads subfolder, optional site/type organization, save results and copyable redacted error reports.
-- Blue, Dark and Light interface themes, saved across the popup and settings page.
+- Violet interface theme by default, with optional Blue, Dark and Light themes. Saved choices apply across the popup and settings page; existing preferences are preserved. Brief interface animations respect reduced motion.
 - Download manager with received/total bytes, speed and approximate remaining time when measurable. Complete files are staged locally before browser export; failed export can retry from retained bytes without another source download.
 - Opt-in local statistics without an entry count or time limit, with recording and clear controls. Available old history is imported once; expired or removed records cannot be reconstructed.
 - Opt-in local Debug journal with filters, copy/export and clear controls: up to 2,000 events, 1 MiB and 24 hours. Full URLs, tokens, page text and local paths are excluded.

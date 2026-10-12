@@ -1684,7 +1684,7 @@ async function runTests() {
     sandbox.trackedDownloadIds.clear();
 
     await sandbox.addTrackedDownloadId(88801);
-    await sandbox.setBadge('DL', '#3b82f6');
+    await sandbox.setBadge('DL', '#9333ea');
 
     await mockChrome.downloads._onChangedCb({
       id: 88801,
@@ -1711,7 +1711,7 @@ async function runTests() {
     // Запускаем две параллельные загрузки
     await sandbox.addTrackedDownloadId(77701);
     await sandbox.addTrackedDownloadId(77702);
-    await sandbox.setBadge('DL', '#3b82f6');
+    await sandbox.setBadge('DL', '#9333ea');
 
     // Первая загрузка завершается успешно: бейдж кратковременно мигает OK
     await mockChrome.downloads._onChangedCb({
@@ -1722,7 +1722,7 @@ async function runTests() {
 
     // По истечении таймера (или при явном вызове restoreOrClearBadge) бейдж ДОЛЖЕН вернуться к 'DL'
     await sandbox.restoreOrClearBadge();
-    const restoredDl = mockChrome._lastBadgeText === 'DL' && mockChrome._lastBadgeColor === '#3b82f6';
+    const restoredDl = mockChrome._lastBadgeText === 'DL' && mockChrome._lastBadgeColor === '#9333ea';
 
     // Теперь отменяем оставшуюся вторую загрузку через USER_CANCELED: бейдж должен очиститься, т.к. активных больше нет
     await mockChrome.downloads._onChangedCb({

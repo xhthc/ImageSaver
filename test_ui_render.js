@@ -198,6 +198,11 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
 (async () => {
   // The real page components apply themes to both documents and expose one labelled choice in settings.
   {
+    for(const kind of ['full','quick'])for(const stored of [undefined,'invalid']) {
+      const first=await page(kind,{session:[],history:[],local:{uiLanguage:'en',...(stored===undefined?{}:{uiTheme:stored})}});
+      assert(first.doc.documentElement.dataset.theme==='violet',`theme-default-${kind}-${stored}: missing or invalid preferences show Violet`);
+      await first.unmount();
+    }
     for (const theme of ['blue', 'dark', 'light', 'violet']) {
       const full = await page('full', { session: [], history: [], local: { historyEnabled: true, uiTheme: theme, uiLanguage: 'en' } });
       const quick = await page('quick', { session: [], history: [], local: { historyEnabled: true, uiTheme: theme, uiLanguage: 'en' } });

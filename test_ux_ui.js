@@ -139,13 +139,19 @@ function makeChrome(state) {
     const invalid = makeChrome({ session: [], history: [], local: { [THEME_KEY]: 'unsupported' } });
     const fallback = createTheme({ chrome: invalid.chrome, document: doc() });
     await fallback.ready;
-    assert(fallback.store.getState().theme === 'blue' && invalid.calls.localSets.length === 0, 'theme6: invalid saved values use Blue without rewriting storage');
+    assert(fallback.store.getState().theme === 'violet' && invalid.calls.localSets.length === 0, 'theme6: invalid saved values use Violet without rewriting storage');
     fallback.dispose();
     const unreadable = makeChrome({ session: [], history: [], local: {}, failGet: true });
     const failedRead = createTheme({ chrome: unreadable.chrome, document: doc() });
     await failedRead.ready;
-    assert(failedRead.store.getState().error === 'theme.readFailed' && unreadable.calls.localSets.length === 0, 'theme7: read failure never writes defaults');
+    assert(failedRead.store.getState().theme === 'violet' && failedRead.store.getState().error === 'theme.readFailed' && unreadable.calls.localSets.length === 0, 'theme7: read failure shows Violet and never writes defaults');
     failedRead.dispose();
+    const firstRunChrome = makeChrome({ session: [], history: [], local: {} });
+    const firstRun = createTheme({ chrome: firstRunChrome.chrome, document: doc() });
+    assert(firstRun.store.getState().theme === 'violet', 'theme-default-initial: Violet appears before the preference read');
+    await firstRun.ready;
+    assert(firstRun.store.getState().theme === 'violet' && firstRunChrome.calls.localSets.length === 0, 'theme-default-missing: a fresh profile uses Violet without writing a preference');
+    firstRun.dispose();
     const gate = deferred();
     const slowState = { session: [], history: [], local: { [THEME_KEY]: 'blue' }, getGate: gate.promise };
     const slowMade = makeChrome(slowState);
@@ -617,7 +623,7 @@ function makeChrome(state) {
     assert(/--danger/.test(css) && !/text-red-|text-destructive/.test(['quick-app', 'full-app', 'result-row', 'result-details', 'stats-card', 'settings-panels', 'history-panel', 'results-list', 'debug-panel'].map((n) => read(`ui/src/components/app/${n}.tsx`)).join('\n') + read('ui/src/components/ui/alert.tsx')), '30g: error text uses the checked danger colour, not the darker destructive fill');
     assert(!/text-(?:amber|emerald)-/.test(read('ui/src/components/app/debug-panel.tsx')) && !/text-foreground\/60/.test(read('ui/src/components/ui/tabs.tsx')), 'theme11: Debug status and inactive tab text use checked semantic theme colours');
     assert(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*0\.01ms !important[\s\S]*transition-duration:\s*0\.01ms !important/.test(css) && /motion-reduce:animate-none/.test(read('ui/src/components/app/result-row.tsx')) && !/animate-|transition-/.test(read('ui/src/components/ui/tooltip.tsx')), '30h: reduced-motion rules cover animated controls; the tooltip has no motion');
-    assert(/color-scheme:\s*dark/.test(css) && /@custom-variant dark/.test(css) && /<html lang="en" class="dark">/.test(read('ui/popup.html')) && /<html lang="en" class="dark">/.test(read('ui/quick.html')) && /documentElement\.lang = value\.lang/.test(read('ui/src/hooks/use-i18n.tsx')), '30i: both pages are explicitly dark; the static lang is replaced at runtime by the interface language');
+    assert(/color-scheme:\s*dark/.test(css) && /@custom-variant dark/.test(css) && /<html lang="en" class="dark" data-theme="violet">/.test(read('ui/popup.html')) && /<html lang="en" class="dark" data-theme="violet">/.test(read('ui/quick.html')) && /documentElement\.lang = value\.lang/.test(read('ui/src/hooks/use-i18n.tsx')), '30i: both pages initially use Violet; the static lang is replaced at runtime by the interface language');
   }
 
   // =================================================================================================

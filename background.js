@@ -9051,12 +9051,12 @@ async function restoreOrClearBadge() {
     if (activeResolvingCount > 0) {
       await chrome.action.setBadgeText({ text: '...' });
       if (chrome.action.setBadgeBackgroundColor) {
-        await chrome.action.setBadgeBackgroundColor({ color: '#3b82f6' });
+        await chrome.action.setBadgeBackgroundColor({ color: '#9333ea' });
       }
     } else if (trackedCount > 0) {
       await chrome.action.setBadgeText({ text: 'DL' });
       if (chrome.action.setBadgeBackgroundColor) {
-        await chrome.action.setBadgeBackgroundColor({ color: '#3b82f6' });
+        await chrome.action.setBadgeBackgroundColor({ color: '#9333ea' });
       }
     } else if ((await getUnseenFailureCount()) > 0) {
       // A failure the user has not looked at yet stays discoverable even without notifications.
@@ -10272,7 +10272,7 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
     }
 
     await addTrackedDownloadId(downloadId);
-    await setBadge('DL', '#3b82f6');
+    await setBadge('DL', '#9333ea');
 
     await settleEarlyTerminalDownload(downloadId);
 
@@ -10361,7 +10361,7 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
         output: buildFeedbackOutput({ finalPath: fallbackPath, structuredResult: null, group: null, isFallback: true })
       });
       await addTrackedDownloadId(fallbackDownloadId);
-      await setBadge('DL', '#3b82f6');
+      await setBadge('DL', '#9333ea');
       await settleEarlyTerminalDownload(fallbackDownloadId);
       return {
         success: true,
@@ -10568,7 +10568,7 @@ async function executeXTweetVideoGifDownload(videoUrl, settings = {}, options = 
   let convResult = null;
   const feedbackOp = options?.feedbackOp || null;
   try {
-    await setBadge('...', '#3b82f6');
+    await setBadge('...', '#9333ea');
     // pageUrl is folder-routing context only; it must not travel to the offscreen document.
     const { pageUrl, feedbackOp: _feedbackOp, ...conversionOptions } = options || {};
     await fbStage(feedbackOp, 'converting', { conversion: 'x_tweet_video_gif', expectedType: 'gif', sourceUrl: videoUrl, site: fbSiteOf(pageUrl, videoUrl) });
@@ -10642,7 +10642,7 @@ async function executeXTweetVideoGifDownload(videoUrl, settings = {}, options = 
 
     await fbAttach(feedbackOp, downloadId, { filename });
     await addTrackedDownloadId(downloadId);
-    await setBadge('DL', '#3b82f6');
+    await setBadge('DL', '#9333ea');
     transferOffscreenTask(convResult.taskKey, 'protected_' + downloadId, convResult.blobUrl);
     await trackDownloadProtectedBlob(downloadId, convResult.blobUrl, 'protected_' + downloadId);
     await settleEarlyTerminalDownload(downloadId);
@@ -10705,7 +10705,7 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
   let convResult = null;
   const feedbackOp = options?.feedbackOp || null;
   try {
-    await setBadge('...', '#3b82f6');
+    await setBadge('...', '#9333ea');
     // pageUrl is folder-routing context only; it must not travel to the offscreen document.
     const { pageUrl, feedbackOp: _feedbackOp, ...conversionOptions } = options || {};
     await fbStage(feedbackOp, 'converting', { conversion: 'reddit_animation_gif', expectedType: 'gif', sourceUrl: videoUrl, site: fbSiteOf(pageUrl, videoUrl) });
@@ -10779,7 +10779,7 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
 
     await fbAttach(feedbackOp, downloadId, { filename });
     await addTrackedDownloadId(downloadId);
-    await setBadge('DL', '#3b82f6');
+    await setBadge('DL', '#9333ea');
     transferOffscreenTask(convResult.taskKey, 'protected_' + downloadId, convResult.blobUrl);
     await trackDownloadProtectedBlob(downloadId, convResult.blobUrl, 'protected_' + downloadId);
     await settleEarlyTerminalDownload(downloadId);
@@ -10846,7 +10846,7 @@ async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) 
   let taskKey = null;
   let blobUrl = null;
   try {
-    await setBadge('...', '#3b82f6');
+    await setBadge('...', '#9333ea');
     await fbStage(feedbackOp, 'converting', { conversion: 'none', expectedType: 'video', sourceUrl: master.url, site: fbSiteOf(options?.pageUrl, master.url) });
     taskKey = acquireOffscreenTask('reddit_hls_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
     await ensureOffscreenDocument();
@@ -10887,7 +10887,7 @@ async function executeRedditHlsDownload(masterUrl, settings = {}, options = {}) 
     }
     await fbAttach(feedbackOp, downloadId, { filename });
     await addTrackedDownloadId(downloadId);
-    await setBadge('DL', '#3b82f6');
+    await setBadge('DL', '#9333ea');
     transferOffscreenTask(taskKey, 'protected_' + downloadId, blobUrl);
     taskKey = null;
     await trackDownloadProtectedBlob(downloadId, blobUrl, 'protected_' + downloadId);
@@ -11619,7 +11619,7 @@ async function onContextMenuClicked(info, tab) {
     // catch itself throw a ReferenceError and skip the failure badge/feedback).
     let mediaPlan = null;
     try {
-      await setBadge('...', '#3b82f6');
+      await setBadge('...', '#9333ea');
 
       const settings = await chrome.storage.local.get({
         subfolder: 'SavedImages',
@@ -12071,7 +12071,7 @@ async function onContextMenuClicked(info, tab) {
         activeResolvingCount++;
 
         try {
-          await setBadge('...', '#3b82f6');
+          await setBadge('...', '#9333ea');
           const probe = await probeVideoUrlDetails(rawVideoUrl);
           if (probe && (probe.status === 401 || probe.status === 403 || probe.requiresAuth)) {
             console.warn('[MediaLatch] Ошибка авторизации видео с X (HTTP 401/403):', sanitizeUrlForLog(rawVideoUrl));
@@ -12154,7 +12154,7 @@ async function onContextMenuClicked(info, tab) {
         activeResolvingCount++;
 
         try {
-          await setBadge('...', '#3b82f6');
+          await setBadge('...', '#9333ea');
           const mediaPlan = await resolveOriginalMediaPlan({
             srcUrl: rawImageUrl,
             pageUrl: tab.url || info.pageUrl,
