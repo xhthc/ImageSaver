@@ -1,5 +1,3 @@
-import { BarChart3 } from "lucide-react"
-
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -19,8 +17,7 @@ export function StatsCard({ view }: { view: any }) {
   return (
     <Card data-slot="stats" aria-live="polite">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <BarChart3 className="size-4 text-muted-foreground" aria-hidden="true" />
+        <CardTitle className="text-base">
           {t("stats.title")}
         </CardTitle>
         <CardDescription className="text-xs" data-slot="scope-note">

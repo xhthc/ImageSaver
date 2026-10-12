@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Bug, Copy, Download, RefreshCw, Trash2 } from "lucide-react"
+import { Copy, Download, RefreshCw, Trash2 } from "lucide-react"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -59,7 +59,6 @@ function DebugBody({ controller }: { controller: Controller }) {
     <Card data-slot="debug">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          <Bug className="size-4 text-muted-foreground" aria-hidden="true" />
           {t("debug.title")}
           <Badge variant={s.enabled ? "default" : "secondary"} data-slot="debug-recording">{s.enabled ? t("debug.recording") : t("debug.notRecording")}</Badge>
         </CardTitle>

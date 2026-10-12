@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { CheckCircle2, ChevronDown, FolderOpen, Save, TriangleAlert } from "lucide-react"
+import { CheckCircle2, ChevronDown, Save, TriangleAlert } from "lucide-react"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -36,8 +36,7 @@ export function SavingPanel({ settings }: { settings: SettingsController }) {
   return (
     <Card data-slot="saving">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <FolderOpen className="size-4 text-muted-foreground" aria-hidden="true" />
+        <CardTitle className="text-base">
           {t("tab.saving")}
         </CardTitle>
       </CardHeader>

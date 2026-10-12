@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { Bell, Bug, FolderOpen, History, Download, Share2, RefreshCw } from "lucide-react"
+import { Bell, Bug, ChartColumn, FolderCog, Download, Link2, PackageCheck } from "lucide-react"
 
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -25,7 +25,7 @@ import { useI18n } from "@/hooks/use-i18n"
 import { useTheme } from "@/hooks/use-theme"
 import { getEnv } from "@/lib/env"
 
-const TAB_ICONS: Record<string, typeof History> = { history: History, downloads: Download, saving: FolderOpen, notifications: Bell, embed: Share2, updates: RefreshCw, debug: Bug }
+const TAB_ICONS: Record<string, typeof Download> = { history: ChartColumn, downloads: Download, saving: FolderCog, notifications: Bell, embed: Link2, updates: PackageCheck, debug: Bug }
 
 /**
  * The full extension page. Deep links: popup.html#<section>, popup.html?section=<section>,
