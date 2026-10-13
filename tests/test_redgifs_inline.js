@@ -755,23 +755,145 @@ test('the document that issued the token must still be the one asked: a navigati
   assert.equal(world.fetchCalls.length, 0, 'the new document was never asked a provider');
 });
 
-test('continuity during the provider lookup: a player that changes while the clip is requested is not saved', async () => {
-  const mutations = {
-    'source recycled': (c) => c.video.setAttribute('src', 'blob:https://www.redgifs.com/recycled'),
-    'poster changed': (c) => c.poster.setAttribute('src', posterUrl('ClipOther')),
-    'player removed': (c) => c.gif.remove()
+// REDGIFS-SCROLL-POPUP-01: the clip is fixed when the worker's request takes the one-shot token while the player still holds the trusted click's
+// node/source/poster evidence (before any provider request). The user's journal shows 5 of 8 own-site saves failing FRAME_CHANGED_DURING_LOOKUP
+// ~460 ms into this lookup; afterwards an ordinary player lifecycle may not turn the save into a failure, and nothing may turn it into another clip.
+test('fixed clip during the provider lookup: player lifecycle changes save exactly the admitted clip and its audio rendition, never the new one', async () => {
+  const lifecycle = {
+    'source becomes the same clip CDN file (lead repro)': (w, c) => c.video.setAttribute('src', media('ClipBravo')),
+    'transport reload: a new blob source': (w, c) => c.video.setAttribute('src', 'blob:https://www.redgifs.com/reloaded'),
+    'scrolled away: the source is released': (w, c) => { c.video.setAttribute('src', ''); c.player.rect = { left: 0, top: -2000, width: 640, height: 360 }; },
+    'scrolled away: the virtualized card is removed': (w, c) => c.gif.remove(),
+    'the same player recycled to another clip': (w, c) => w.swap(c, 'ClipOther'),
+    'A admitted, then B appears and is hovered': (w) => { const next = w.addCard('ClipOther'); w.hover(next); }
   };
-  for (const [what, mutate] of Object.entries(mutations)) {
+  for (const [what, mutate] of Object.entries(lifecycle)) {
     for (const at of [1, 2]) {
-      let card = null;
-      const { bg, world } = pageAndWorker({ gifs: { clipbravo: GIF('ClipBravo', true, { hd: media('ClipBravo') }) }, onApi: (u, n) => { if (n === at) mutate(card); } });
+      let card = null, world = null;
+      const gifs = { clipbravo: GIF('ClipBravo', true, { silent: media('ClipBravo', '-silent'), hd: media('ClipBravo') }), clipother: GIF('ClipOther', true, { hd: media('ClipOther') }) };
+      const pw = pageAndWorker({ gifs, onApi: (u, n) => { if (n === at) mutate(world, card); } });
+      world = pw.world;
       card = world.addCard('ClipBravo');
       world.activate(card);
-      await bg.idle();
-      assert.equal(bg.downloads.length, 0, `${what} at request ${at}: nothing is saved`);
-      assert.equal(world.fetchCalls.length, at, `${what} at request ${at}: nothing is asked after the change`);
+      await pw.bg.idle();
+      const tag = `${what} at request ${at}`;
+      assert.deepEqual(pw.bg.downloads.map((d) => d.url), [media('ClipBravo')], `${tag}: the admitted clip's audio-bearing file, exactly`);
+      assert.deepEqual(world.fetchCalls.map((u) => u.replace(/^https:\/\/api\.redgifs\.com\//, '')), ['v2/auth/temporary', 'v2/gifs/clipbravo'], `${tag}: two bounded requests for the admitted clip only`);
+      const ops = await pw.bg.ops();
+      assert.equal(ops.length, 1, `${tag}: one operation`);
+      assert.equal(ops.filter((o) => o.state === 'failed').length, 0, `${tag}: no failure`);
     }
   }
+});
+
+test('fixed clip: a replaced document or a page that is no longer the provider\'s own top player page cannot answer; nothing is saved, with a reason code', async () => {
+  const cases = {
+    DOCUMENT: (w) => { w.ctx.document = { ...w.doc }; },
+    ORIGIN: (w) => w.navigate('https://www.redgifs.com/ifr/clipbravo')
+  };
+  for (const [code, mutate] of Object.entries(cases)) {
+    for (const at of [1, 2]) {
+      let world = null;
+      const pw = pageAndWorker({ gifs: { clipbravo: GIF('ClipBravo', true, { hd: media('ClipBravo') }) }, onApi: (u, n) => { if (n === at) mutate(world); } });
+      world = pw.world;
+      world.activate(world.addCard('ClipBravo'));
+      await pw.bg.idle();
+      assert.equal(pw.bg.downloads.length, 0, `${code} at request ${at}: nothing saved`);
+      assert.equal(world.fetchCalls.length, at, `${code} at request ${at}: nothing asked after the change`);
+      const ops = await pw.bg.ops();
+      assert.deepEqual(Array.from(ops, (o) => o.state), ['failed'], `${code} at request ${at}: a visible failure`);
+    }
+    // the frame's own answer carries the bounded code of the changed predicate (journal `which`), nothing else
+    let world = null;
+    world = makeWorld({ gifs: { clipbravo: GIF('ClipBravo', true, { hd: media('ClipBravo') }) }, onApi: (u, n) => { if (n === 1) mutate(world); } });
+    world.run();
+    const c = world.addCard('ClipBravo');
+    world.activate(c);
+    const res = await world.ask({ action: 'RESOLVE_FRAME_MEDIA', clickedSrc: '', frameId: 0, inlineToken: sentInline(world)[0].token }, { id: 'testid' });
+    assert.equal(res.success, false);
+    assert.deepEqual([res.diagnostics.continuity, res.diagnostics.rejectionReasons[0]], [code, 'FRAME_CHANGED_DURING_LOOKUP']);
+  }
+});
+
+test('before the clip is fixed nothing changes: an expired token, or a player that changed between the click and the worker request, is refused without provider requests', async () => {
+  // expired: the worker's request arrives after the token lifetime
+  {
+    const { bg, world } = pageAndWorker({ gifs: { clipbravo: GIF('ClipBravo', true, { hd: media('ClipBravo') }) } });
+    const b = world.addCard('ClipBravo');
+    bg.onFrameRequest = (w) => { w.now += 31000; };
+    world.activate(b);
+    await bg.idle();
+    refusedNothing(bg, world);
+    assert.deepEqual(Array.from(await bg.ops(), (o) => o.state), ['failed'], 'a visible failure');
+  }
+  // changed before the token is taken: recycled to another clip, a conflicting second poster, the poster removed (unproven)
+  const early = {
+    'recycled to another clip': (w, c) => w.swap(c, 'ClipOther'),
+    'a conflicting poster': (w, c) => { const extra = new El('img', { class: 'Player-Poster', src: posterUrl('ClipOther') }, c.player.rect); c.player.appendChild(extra); },
+    'poster removed (unproven)': (w, c) => c.poster.remove(),
+    'same-clip source change': (w, c) => c.video.setAttribute('src', media('ClipBravo'))
+  };
+  for (const [what, mutate] of Object.entries(early)) {
+    const { bg, world } = pageAndWorker({ gifs: { clipbravo: GIF('ClipBravo', true, { hd: media('ClipBravo') }), clipother: GIF('ClipOther', true, { hd: media('ClipOther') }) } });
+    const b = world.addCard('ClipBravo');
+    bg.onFrameRequest = (w) => { bg.onFrameRequest = null; mutate(w, b); };
+    world.activate(b);
+    await bg.idle();
+    assert.equal(bg.downloads.length, 0, `${what}: nothing saved`);
+    assert.equal(world.fetchCalls.length, 0, `${what}: no provider request`);
+  }
+});
+
+test('provider failures stay honest after the clip is fixed: a failed request or a wrong clip id saves nothing and is a visible failure', async () => {
+  for (const [what, opts] of Object.entries({
+    'auth request fails': { onApi: (u) => (u.endsWith('v2/auth/temporary') ? Promise.reject(new Error('net')) : undefined), gifs: { clipbravo: GIF('ClipBravo', true, { hd: media('ClipBravo') }) } },
+    'metadata request fails': { onApi: (u) => (/v2\/gifs\//.test(u) ? Promise.reject(new Error('net')) : undefined), gifs: { clipbravo: GIF('ClipBravo', true, { hd: media('ClipBravo') }) } },
+    'the answer names another clip': { gifs: { clipbravo: GIF('ClipOther', true, { hd: media('ClipOther') }) } }
+  })) {
+    let world = null;
+    const pw = pageAndWorker({ ...opts, onApi: (u, n) => { if (n === 1) world.cards[0].gif.remove(); return opts.onApi ? opts.onApi(u, n) : undefined; } });
+    world = pw.world;
+    world.activate(world.addCard('ClipBravo'));
+    await pw.bg.idle();
+    assert.equal(pw.bg.downloads.length, 0, `${what}: nothing saved`);
+    assert.deepEqual(Array.from(await pw.bg.ops(), (o) => o.state), ['failed'], `${what}: a visible failure`);
+    assert.equal(world.fetchCalls.length <= 2, true, `${what}: bounded`);
+  }
+});
+
+// UNIVERSAL-SELECTION-SNAPSHOT-01: a frame request without an inline token (a context-menu save) also fixes its clip when the selected player is
+// proven; afterwards the player's lifecycle cannot change the clip, while a navigation away (the existing policy) still refuses with its code.
+test('a frame request without an inline token fixes its proven clip: a later source or poster change saves the admitted clip, a navigation refuses', async () => {
+  for (const [what, mutate] of Object.entries({ 'source recycled': (w, c) => c.video.setAttribute('src', 'blob:https://www.redgifs.com/recycled'), 'poster recycled to another clip': (w, c) => c.poster.setAttribute('src', posterUrl('ClipOther')), 'player removed': (w, c) => c.gif.remove() })) {
+    for (const at of [1, 2]) {
+      let card = null, world = null;
+      world = makeWorld({ gifs: { clipbravo: GIF('ClipBravo', true, { hd: media('ClipBravo') }), clipother: GIF('ClipOther', true, { hd: media('ClipOther') }) }, onApi: (u, n) => { if (n === at) mutate(world, card); } });
+      world.run();
+      card = world.addCard('ClipBravo');
+      const res = await world.ask({ action: 'RESOLVE_FRAME_MEDIA', clickedSrc: card.blob, frameId: 0 }, { id: 'testid' });
+      assert.deepEqual([res.success, res.targetUrl], [true, media('ClipBravo')], `${what} at request ${at}: the admitted clip`);
+      assert.deepEqual(world.fetchCalls.map((u) => u.replace(/^https:\/\/api\.redgifs\.com\//, '')), ['v2/auth/temporary', 'v2/gifs/clipbravo'], `${what} at request ${at}: never the other clip`);
+    }
+  }
+  for (const at of [1, 2]) {
+    let world = null;
+    world = makeWorld({ gifs: { clipbravo: GIF('ClipBravo', true, { hd: media('ClipBravo') }) }, onApi: (u, n) => { if (n === at) world.navigate('https://www.redgifs.com/watch/clipother'); } });
+    world.run();
+    const card = world.addCard('ClipBravo');
+    const res = await world.ask({ action: 'RESOLVE_FRAME_MEDIA', clickedSrc: card.blob, frameId: 0 }, { id: 'testid' });
+    assert.equal(res.success, false);
+    assert.deepEqual([res.diagnostics.continuity, res.diagnostics.rejectionReasons[0]], ['NAVIGATED', 'FRAME_CHANGED_DURING_LOOKUP']);
+    assert.equal(world.fetchCalls.length, at, 'nothing asked after the navigation');
+  }
+  // before the clip is fixed: a recycled player is not the requested source, nothing is asked
+  const world = makeWorld({ gifs: { clipbravo: GIF('ClipBravo', true, { hd: media('ClipBravo') }) } });
+  world.run();
+  const card = world.addCard('ClipBravo');
+  const asked = card.blob;
+  card.video.setAttribute('src', 'blob:https://www.redgifs.com/recycled');
+  const res = await world.ask({ action: 'RESOLVE_FRAME_MEDIA', clickedSrc: asked, frameId: 0 }, { id: 'testid' });
+  assert.equal(res.success, false);
+  assert.equal(world.fetchCalls.length, 0);
 });
 
 const until = async (cond) => { for (let i = 0; i < 200 && !cond(); i++) await new Promise((r) => setTimeout(r, 2)); assert.ok(cond(), 'condition reached'); };
@@ -1082,7 +1204,7 @@ test('selection generation: the SAME node recycled to another clip is a request 
     await bg.idle();
     assert.deepEqual(bg.downloads.map((d) => d.url), [media('ClipAlpha'), media('ClipBravo')], 'both saved');
   }
-  // A is still held at the provider, the node is recycled to B after the gap: B is not dropped as a duplicate of A, A refuses its changed target
+  // A is still held at the provider, the node is recycled to B after the gap: B is not dropped as a duplicate of A, and A keeps its own fixed clip
   {
     const g = gated();
     const { bg, world } = pageAndWorker({ gifs: TWO_GIFS, onApi: g.onApi });
@@ -1099,11 +1221,12 @@ test('selection generation: the SAME node recycled to another clip is a request 
     assert.deepEqual(bg.downloads.map((d) => d.url), [media('ClipBravo')], 'B was processed');
     g.release();
     await bg.idle();
-    assert.deepEqual(bg.downloads.map((d) => d.url), [media('ClipBravo')], 'the stale A request, frozen to its own source proof, still refuses');
+    // REDGIFS-SCROLL-POPUP-01: A's clip was fixed before its lookup, so the recycled node saves A's own clip (never B a second time)
+    assert.deepEqual(bg.downloads.map((d) => d.url), [media('ClipBravo'), media('ClipAlpha')], 'A completes with its admitted clip');
     const ops = await bg.ops();
     assert.equal(ops.length, 2, 'two operations: B was not dropped');
-    assert.equal(ops.filter((o) => o.state === 'failed').length, 1, 'only the stale A is a failure');
-    assert.equal(world.fetchCalls.some((u) => /clipalpha/.test(u)), false, 'the stale A never asked for its clip');
+    assert.equal(ops.filter((o) => o.state === 'failed').length, 0, 'no failure');
+    assert.deepEqual(world.fetchCalls.filter((u) => /v2\/gifs\//.test(u)).map((u) => u.split('/v2/gifs/')[1]).sort(), ['clipalpha', 'clipbravo'], 'each request asked only for its own fixed clip');
   }
   // unchanged selection: hiding and showing the control again keeps the key and the throttle
   {

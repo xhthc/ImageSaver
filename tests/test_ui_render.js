@@ -68,6 +68,7 @@ function makeChrome(state) {
       getURL: (p) => `chrome-extension://testid/${p}`,
       sendMessage: async (msg) => {
         calls.messages.push(msg.action);
+        if (msg.action === 'DOWNLOADS_LIST' && state.downloadGates?.length && (await state.downloadGates.shift()) === 'fail') throw new Error('MESSAGING_DOWN');
         if (state.failMessages) throw new Error('MESSAGING_DOWN');
         if(msg.action === 'DOWNLOADS_LIST' || msg.action === 'DOWNLOADS_COMMAND') {
           if(msg.command==='remove'){if(state.failRemoval)return {success:false};const op=state.jobs?.find(j=>j.id===msg.id)?.op || msg.id;if(state.jobs)state.jobs=state.jobs.filter(j=>j.id!==msg.id);state.session=state.session.filter(r=>r.id!==op);}
@@ -106,11 +107,13 @@ function makeChrome(state) {
       local: {
         get: async (defaults) => {
           if (state.failGet) throw new Error('UNREADABLE');
+          if (state.guideGate && defaults && 'firstRunGuideDismissed' in defaults) await state.guideGate;
           const captured = { ...(defaults || {}), ...state.local };
           if (state.getGate) await state.getGate;
           return captured;
         },
         set: async (v) => {
+          if (state.setGate) await state.setGate;
           if (state.failSet) throw new Error('QUOTA');
           calls.localSets.push(JSON.parse(JSON.stringify(v)));
           const changes = {};
@@ -143,6 +146,9 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
   win.eval(libFolder);
   const closed = [];
   const scrolled = [];
+  const consoleErrors = [];
+  const logError = win.console.error.bind(win.console);
+  win.console.error = (...args) => { consoleErrors.push(args.join(' ')); logError(...args); };
   win.close = () => { closed.push(1); };
   win.chrome = chrome;
   win.fetch = async (url, init) => {
@@ -161,7 +167,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
   const U = win.__ui;
   const doc = win.document;
   const root = U.createRoot(doc.getElementById('root'));
-  const p = { win, doc, U, state, calls, closed, scrolled, chrome, root };
+  const p = { win, doc, U, state, calls, closed, scrolled, consoleErrors, chrome, root };
   p.settle = async (n = 6) => { for (let i = 0; i < n; i++) await U.act(async () => { await sleep(0); }); };
   p.q = (sel, from = doc) => from.querySelector(sel);
   p.qa = (sel, from = doc) => Array.from(from.querySelectorAll(sel));
@@ -239,6 +245,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
       const state={session:[],history:[],jobs,local:{uiLanguage:lang,saveDirectoryId:'directory-saved'}};
       const p=await page(kind,state,{hash:'#downloads'});
       assert(p.qa('[data-job]').length===2 && !p.q('button[aria-label="Show file location"]') && !p.q('button[aria-label="Показать расположение файла"]'),'location-rollback: existing completed browser/directory cards remain without folder actions in '+kind+' '+lang);
+      assert(p.qa('[data-job] button').length===(kind==='quick'?0:2),'popup-bulk-clear: completed cards have no per-file trash in popup; full manager retains it in '+lang);
       await p.unmount();
       if(kind==='full'){
         const saving=await page(kind,state,{hash:'#saving'});
@@ -249,16 +256,35 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
   }
 
 
-    for(const lang of ['en','ru'])for(const theme of ['blue','dark','light'])for(const kind of ['quick','full']){
+    for(const lang of ['en','ru'])for(const theme of ['blue','dark','light','violet'])for(const kind of ['quick','full']){
       const failed=unnamedFailure(), state={session:[failed],history:[],local:{uiLanguage:lang,uiTheme:theme},failRemoval:true};
       const p=await page(kind,state,{hash:'#downloads'});
-      const label=lang==='ru'?'Удалить запись':'Remove record';
+      const label=kind==='quick'?(lang==='ru'?'Очистить завершённые записи (файлы и статистика останутся)':'Clear finished records (files and statistics stay)'):(lang==='ru'?'Удалить запись':'Remove record');
       const remove=p.q('button[aria-label="'+label+'"]');
-      assert(remove,'unmanaged-dismiss: terminal removal is labelled in '+kind+' '+lang+' '+theme);
+      assert(remove,'unmanaged-dismiss: supported removal is labelled in '+kind+' '+lang+' '+theme);
+      if(kind==='quick')assert(!p.q('[data-job] button'),'popup-bulk-clear: failed feedback-only cards have no individual trash');
       assert(!p.q('button[aria-label="'+(lang==='ru'?'Повторить загрузку':'Retry download')+'"]'),'unmanaged-dismiss: no unproven retry');
       if(remove){await p.click(remove);assert(p.qa('[data-job]').length===1 && p.q('[role="alert"]'),'unmanaged-dismiss: persistence failure retains card with error');state.failRemoval=false;await p.click(remove);assert(p.qa('[data-job]').length===0,'unmanaged-dismiss: selected terminal card removed');}
       await p.unmount();
       const reopened=await page(kind,state,{hash:'#downloads'});assert(reopened.qa('[data-job]').length===0,'unmanaged-dismiss: no card on reopen');await reopened.unmount();
+    }
+
+    for(const lang of ['en','ru']){
+      const state={session:[],history:[rec()],local:{uiLanguage:lang},jobs:[
+        {id:'active',filename:'active.mp4',state:'receiving',received:100,total:1000},
+        {id:'saved',filename:'saved.jpg',state:'complete',received:1000,total:1000},
+        {id:'cancelled',filename:'cancelled.mp4',state:'cancelled',received:100,total:1000},
+        {id:'retryable',filename:'retryable.jpg',state:'failed',received:1000,total:1000,ready:true,error:'EXPORT_FAILED'}
+      ]};
+      const p=await page('quick',state),clear=p.q('button[aria-label="'+(lang==='ru'?'Очистить завершённые записи (файлы и статистика останутся)':'Clear finished records (files and statistics stay)')+'"]');
+      assert(p.qa('svg.lucide-trash-2').length===1 && !p.q('[data-job] svg.lucide-trash-2'),'popup-bulk-clear: only global trash remains across terminal and active states in '+lang);
+      assert(p.q('[data-job="active"] button[aria-label="'+(lang==='ru'?'Отменить загрузку':'Cancel download')+'"]') && p.q('[data-job="retryable"] button[aria-label="'+(lang==='ru'?'Сохранить готовый файл снова':'Save prepared file again')+'"]'),'popup-bulk-clear: active cancellation and supported prepared-file retry stay reachable in '+lang);
+      await p.click(clear);
+      assert(p.qa('[data-job]').length===1 && p.q('[data-job="active"]') && clear.disabled && state.history.length===1,'popup-bulk-clear: global clear removes only terminal records, retains active job/statistics and disables when none remain in '+lang);
+      await p.unmount();
+      const reopened=await page('quick',state);
+      assert(reopened.qa('[data-job]').length===1 && reopened.q('[data-job="active"]'),'popup-bulk-clear: reopening retains active job without cleared cards in '+lang);
+      await reopened.unmount();
     }
 
   console.log('\n--- R3. Unread failures, acknowledgement and states ---');
@@ -418,7 +444,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p.type(input, '  My/Pics  ');
     await p.click(p.q('#saveButton'));
     const saved = p.calls.localSets[p.calls.localSets.length - 1];
-    assert(p.calls.localSets.length === 1 && saved.subfolder === 'My/Pics' && saved.folderOrganizationMode === 'by_site_and_type' && saved.saveDirectoryId === '' && saved.xAuthorFolders === false && !('askEveryTime' in saved) && Object.keys(saved).length === 8, 'R7g: explicit Save writes the eight Saving/Embed keys, sanitized');
+    assert(p.calls.localSets.length === 1 && saved.subfolder === 'My/Pics' && saved.folderOrganizationMode === 'by_site_and_type' && saved.saveDirectoryId === '' && saved.xAuthorFolders === false && saved.redditAuthorFolders === false && saved.pixivAuthorFolders === false && !('askEveryTime' in saved) && Object.keys(saved).length === 10, 'R7g: explicit Save writes the ten Saving/Embed keys, sanitized');
     assert(state.local.notifySuccess === false && state.local.historyEnabled === true && state.local.unrelatedKey === 'keep-me', 'R7h: other preferences are untouched');
     assert(/Настройки успешно сохранены/.test(p.q('#statusMessage').textContent) && p.q('#statusMessage').getAttribute('aria-live') === 'polite' && p.q('#statusMessage').getAttribute('data-type') === 'success', 'R7i: the result is announced in a polite live region');
     await p.type(input, 'x'.repeat(300));
@@ -432,10 +458,13 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(/Не удалось сохранить настройки/.test(p.q('#statusMessage').textContent) && !p.q('#saveButton').disabled, 'R7l: a storage failure is reported and the button is released');
     state.failSet = false;
 
-    const author=p.q('#xAuthorFolders');
-    assert(author.getAttribute('role')==='switch' && p.q('label[for="xAuthorFolders"]'),'R7author1: author folders are a labelled accessible switch');
-    const writes=p.calls.localSets.length;await p.click(author);
+    const trigger=p.q('#authorFoldersTrigger');
+    assert(trigger && p.q('label[for="authorFoldersTrigger"]') && trigger.getAttribute('aria-haspopup')==='menu','R7author1: author folders are one labelled menu button');
+    const writes=p.calls.localSets.length;
+    await p.key(trigger,'Enter');
+    await p.click(p.q('[data-service="xAuthorFolders"]'));
     assert(p.calls.localSets.length===writes && p.q('#folderPreviewPath').textContent.includes('x/username/pic/'),'R7author2: author choice is a draft reflected in the preview');
+    await p.key(p.q('[role="menu"]'),'Escape');
     await p.click(p.q('#saveButton'));assert(state.local.xAuthorFolders===true,'R7author3: explicit Save persists author choice');
 
     // notifications
@@ -730,7 +759,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(langBox && langBox.getAttribute('role') === 'combobox' && full.q('label[for="languageSelect"]').textContent === 'Язык' && /Русский/.test(langBox.textContent), 'R13b: the language choice is a labelled combobox showing the current language');
     const quick = await page('quick', state);
     assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Настройки' && quick.doc.documentElement.lang === 'ru', 'R13c: the compact popup opens in the same language');
-    assert(full.text().includes('x.com: отдельная папка') && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13c-labels: Russian author-folder and link-preview settings display x.com');
+    assert(full.q('label[for="authorFoldersTrigger"]').textContent === 'Папки авторов' && full.q('#authorFoldersHint').textContent.includes('x.com') && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13c-labels: Russian author-folder and link-preview settings display x.com');
 
     const trackMotion = (p) => {
       const animations = [], listeners = new Set();
@@ -752,7 +781,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(tabNames(full) === 'Downloads|Statistics|Saving|Notifications|Embed|Updates|Debug' && full.doc.documentElement.lang === 'en' && full.doc.title === 'MediaLatch: downloads and settings', 'R13e: ru -> en switches the open page at once (tabs, lang, title)');
     assert(full.q('#subfolderInput').value === 'Unsaved/Edit' && full.q('#folderPreviewPath').textContent === 'Downloads/Unsaved/Edit/photo.jpg' && JSON.stringify(full.calls.localSets.slice(setsBefore)) === JSON.stringify([{ uiLanguage: 'en' }]), 'R13f: the unsaved folder edit is kept and only uiLanguage is written');
     assert(/Save settings/.test(full.q('#saveButton').textContent) && /“MediaLatch: Save media”/.test(full.text()) && full.q('label[for="languageSelect"]').textContent === 'Language', 'R13g: buttons, labels and the fixed menu title follow');
-    assert(full.text().includes('x.com: create a folder') && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13g-labels: English author-folder and link-preview labels display x.com');
+    assert(full.q('label[for="authorFoldersTrigger"]').textContent === 'Author folders' && full.q('#authorFoldersHint').textContent.includes('x.com') && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13g-labels: English author-folder and link-preview labels display x.com');
     await quick.settle(6);
     assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && quick.doc.documentElement.lang === 'en' && /Saved/.test(quick.qa('[data-job]')[1].textContent), 'R13h: the open compact popup follows the change made on the full page (rows and accessible names)');
     assert(full.qa('[data-slot="result-item"]').some((row) => row.textContent.includes('x.com')), 'R13h-labels: the loaded manager result card displays x.com for a stored x record');
@@ -861,6 +890,394 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const en = await page('full', { session: [], history: [], local: { uiLanguage: 'en', debugEnabled: true }, debug: { events: [ev(1)] } }, { hash: '#debug' });
     assert(/Debug journal/.test(en.q('[data-slot="debug"]').textContent) && /Recording/.test(en.q('[data-slot="debug-recording"]').textContent) && /1 kept · 0 dropped · 0 expired/.test(en.q('[data-slot="debug-counts"]').textContent) && /Background/.test(en.q('[data-slot="debug-event"]').textContent), 'R20o: the English page renders the journal in English');
     await en.unmount();
+  }
+
+  // =================================================================================================
+  console.log('\n--- R21. FIRST-RUN-SETUP-01 / UI-COMPLETION-01: install-only welcome with one Continue ---');
+  {
+    const KEY = 'firstRunGuideDismissed';
+    const T = {
+      en: { title: 'Quick start', cont: 'Continue', menu: '“MediaLatch: Save media”', failSave: /Could not remember that the guide is closed/ },
+      ru: { title: 'Быстрый старт', cont: 'Продолжить', menu: '«MediaLatch: Save media»', failSave: /Не удалось запомнить, что руководство закрыто/ },
+    };
+    const guide = (p) => p.q('section#onboarding');
+    const main = (p) => p.q('[data-slot="main"]');
+    const btn = (p, label, from) => p.qa('button', from || p.doc).find((b) => b.textContent.trim() === label);
+    const selected = (p) => p.tabs().find((t) => t.getAttribute('aria-selected') === 'true')?.getAttribute('data-section');
+    const activePanel = (p) => p.q('[role="tabpanel"][data-state="active"]');
+    // no tutorial entry anywhere on the normal page: no Quick start/Help button and no welcome text
+    const noTutorialEntry = (p) => !p.q('#onboardingHelp') && !p.qa('button').some((b) => /Quick start|Быстрый старт|Skip|Пропустить/.test(b.textContent));
+    {
+      const p = await page('full', { session: [], history: [], local: { uiLanguage: 'en' } });
+      assert(!p.consoleErrors.some((m) => /getSnapshot/.test(m)), 'R21C: the initial mounted snapshot has no getSnapshot caching warning');
+      await p.unmount();
+    }
+    for (const lang of ['en', 'ru']) for (const theme of ['violet', 'blue', 'dark', 'light']) {
+      const tx = T[lang];
+      const p = await page('full', { session: [], history: [], local: { uiLanguage: lang, uiTheme: theme } }, { search: '?welcome=1' });
+      const g = guide(p);
+      assert(g && p.doc.documentElement.dataset.theme === theme, `R21a ${lang}/${theme}: the install URL shows the welcome screen in the saved theme`);
+      assert(g && main(p).hidden && main(p).contains(p.q('[role="tablist"]')) && main(p).contains(p.q('#subfolderInput')) && !g.contains(p.q('[role="tablist"]')), `R21b ${lang}/${theme}: tabs, panels, Save bar and footer are mounted but hidden`);
+      assert(g && p.q('#onboardingTitle').textContent === tx.title && p.qa('ol[aria-label] > li', g).length === 3 && g.textContent.includes(tx.menu) && !/Explorer|Проводник|helper|native/i.test(g.textContent), `R21c ${lang}/${theme}: three steps naming the real menu item`);
+      assert(g && p.qa('button', g).map((b) => b.textContent.trim()).join('|') === tx.cont, `R21d ${lang}/${theme}: exactly one action, Continue; no Skip or jump buttons`);
+      assert(p.q('#themeSelect') && p.q('#languageSelect') && noTutorialEntry(p), `R21e ${lang}/${theme}: theme and language stay available; no tutorial entry in the header`);
+      assert(p.calls.localSets.length === 0 && p.calls.tabsCreate.length === 0 && p.calls.messages.every((m) => m !== 'DOWNLOADS_COMMAND'), `R21f ${lang}/${theme}: showing the welcome writes nothing and starts nothing`);
+      await p.unmount();
+    }
+
+    // loading: the main interface is not flashed while the marker read is pending
+    {
+      let release;
+      const state = { session: [], history: [], local: { uiLanguage: 'en' }, guideGate: new Promise((r) => { release = r; }) };
+      const p = await page('full', state, { search: '?welcome=1' });
+      assert(!guide(p) && main(p).hidden && p.q('[data-slot="welcome-loading"]')?.getAttribute('role') === 'status', 'R21g: while the marker is read only a loading status is shown');
+      release();
+      await p.settle(6);
+      assert(guide(p) && !p.q('[data-slot="welcome-loading"]'), 'R21h: the welcome screen follows the read');
+      await p.unmount();
+      let release2;
+      const done = { session: [], history: [], local: { uiLanguage: 'en', [KEY]: true }, guideGate: new Promise((r) => { release2 = r; }) };
+      const q = await page('full', done, { search: '?welcome=1' });
+      assert(main(q).hidden, 'R21i: an acknowledged profile also waits for the read');
+      release2();
+      await q.settle(6);
+      assert(!guide(q) && !main(q).hidden && noTutorialEntry(q) && done.local[KEY] === true, 'R21j: a completed install reveals the normal page with no tutorial entry; the marker stays true');
+      await q.unmount();
+    }
+
+    // ordinary pages, existing/completed profiles and the popup: no welcome, no tutorial entry, deep links unchanged
+    for (const lang of ['en', 'ru']) for (const local of [{ uiLanguage: lang }, { uiLanguage: lang, [KEY]: true }]) {
+      const p = await page('full', { session: [], history: [], local }, { hash: '#downloads' });
+      assert(!guide(p) && !main(p).hidden && selected(p) === 'downloads' && noTutorialEntry(p) && p.calls.localSets.length === 0, `R21k ${lang}/${KEY in local ? 'completed' : 'existing'}: no automatic welcome or tutorial entry; deep link intact; nothing written`);
+      await p.unmount();
+    }
+    const quick = await page('quick', { session: [], history: [], local: { uiLanguage: 'en' } }, { search: '?welcome=1' });
+    assert(!quick.q('section#onboarding') && noTutorialEntry(quick) && quick.q('#openSettingsButton'), 'R21l: the compact popup is unchanged');
+    await quick.unmount();
+
+    // Continue writes only the marker, then reveals Saving and focuses its panel
+    for (const lang of ['en', 'ru']) {
+      const state = { session: [], history: [], local: { uiLanguage: lang, uiTheme: 'blue', subfolder: 'Kept' } };
+      const p = await page('full', state, { search: '?welcome=1', hash: '#downloads' });
+      await p.click(btn(p, T[lang].cont));
+      assert(!guide(p) && !main(p).hidden && selected(p) === 'saving' && p.doc.activeElement === activePanel(p) && activePanel(p).contains(p.q('#subfolderInput')), `R21m ${lang}: Continue reveals Saving and focuses its panel`);
+      assert(JSON.stringify(p.calls.localSets) === JSON.stringify([{ [KEY]: true }]) && state.local.uiTheme === 'blue' && state.local.subfolder === 'Kept' && noTutorialEntry(p), `R21n ${lang}: only the dedicated marker is written; no tutorial entry afterwards`);
+      await p.unmount();
+      const again = await page('full', state, { search: '?welcome=1' });
+      assert(!guide(again) && !main(again).hidden, `R21o ${lang}: the welcome stays closed after a reload`);
+      await again.unmount();
+    }
+    {
+      const open = { session: [], history: [], local: { uiLanguage: 'en' } };
+      const unfinished = await page('full', open, { search: '?welcome=1' });
+      await unfinished.unmount();
+      const reload = await page('full', open, { search: '?welcome=1' });
+      assert(guide(reload) && !(KEY in open.local), 'R21p: closing the tab without Continue keeps the welcome for the next load');
+      await reload.unmount();
+    }
+
+    // write/read failures keep the welcome screen with a visible error; the retry works and only then reveals Saving
+    {
+      const state = { session: [], history: [], local: { uiLanguage: 'en' }, failSet: true };
+      const p = await page('full', state, { search: '?welcome=1' });
+      await p.click(btn(p, 'Continue'));
+      assert(guide(p) && main(p).hidden && T.en.failSave.test(p.q('[data-slot="onboarding-error"]').textContent) && !(KEY in state.local), 'R21q: a failed write keeps the welcome screen and the main interface hidden');
+      assert(p.qa('button', guide(p)).every((b) => !b.disabled), 'R21r: Continue is enabled again for a retry');
+      state.failSet = false;
+      await p.click(btn(p, 'Continue'));
+      assert(!guide(p) && state.local[KEY] === true && selected(p) === 'saving' && p.doc.activeElement === activePanel(p), 'R21s: the retry succeeds and reveals Saving');
+      await p.unmount();
+      const ru = await page('full', { session: [], history: [], local: { uiLanguage: 'ru' }, failSet: true }, { search: '?welcome=1' });
+      await ru.click(btn(ru, 'Продолжить'));
+      assert(T.ru.failSave.test(ru.q('[data-slot="onboarding-error"]').textContent), 'R21t: the failure is explained in Russian');
+      await ru.unmount();
+      const unreadable = await page('full', { session: [], history: [], local: { uiLanguage: 'en' }, failGet: true }, { search: '?welcome=1' });
+      assert(guide(unreadable) && /Could not check whether this guide|Не удалось проверить/.test(unreadable.q('[data-slot="onboarding-error"]')?.textContent || ''), 'R21u: an unreadable marker leaves the welcome open with a visible error');
+      await unreadable.unmount();
+    }
+
+    // language switch keeps the welcome and the mounted draft
+    {
+      const p = await page('full', { session: [], history: [], local: { uiLanguage: 'en' } }, { search: '?welcome=1' });
+      const input = p.q('#subfolderInput');
+      await p.type(input, 'Draft folder');
+      await p.language.setLanguage('ru');
+      await p.settle(6);
+      assert(guide(p).textContent.includes(T.ru.menu) && p.q('#subfolderInput') === input && input.value === 'Draft folder', 'R21w: a language switch keeps the welcome and the mounted draft');
+      await p.unmount();
+    }
+
+    // hidden Downloads does not acknowledge failures behind the welcome screen, nor while Saving is shown after Continue
+    {
+      const state = { session: [unnamedFailure()], history: [], local: { uiLanguage: 'en' } };
+      const p = await page('full', state, { search: '?welcome=1', hash: '#downloads' });
+      const acks = () => p.calls.messages.filter((m) => m === 'FEEDBACK_MARK_SEEN').length;
+      assert(acks() === 0, 'R21D: an install welcome over a Downloads deep link acknowledges nothing');
+      state.session.push(unnamedFailure());
+      for (const cb of state.changeListeners || []) cb({ imageSaverFeedbackV1: { newValue: {} } }, 'session');
+      await p.settle(8);
+      assert(acks() === 0, 'R21A: a failure arriving behind the welcome screen is not acknowledged');
+      await p.click(btn(p, 'Continue'));
+      await p.settle(8);
+      assert(acks() === 0 && selected(p) === 'saving', 'R21E: Continue shows Saving; Downloads stays unacknowledged');
+      await p.mousedown(p.q('[role="tab"][data-section="downloads"]'));
+      await p.settle(8);
+      assert(acks() === 1, 'R21B: failures are acknowledged once Downloads is actually shown');
+      await p.unmount();
+    }
+  }
+
+  // =================================================================================================
+  console.log('\n--- R22. UI-COMPLETION-01: settings lifecycle states ---');
+  const btn22 = (p, label, from) => p.qa('button', from).find((b) => b.textContent.trim() === label);
+  for (const lang of ['en', 'ru']) {
+    const L = lang === 'en'
+      ? { unsaved: 'Unsaved changes', failed: 'Could not save the settings', load: 'Could not load the settings', retry: 'Try again' }
+      : { unsaved: 'Есть несохранённые изменения', failed: 'Не удалось сохранить настройки', load: 'Ошибка загрузки настроек', retry: 'Повторить' };
+    const state = { session: [], history: [], local: { uiLanguage: lang, subfolder: 'Stored' } };
+    const p = await page('full', state, { hash: '#saving' });
+    const status = () => p.q('#statusMessage');
+    assert(status().getAttribute('data-type') === '' && status().textContent === '', `R22a ${lang}: a freshly loaded form shows no status`);
+    await p.type(p.q('#subfolderInput'), 'Changed');
+    assert(status().getAttribute('data-type') === 'dirty' && status().textContent.includes(L.unsaved), `R22b ${lang}: an edit is shown as unsaved`);
+    await p.type(p.q('#subfolderInput'), 'Stored');
+    assert(status().getAttribute('data-type') === '', `R22c ${lang}: returning to the stored value clears the unsaved mark`);
+    await p.mousedown(p.q('[role="tab"][data-section="embed"]'));
+    await p.type(p.q('#subfolderInput'), 'Changed');
+    assert(p.q('#settingsSaveBar') && status().getAttribute('data-type') === 'dirty', `R22d ${lang}: the unsaved mark is visible on the Embed tab too`);
+    state.failSet = true;
+    await p.click(p.q('#saveButton'));
+    assert(status().getAttribute('data-type') === 'error' && status().textContent.includes(L.failed) && !p.q('#saveButton').disabled && state.local.subfolder === 'Stored', `R22e ${lang}: a failed save shows a lasting error and keeps the draft unsaved`);
+    state.failSet = false;
+    await p.click(p.q('#saveButton'));
+    assert(status().getAttribute('data-type') === 'success' && state.local.subfolder === 'Changed', `R22f ${lang}: the retry saves and reports success`);
+    await p.unmount();
+
+    const broken = { session: [], history: [], uiLanguage: lang, local: { uiLanguage: lang, subfolder: 'Mine' }, failGet: true };
+    const b = await page('full', broken, { hash: '#saving' });
+    const alerts = () => b.qa('[data-slot="settings-load-error"]');
+    assert(alerts().length === 2 && alerts()[0].textContent.includes(lang === 'en' ? L.load : 'Ошибка загрузки настроек') && b.q('#subfolderInput').disabled && b.q('#saveButton').disabled, `R22g ${lang}: a failed read is shown in Saving and Embed, the form and Save stay disabled`);
+    assert(b.q('#statusMessage').textContent === '', `R22h ${lang}: the Save bar does not repeat the read failure`);
+    broken.failGet = false;
+    await b.click(btn22(b, L.retry, alerts()[0]));
+    assert(alerts().length === 0 && !b.q('#subfolderInput').disabled && b.q('#subfolderInput').value === 'Mine' && b.calls.localSets.every((o) => !('subfolder' in o)), `R22i ${lang}: Retry reads the stored values through the same load, writing nothing`);
+    assert(b.doc.activeElement === b.q('[role="tabpanel"][data-state="active"]'), `R22j ${lang}: focus moves to the recovered panel, not the page body`);
+    await b.unmount();
+  }
+
+  // =================================================================================================
+  console.log('\n--- R23. UI-COMPLETION-01: localized download failures and list recovery ---');
+  {
+    const codes = ['STORAGE_QUOTA', 'AUTH_REQUIRED', 'RATE_LIMIT', 'NETWORK_TIMEOUT', 'HTTP_404', 'INVALID_MEDIA', 'SOURCE_EXPIRED', 'EXPORT_UNCERTAIN', 'DIRECTORY_ACCESS_REQUIRED', 'NEW_UNMAPPED_CODE'];
+    const expected = {
+      en: { STORAGE_QUOTA: 'Local storage is full', AUTH_REQUIRED: 'Access required', RATE_LIMIT: 'Too many requests', NETWORK_TIMEOUT: 'Network error', HTTP_404: 'File not found', INVALID_MEDIA: 'Invalid content', SOURCE_EXPIRED: 'Source no longer available', EXPORT_UNCERTAIN: 'Save not confirmed', DIRECTORY_ACCESS_REQUIRED: 'Folder unavailable', NEW_UNMAPPED_CODE: 'Reason not determined' },
+      ru: { STORAGE_QUOTA: 'Локальное хранилище заполнено', AUTH_REQUIRED: 'Нужен доступ', RATE_LIMIT: 'Слишком много запросов', NETWORK_TIMEOUT: 'Сетевая ошибка', HTTP_404: 'Файл не найден', INVALID_MEDIA: 'Недопустимое содержимое', SOURCE_EXPIRED: 'Источник больше недоступен', EXPORT_UNCERTAIN: 'Сохранение не подтверждено', DIRECTORY_ACCESS_REQUIRED: 'Папка недоступна', NEW_UNMAPPED_CODE: 'Причина не определена' },
+    };
+    for (const lang of ['en', 'ru']) for (const kind of ['quick', 'full']) {
+      const jobs = codes.map((code) => ({ id: 'job-' + code, filename: code.toLowerCase() + '-with-a-rather-long-file-name-to-wrap.mp4', state: 'failed', received: 2048, total: 4096, speed: 0, error: code, ready: code === 'STORAGE_QUOTA' }));
+      const p = await page(kind, { session: [], history: [], jobs, local: { uiLanguage: lang } }, kind === 'full' ? { hash: '#downloads' } : {});
+      const cards = p.qa('[data-job]');
+      const titles = cards.map((c) => c.querySelector('[data-slot="job-error"] p')?.textContent);
+      assert(cards.length === codes.length && codes.every((c, i) => titles[i] === expected[lang][c]), `R23a ${kind}/${lang}: every error code has a localized title (${titles.join(' | ')})`);
+      assert(cards.every((c, i) => c.querySelector('[data-slot="job-error"]').textContent.includes(codes[i]) && c.querySelector('[data-slot="job-error"] .font-mono')), `R23b ${kind}/${lang}: the technical code stays on its own small line`);
+      const quota = cards[0].querySelector('[data-slot="job-error"]').textContent;
+      assert(quota.includes(lang === 'en' ? 'Prepared file retained for retry' : 'Готовый файл сохранён для повтора') && (kind === 'full') === quota.includes(lang === 'en' ? 'Free some disk space' : 'Освободите место'), `R23c ${kind}/${lang}: retained bytes are named; the next step appears on the full page only`);
+      const uncertain = cards[codes.indexOf('EXPORT_UNCERTAIN')];
+      assert(!uncertain.querySelector(`button[aria-label="${lang === 'en' ? 'Retry download' : 'Повторить загрузку'}"]`) && cards[1].querySelector(`button[aria-label="${lang === 'en' ? 'Retry download' : 'Повторить загрузку'}"]`), `R23d ${kind}/${lang}: retry eligibility is unchanged (none for an uncertain export)`);
+      await p.unmount();
+    }
+    // a resolver failure the shared taxonomy leaves uncategorized is explained by its code
+    {
+      const batch = rec({ state: 'failed', filename: '', filenameKind: '', output: {}, failure: failure('resolve', 'unknown', { code: 'BATCH_LIMIT' }) });
+      const p = await page('full', { session: [batch], history: [], local: { uiLanguage: 'en' } }, { hash: '#downloads' });
+      assert(p.rows()[0]?.textContent.includes('Too many media in one post'), 'R23e: a batch-limit failure is explained instead of "Reason not determined"');
+      await p.unmount();
+    }
+    // list failure: retained cards, explicit retry, distinct from loading and empty
+    for (const kind of ['quick', 'full']) {
+      const state = { session: [], history: [], local: { uiLanguage: 'en' }, jobs: [{ id: 'job-live', filename: 'live.mp4', state: 'receiving', received: 1024, total: 4096, speed: 512 }] };
+      const p = await page(kind, state, kind === 'full' ? { hash: '#downloads' } : {});
+      assert(p.qa('[data-job]').length === 1 && !p.q('[data-slot="downloads-error"]'), `R23f ${kind}: the list loads`);
+      state.failMessages = true;
+      for (const cb of state.msgListeners || []) cb({ action: 'DOWNLOADS_CHANGED' });
+      await p.settle(6);
+      const alert = p.q('[data-slot="downloads-error"]');
+      assert(alert && alert.textContent.includes('Downloads could not be loaded') && p.qa('[data-job]').length === 1 && p.q('progress[value="1024"]') && !p.q('[data-slot="empty"]'), `R23g ${kind}: a failed refresh keeps the card and its progress and is not shown as empty`);
+      const retry = p.qa('button', alert).find((x) => x.textContent.trim() === 'Try again');
+      assert(retry && !retry.disabled, `R23h ${kind}: the list error offers Try again`);
+      await p.click(retry);
+      assert(p.q('[data-slot="downloads-error"]') && p.qa('[data-job]').length === 1, `R23i ${kind}: a failing retry keeps the error and the card`);
+      state.failMessages = false;
+      state.jobs = [];
+      await p.click(p.qa('button', p.q('[data-slot="downloads-error"]')).find((x) => x.textContent.trim() === 'Try again'));
+      assert(!p.q('[data-slot="downloads-error"]') && p.q('[data-slot="empty"]'), `R23j ${kind}: a successful retry clears the error and shows the real (empty) list`);
+      assert(p.doc.activeElement === p.q('section[aria-label="Downloads"]'), `R23j2 ${kind}: focus moves to the recovered list`);
+      await p.unmount();
+      const first = await page(kind, { session: [], history: [], local: { uiLanguage: 'en' }, failMessages: true }, kind === 'full' ? { hash: '#downloads' } : {});
+      assert(first.q('[data-slot="downloads-error"]') && !first.q('[data-slot="empty"]') && !first.text().includes('Loading downloads'), `R23k ${kind}: a failed first load is an error, not loading or empty`);
+      await first.unmount();
+    }
+  }
+
+  // =================================================================================================
+  console.log('\n--- R24. UI-COMPLETION-01 follow-up: truthful save status, overlapping retry, matched failure texts ---');
+  for (const lang of ['en', 'ru']) for (const tab of ['saving', 'embed']) {
+    const L = lang === 'en' ? { unsaved: 'Unsaved changes', saved: 'Settings saved' } : { unsaved: 'Есть несохранённые изменения', saved: 'Настройки успешно сохранены' };
+    const state = { session: [], history: [], local: { uiLanguage: lang, subfolder: 'Stored', xShareHost: 'fixupx.com' } };
+    const p = await page('full', state, { hash: '#' + tab });
+    const status = () => p.q('#statusMessage');
+    // the draft edit for each tab: the folder field on Saving, a share host on Embed (the Radix select writes through setField)
+    const edit = async (n) => {
+      if (tab === 'saving') await p.type(p.q('#subfolderInput'), 'Folder' + n);
+      else { await p.U.act(async () => { p.settings.setField('xShareHost', n % 2 ? 'x.com' : 'cunnyx.com'); }); await p.settle(2); }
+    };
+    // clean save shows success
+    await edit(1);
+    await p.click(p.q('#saveButton'));
+    assert(status().getAttribute('data-type') === 'success' && status().textContent.includes(L.saved), `R24a ${lang}/${tab}: a clean save still shows success`);
+    // sequence 1: save, then edit immediately: unsaved replaces the stale success at once
+    await edit(2);
+    assert(status().getAttribute('data-type') === 'dirty' && status().textContent.includes(L.unsaved) && !status().textContent.includes(L.saved), `R24b ${lang}/${tab}: an edit right after a successful save shows unsaved changes, not "saved"`);
+    // sequence 2: edit during an awaited save: saving while pending, then unsaved (not "saved") once it completes
+    let release;
+    state.setGate = new Promise((r) => { release = r; });
+    await p.click(p.q('#saveButton'));
+    assert(status().getAttribute('data-type') === 'saving', `R24c ${lang}/${tab}: the awaited write shows saving`);
+    await edit(3);
+    assert(status().getAttribute('data-type') === 'saving', `R24d ${lang}/${tab}: saving keeps precedence while the write is pending`);
+    release(); state.setGate = null;
+    await p.settle(6);
+    assert(status().getAttribute('data-type') === 'dirty' && status().textContent.includes(L.unsaved), `R24e ${lang}/${tab}: after the awaited save the edit made meanwhile is shown as unsaved`);
+    // a failure keeps precedence over the unsaved mark
+    state.failSet = true;
+    await p.click(p.q('#saveButton'));
+    assert(status().getAttribute('data-type') === 'error', `R24f ${lang}/${tab}: a failed save shows its error, not just unsaved`);
+    state.failSet = false;
+    await p.click(p.q('#saveButton'));
+    assert(status().getAttribute('data-type') === 'success', `R24g ${lang}/${tab}: the clean retry shows success again`);
+    await p.unmount();
+  }
+
+  // overlapping list refresh: all four older-automatic -> queued-retry outcomes. Retry stays the same focused, busy control until its
+  // own read finished; failure leaves it focused and usable, success hands focus to the recovered list; cards are retained throughout
+  for (const kind of ['quick', 'full']) for (const auto of ['ok', 'fail']) for (const queued of ['ok', 'fail']) {
+    const tag = `${kind}/auto-${auto}/queued-${queued}`;
+    const state = { session: [], history: [], local: { uiLanguage: 'en' }, jobs: [{ id: 'job-live', filename: 'live.mp4', state: 'receiving', received: 1024, total: 4096, speed: 512 }] };
+    const p = await page(kind, state, kind === 'full' ? { hash: '#downloads' } : {});
+    const fire = () => { for (const cb of state.msgListeners || []) cb({ action: 'DOWNLOADS_CHANGED' }); };
+    const reads = () => p.calls.messages.filter((m) => m === 'DOWNLOADS_LIST').length;
+    const alertBox = () => p.q('[data-slot="downloads-error"]');
+    const retryBtn = () => alertBox() && p.qa('button', alertBox()).find((x) => x.textContent.trim() === 'Try again');
+    // the list becomes unavailable
+    state.downloadGates = [Promise.resolve('fail')];
+    fire();
+    await p.settle(6);
+    assert(retryBtn() && p.qa('[data-job]').length === 1, `R24h ${tag}: the list error offers Try again and keeps the card`);
+    // an automatic refresh is in flight when the user activates Retry from the keyboard; both reads are held
+    let finishAuto, finishQueued;
+    state.downloadGates = [new Promise((r) => { finishAuto = r; }), new Promise((r) => { finishQueued = r; })];
+    fire();
+    await p.settle(2);
+    const button = retryBtn();
+    button.focus();
+    await p.key(button, 'Enter');
+    await p.click(button); // a native button activates on Enter with a click event
+    assert(p.doc.activeElement === button && button.getAttribute('aria-disabled') === 'true' && !button.disabled, `R24i ${tag}: while the automatic refresh is pending Retry is busy but keeps focus`);
+    const readsBusy = reads();
+    await p.click(button);
+    await p.settle(2);
+    assert(reads() === readsBusy, `R24i2 ${tag}: activating the busy Retry again requests nothing more`);
+    // the older automatic read finishes first
+    finishAuto(auto);
+    await p.settle(8);
+    assert(retryBtn() === button && p.doc.activeElement === button && button.getAttribute('aria-disabled') === 'true' && p.qa('[data-job]').length === 1, `R24p ${tag}: after the automatic read the same Retry is still busy and focused; the card stays`);
+    if (auto === 'ok') assert(alertBox() && !alertBox().textContent.includes('Downloads could not be loaded') && alertBox().textContent.includes('Loading downloads'), `R24q ${tag}: a successful background read is not presented as a failure while the retry is pending`);
+    // then the queued user retry finishes
+    finishQueued(queued);
+    await p.settle(8);
+    if (queued === 'ok') {
+      assert(!alertBox() && p.doc.activeElement === p.q('section[aria-label="Downloads"]') && p.qa('[data-job]').length === 1, `R24j ${tag}: once the queued read succeeds, focus moves to the recovered list and the card stays`);
+    } else {
+      assert(retryBtn() === button && p.doc.activeElement === button && button.getAttribute('aria-disabled') === 'false' && alertBox()?.textContent.includes('Downloads could not be loaded') && p.qa('[data-job]').length === 1, `R24k ${tag}: a failed recovery leaves the same Retry focused and usable, the failure visible and the card in place`);
+    }
+    assert(reads() === readsBusy + 1, `R24l ${tag}: exactly one read was requested by the retry, after the automatic one`);
+    await p.unmount();
+  }
+
+  // matched job + feedback record: the row, the expanded details and the manager card explain the same code
+  for (const lang of ['en', 'ru']) for (const [code, title] of [['STORAGE_QUOTA', lang === 'en' ? 'Local storage is full' : 'Локальное хранилище заполнено'], ['PREPARED_FILE_MISSING', lang === 'en' ? 'Prepared file is gone' : 'Готовый файл недоступен']]) {
+    const record = rec({ state: 'failed', filename: 'clip.mp4', filenameKind: 'intended', output: { type: 'video', ext: '.mp4', evidence: 'filename_hint' }, failure: failure('download', 'download_interrupted', { code }) });
+    const jobs = [{ id: 'job-match', op: record.id, filename: 'clip.mp4', state: 'failed', received: 2048, total: 4096, speed: 0, error: code, ready: false }];
+    const p = await page('full', { session: [record], history: [], jobs, local: { uiLanguage: lang } }, { search: '?op=' + record.id, hash: '#downloads' });
+    const row = p.rows()[0];
+    const details = p.q('[data-slot="result-details"]');
+    const contradict = lang === 'en' ? /Chrome stopped downloading/ : /Chrome остановил загрузку/;
+    assert(row && row.querySelector('[data-slot="job-error"] p').textContent === title, `R24m ${lang}/${code}: the manager card explains the code`);
+    assert(details && details.querySelector('[data-slot="title"]').textContent.includes(title) && !contradict.test(details.textContent), `R24n ${lang}/${code}: the expanded details say the same, without the generic Chrome interruption text`);
+    assert(details.textContent.includes(code), `R24o ${lang}/${code}: the recorded code stays visible as evidence`);
+    await p.unmount();
+  }
+
+  // =================================================================================================
+  console.log('\n--- R25. PIXIV-SAVING-POLISH-01: author-folder service menu ---');
+  {
+    const L = { en: { label: 'Author folders', off: 'Off' }, ru: { label: 'Папки авторов', off: 'Выкл.' } };
+    const menu = (p) => p.q('[role="menu"]');
+    const item = (p, key) => p.q(`[data-service="${key}"]`);
+    const summary = (p) => p.q('#authorFoldersSummary').textContent;
+    for (const lang of ['en', 'ru']) for (const theme of ['violet', 'blue', 'dark', 'light']) {
+      const p = await page('full', { session: [], history: [], local: { uiLanguage: lang, uiTheme: theme } }, { hash: '#saving' });
+      const trigger = p.q('#authorFoldersTrigger');
+      assert(trigger && trigger.tagName === 'BUTTON' && p.q('label[for="authorFoldersTrigger"]').textContent === L[lang].label && trigger.getAttribute('aria-haspopup') === 'menu' && trigger.getAttribute('aria-expanded') === 'false', `R25a ${lang}/${theme}: one labelled menu button`);
+      assert(summary(p) === L[lang].off && !p.q('#xAuthorFolders'), `R25b ${lang}/${theme}: defaults are off and the old switch is gone`);
+      await p.unmount();
+    }
+    // the existing x.com choice survives; Reddit/Pixiv default off
+    {
+      const p = await page('full', { session: [], history: [], local: { uiLanguage: 'en', xAuthorFolders: true } }, { hash: '#saving' });
+      assert(summary(p) === 'x.com' && p.q('#folderPreviewPath').textContent.includes('username/photo.jpg'), 'R25c: a stored x.com choice is shown and kept');
+      await p.unmount();
+    }
+    // keyboard: open, several choices without closing, Escape closes and returns focus; explicit Save; reopen
+    {
+      const state = { session: [], history: [], local: { uiLanguage: 'en', xAuthorFolders: true, folderOrganizationMode: 'by_site_and_type' } };
+      const p = await page('full', state, { hash: '#saving' });
+      const trigger = p.q('#authorFoldersTrigger');
+      trigger.focus();
+      await p.key(trigger, 'Enter');
+      assert(menu(p) && trigger.getAttribute('aria-expanded') === 'true', 'R25d: Enter opens the menu');
+      const items = p.qa('[role="menuitemcheckbox"]');
+      assert(items.map((x) => x.textContent.trim()).join('|') === 'x.com|Reddit|Pixiv' && items.map((x) => x.getAttribute('aria-checked')).join() === 'true,false,false', 'R25e: three labelled checkbox items with their states');
+      await p.click(item(p, 'xAuthorFolders'));
+      await p.click(item(p, 'redditAuthorFolders'));
+      await p.click(item(p, 'pixivAuthorFolders'));
+      assert(menu(p) && item(p, 'redditAuthorFolders').getAttribute('aria-checked') === 'true' && item(p, 'pixivAuthorFolders').getAttribute('aria-checked') === 'true' && item(p, 'xAuthorFolders').getAttribute('aria-checked') === 'false', 'R25f: several choices toggle while the menu stays open');
+      assert(summary(p) === 'Reddit, Pixiv' && p.q('#folderPreviewPath').textContent.includes('reddit/username/pic/') && p.calls.localSets.length === 0 && p.q('#statusMessage').getAttribute('data-type') === 'dirty', 'R25g: a draft: summary and example follow, nothing is written, unsaved is shown');
+      await p.key(menu(p), 'Escape');
+      await p.settle(4);
+      assert(!menu(p) && p.doc.activeElement === trigger, 'R25h: Escape closes the menu and returns focus to the button');
+      state.failSet = true;
+      await p.click(p.q('#saveButton'));
+      assert(summary(p) === 'Reddit, Pixiv' && state.local.redditAuthorFolders === undefined && p.q('#statusMessage').getAttribute('data-type') === 'error', 'R25i: a failed save keeps the choices as an unsaved draft');
+      state.failSet = false;
+      await p.click(p.q('#saveButton'));
+      assert(state.local.xAuthorFolders === false && state.local.redditAuthorFolders === true && state.local.pixivAuthorFolders === true, 'R25j: explicit Save writes the three choices');
+      await p.unmount();
+      const again = await page('full', state, { hash: '#saving' });
+      assert(summary(again) === 'Reddit, Pixiv', 'R25k: the saved choices are shown after reopening');
+      await again.unmount();
+    }
+    // Pixiv only: the example names the author with its user id; all off: no author folder
+    {
+      const p = await page('full', { session: [], history: [], local: { uiLanguage: 'ru', pixivAuthorFolders: true, folderOrganizationMode: 'by_site_and_type' } }, { hash: '#saving' });
+      assert(p.q('#folderPreviewPath').textContent.includes('pixiv/Автор (12345678)/pic/') && summary(p) === 'Pixiv', 'R25l: a Pixiv-only choice shows the name + id example (RU)');
+      await p.key(p.q('#authorFoldersTrigger'), 'Enter');
+      await p.key(item(p, 'pixivAuthorFolders'), ' ');
+      assert(item(p, 'pixivAuthorFolders')?.getAttribute('aria-checked') === 'false' && menu(p), 'R25m: Space toggles the focused choice and keeps the menu open');
+      await p.key(menu(p), 'Escape');
+      assert(summary(p) === 'Выкл.' && p.q('#folderPreviewPath').textContent.endsWith('/x/pic/photo.jpg'), 'R25n: no choice means the usual layout');
+      await p.unmount();
+    }
   }
 
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);

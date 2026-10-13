@@ -694,7 +694,7 @@ async function runTests() {
     'https://www.pixiv.net/',
     'https://www.pixiv.net/artworks/149989236'
   );
-  assert(feedCandidates[0] === 'https://i.pximg.net/img-original/img/2026/09/23/00/00/41/149989236_p0.jpg', 'Pixiv лента: получение оригинального URL через Ajax API');
+  assert(String(feedCandidates[0]) === 'https://i.pximg.net/img-original/img/2026/09/23/00/00/41/149989236_p0.jpg' && feedCandidates[0].tier === 'original', 'Pixiv лента: получение оригинального URL через Ajax API (объявленный оригинал этого же illust — уровень original)');
 
   // 10. Pixiv artwork: сохранение прямого URL оригинала со страницы artwork
   const directOriginalResult = await sandbox.resolveOriginalImageUrl({
@@ -3320,7 +3320,7 @@ async function runTests() {
       if (u.includes('yande.re/post.json')) {
         return streamedMetadata({
           ok: true, status: 200,
-          json: async () => [{ id: 1269108, file_url: expectedOriginal }]
+          json: async () => [{ id: 1269108, md5: '74d7d60bb4be262d512225e9e5fc11a7', file_url: expectedOriginal }]
         });
       }
       if (u === expectedOriginal) {
@@ -4997,7 +4997,7 @@ async function runTests() {
       'Gelbooru protected path продолжает работать'
     );
 
-    // 10. Pixiv path не изменяется
+    // 10. Pixiv: the exact declared original URL is handed to the download (the manager acquires it; no in-worker data URL)
     const prevCountPixiv = downloadedCalls.length;
     await sandbox.executeMediaDownload({
       targetImageUrl: 'https://i.pximg.net/img-original/img/2026/01/01/00/00/00/123456_p0.jpg',
@@ -5008,8 +5008,8 @@ async function runTests() {
     const lastCallPixiv = downloadedCalls[downloadedCalls.length - 1];
     assert(
       downloadedCalls.length === prevCountPixiv + 1 &&
-      lastCallPixiv.url.startsWith('data:image/jpeg;base64,'),
-      'Pixiv path не изменяется'
+      lastCallPixiv.url === 'https://i.pximg.net/img-original/img/2026/01/01/00/00/00/123456_p0.jpg',
+      'Pixiv: точный объявленный URL оригинала передаётся загрузке (без data URL в памяти воркера)'
     );
   }
 
@@ -9322,6 +9322,7 @@ async function runTests() {
             status: 200,
             json: async () => [{
               id: 999,
+              md5: '1234567890abcdef1234567890abcdef',
               file_url: 'https://sakugabooru.com/data/1234567890abcdef1234567890abcdef.mp4',
               file_ext: 'mp4'
             }]
@@ -9763,6 +9764,7 @@ async function runTests() {
             status: 200,
             json: async () => [{
               id: 888,
+              md5: '1234567890abcdef1234567890abcdef',
               file_url: 'https://sakugabooru.com/data/1234567890abcdef1234567890abcdef.webm?download=1',
               file_ext: 'webm'
             }]
@@ -11189,6 +11191,7 @@ async function runTests() {
             ok: true,
             status: 200,
             json: async () => [{
+              md5: testMd5,
               file_url: webmUrl,
               large_file_url: origJpgUrl,
               file_ext: 'webm'
@@ -11222,6 +11225,7 @@ async function runTests() {
             ok: true,
             status: 200,
             json: async () => [{
+              md5: testMd5,
               file_url: webmUrl,
               large_file_url: origJpgUrl,
               file_ext: 'webm'
@@ -11255,6 +11259,7 @@ async function runTests() {
             ok: true,
             status: 200,
             json: async () => [{
+              md5: testMd5,
               file_url: webmUrl,
               large_file_url: origJpgUrl,
               file_ext: 'webm'
@@ -11287,6 +11292,35 @@ async function runTests() {
         downloads429.length === 0 &&
         badge429 === 'RATE',
         '215.6: Ошибки 401, 403 и 429 авторитетного WebM оригинала блокируют даунгрейд на original-tier JPEG того же ассета'
+      );
+    }
+
+    // 215.8 (BOORU-ENGINE-01 follow-up): a selected Konachan JPEG version whose md5 metadata fails is refused by the menu handler
+    // (no download of the JPEG version), while the same selection with a valid answer downloads the declared PNG once.
+    {
+      const md5 = '3726c83606efff1bed4bdea5b5c4131f';
+      const jpegUrl = `https://konachan.net/jpeg/${md5}/Konachan.com%20-%20409426%20yukata.jpg`;
+      const pngUrl = `https://konachan.net/image/${md5}/Konachan.com%20-%20409426%20yukata.png`;
+      const image = (mime) => ({ ok: true, status: 200, headers: { get: (h) => h.toLowerCase() === 'content-type' ? mime : (h.toLowerCase() === 'content-length' ? '900000' : null) } });
+      const runSave = async (metadata, id) => {
+        sandbox.fetch = async (url) => {
+          const u = typeof url === 'string' ? url : (url.url || '');
+          if (/konachan\.net\/(post|posts|index)/.test(u)) return metadata === 503 ? { ok: false, status: 503, headers: { get: () => null }, body: null } : streamedMetadata({ ok: true, status: 200, json: async () => metadata });
+          if (u === jpegUrl) return image('image/jpeg');
+          if (u === pngUrl) return image('image/png');
+          return { ok: false, status: 404, headers: { get: () => null } };
+        };
+        mockChrome._lastBadgeText = '';
+        const before = downloadedCalls.length;
+        await mockChrome.contextMenus._handler({ menuItemId: 'save-image-item', srcUrl: jpegUrl, pageUrl: 'https://konachan.net/post/show/409426' }, { id });
+        return { downloads: downloadedCalls.slice(before), badge: mockChrome._lastBadgeText };
+      };
+      const refused = await runSave(503, 2171);
+      const saved = await runSave([{ id: 409426, md5, file_ext: 'png', file_url: pngUrl, jpeg_url: jpegUrl }], 2172);
+      assert(
+        refused.downloads.length === 0 && refused.badge === 'ERR' &&
+        saved.downloads.length === 1 && saved.downloads[0].url === pngUrl && saved.downloads[0].filename.endsWith('.png'),
+        '215.8: выбранная JPEG-версия Konachan при сбое метаданных отклоняется без загрузки; при корректном ответе скачивается объявленный PNG'
       );
     }
 
@@ -26367,8 +26401,15 @@ async function runTests() {
             release(); await settleN(w, 150);
             const d = downloadedCalls.slice(before);
             const failed = await failedSince(k);
-            assert(inFlight >= 2 && d.length === 2 && d.every((x) => /GONE_(0|1)/.test(x.url)) && !fetched.some((u) => /GONE_(2|3)|RECYCLED_NEW/.test(u)), `252.B12 (${name}): уже идущие два сохранения завершаются, остальные не запускаются и не переадресованы на другой пост (ни запроса, ни загрузки)`);
-            assert(failed.length === 2 && errBadges() > errs, `252.B12b (${name}): оставшиеся два элемента честно показаны как отказ (две операции с ошибкой, ERR)`);
+            if (/SPA/.test(name)) {
+              assert(inFlight >= 2 && d.length === 2 && d.every((x) => /GONE_(0|1)/.test(x.url)) && !fetched.some((u) => /GONE_(2|3)|RECYCLED_NEW/.test(u)), `252.B12 (${name}): уже идущие два сохранения завершаются, остальные не запускаются и не переадресованы на другой пост (ни запроса, ни загрузки)`);
+              assert(failed.length === 2 && errBadges() > errs, `252.B12b (${name}): оставшиеся два элемента честно показаны как отказ (две операции с ошибкой, ERR)`);
+            } else {
+              // UNIVERSAL-SELECTION-SNAPSHOT-01: the batch was admitted when it opened; the post scrolling away, being removed or recycled afterwards
+              // cannot drop or redirect a slot: all four admitted items are saved with their admitted addresses, the recycled media is never requested
+              assert(d.length === 4 && ['GONE_0', 'GONE_1', 'GONE_2', 'GONE_3'].every((n) => d.filter((x) => x.url.includes(n)).length === 1) && !fetched.some((u) => /RECYCLED_NEW/.test(u)), `252.B12 (${name}): all four admitted items saved exactly, nothing of the recycled post requested: ` + JSON.stringify(d.map((x) => x.url)));
+              assert(failed.length === 0, `252.B12b (${name}): no failure`);
+            }
           }
 
           // ---- every item is proven before privileged work ----
@@ -26409,7 +26450,7 @@ async function runTests() {
             w.clickAll(); await settleN(w, 150);
             const d = downloadedCalls.slice(before);
             const failed = await failedSince(k);
-            assert(d.length === 3 && ['ITEM_0', 'ITEM_1', 'ITEM_3'].every((n) => d.some((x) => x.url.includes(n))) && !fetched.some((u) => /ITEM_2|ITEM_NEW/.test(u)) && failed.length === 1, '252.B13c: сменивший источник элемент пропущен и показан как отказ, остальные три сохранены, чужой адрес не запрошен');
+            assert(d.length === 4 && ['ITEM_0', 'ITEM_1', 'ITEM_2', 'ITEM_3'].every((n) => d.some((x) => x.url.includes(n))) && !fetched.some((u) => /ITEM_NEW/.test(u)) && failed.length === 0, '252.B13c: an item re-sourced after the batch opened keeps its admitted address (all four saved); the new address is never requested');
           }
           {
             // the owner is replaced before the second item's proof: the batch stops, the item already running stays
@@ -26421,7 +26462,7 @@ async function runTests() {
             hoverTile(w, g, 0);
             w.clickAll(); await settleN(w, 150);
             const d = downloadedCalls.slice(before);
-            assert(d.length === 1 && /OWN_0/.test(d[0].url) && !fetched.some((u) => /OWN_(1|2)/.test(u)) && itemAsks(w).length === 2, '252.B13d: владелец заменён перед доказательством второго элемента: пакет остановлен (доказательства запрошены только для двух элементов), уже начатое первое сохранено, остальное не запрошено');
+            assert(d.length === 3 && ['OWN_0', 'OWN_1', 'OWN_2'].every((n) => d.filter((x) => x.url.includes(n)).length === 1) && itemAsks(w).length === 3, '252.B13d: the owner replaced after the batch opened: every admitted item is still saved from its frozen descriptor');
           }
 
           // ---- the background gate for Save all ----
@@ -26627,7 +26668,8 @@ async function runTests() {
             const dB24 = downloadedCalls.slice(beforeB24);
             assert(dB24.length === 2 && dB24.some((x) => /SLOT_PHOTO/.test(x.url) && /\.jpg$/i.test(x.filename)) && dB24.some((x) => /rec2030\.mp4\?tag=12/.test(x.url) && /\.mp4$/i.test(x.filename)), '252.B24e: «Save all» для поста из blob-плеера и фото: вариант MP4 восстанавливается через executeScript в MAIN world и оба медиа скачиваются');
             const videoExec = execCallsList.find((c) => c && c.world === 'MAIN');
-            assert(videoExec && videoExec.args[0].tweetId === '2030' && videoExec.args[0].postUrl === 'https://x.com/someone/status/2030' && videoExec.args[0].x === 180 && videoExec.args[0].y === 300, '252.B24f: executeScript вызван в MAIN world с параметрами blob-плеера (tweetId, postUrl, координаты центра 180, 300)');
+            // UNIVERSAL-SELECTION-SNAPSHOT-01: a frozen batch slot recovers its player by its post id, never at a page point that scrolling may have given to another post
+            assert(videoExec && videoExec.args[0].tweetId === '2030' && videoExec.args[0].postUrl === 'https://x.com/someone/status/2030' && videoExec.args[0].x === null && videoExec.args[0].y === null, '252.B24f: executeScript in the MAIN world with the blob player\'s identity (tweetId, postUrl) and no stale point');
             mockChrome.scripting.executeScript = prevExec252;
           }
 
@@ -26764,7 +26806,7 @@ async function runTests() {
             hoverTile(w4, g4, 0);
             w4.clickAll(); await settleN(w4, 150);
             const ans = itemAsks(w4).find((a) => a.msg.index === 1);
-            assert(ans && ans.answer && ans.answer.reason === 'STALE_OWNER', '252.B24d: контейнер переиспользован под другую ссылку при тех же медиа: отказ классифицирован как смена владельца (пакет останавливается), а не как сбой одного элемента');
+            assert(ans && ans.answer && ans.answer.ok === true && /RCY_B/.test(ans.answer.media.url) && ans.answer.media.tweetId !== '7777', '252.B24d: the container recycled for another permalink after the batch opened: the slot answers its frozen admitted descriptor, never the new post');
           }
 
           // ---- the offered actions follow the post while the control is shown ----
@@ -29760,8 +29802,9 @@ async function runTests() {
         }
       });
       const mutatedSrc = await sandbox.resolveFrameRedGifsMediaWithProvider(blob);
-      assert(mutatedSrc.success === false && mutatedSrc.error === 'UNRESOLVED_BLOB_MEDIA' && mutatedSrc.diagnostics.providerAudio === 'FRAME_CHANGED' && !mutatedSrc.targetUrl,
-        '263.12: video src changed on the same node during metadata lookup: refused, not promoted');
+      // UNIVERSAL-SELECTION-SNAPSHOT-01: the clip was fixed before the lookup; the same node's later source change keeps that clip's declared file
+      assert(mutatedSrc.success === true && mutatedSrc.targetUrl === HD && mutatedSrc.diagnostics.providerAudio === 'present',
+        '263.12: video src changed on the same node during metadata lookup: the admitted clip is kept, never the new source: ' + JSON.stringify(mutatedSrc.diagnostics));
 
       // 8. Gap 2: location change during guest-session request stops before metadata request
       const videoAuthMove = makeVideo(blob);
@@ -30167,8 +30210,9 @@ async function runTests() {
         let later = null;
         network(HD, () => { if (!later) { later = true; const p = mk('video', { parent: during.card, src: SECOND }); sandbox.setLastContextmenuTarget(p, [p, during.card, during.body]); const r = recordGesture(during.doc, p, [p, during.card, during.body]); if (r) { r.at = recDuring.at + 1000; sandbox.__imageSaverContextTarget = r; } } });
         const dlDuring = await menuClick({ built: during, rec: recDuring });
-        assert(dlDuring.length === 0 && !mediaCalls.some((u) => u.includes('SecondGestureClip')) && !mediaCalls.includes(HD),
-          '264.11: a new selection during the provider lookup refuses the earlier operation; nothing is downloaded: ' + JSON.stringify({ dl: dlDuring.map((d) => d.url), state: state() }));
+        // UNIVERSAL-SELECTION-SNAPSHOT-01: the earlier operation's clip was fixed before the lookup; a later selection cannot redirect or cancel it
+        assert(dlDuring.length === 1 && dlDuring[0].url === HD && !mediaCalls.some((u) => u.includes('SecondGestureClip')),
+          '264.11: a new selection during the provider lookup neither redirects nor cancels the earlier admitted clip: ' + JSON.stringify({ dl: dlDuring.map((d) => d.url), state: state() }));
 
         // the same player selected again during the lookup is a new selection too: the earlier operation is bound to the first one
         const again = build();
@@ -30182,8 +30226,8 @@ async function runTests() {
           if (r) { r.at = recAgain.at + 1000; sandbox.__imageSaverContextTarget = r; }
         });
         const dlAgain = await menuClick({ built: again, rec: recAgain });
-        assert(dlAgain.length === 0 && !mediaCalls.includes(HD),
-          '264.11b: a new selection of the same player during the provider lookup also refuses the earlier operation: ' + JSON.stringify({ dl: dlAgain.map((d) => d.url), state: state() }));
+        assert(dlAgain.length === 1 && dlAgain[0].url === HD,
+          '264.11b: a new selection of the same player during the provider lookup keeps the earlier admitted clip, saved once: ' + JSON.stringify({ dl: dlAgain.map((d) => d.url), state: state() }));
 
         // a genuine later save of the other player: its own capture, its own click, its declared clip
         const own = build({ videoAttrs: { 'data-mp4': SECOND } });
@@ -31018,7 +31062,7 @@ async function runTests() {
         await fire(id, 'interrupted', 'NETWORK_FAILED');
         assert(resumesOf(id) === 0 && (await gone(id)) && hasErr(), '268.8a: metadata without a plan (emergency fallback) is not resumed');
         // (b) protected-blob and data-URL transports
-        for (const transport of ['protectedBlob', 'pixivDataUrl']) {
+        for (const transport of ['protectedBlob', 'pixiv']) {
           await fresh();
           id = resumable(U);
           sandbox.activeDownloadsMetadata.set(id, { url: U, rawUrl: U, plan: { transport } });

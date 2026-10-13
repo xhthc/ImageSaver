@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react"
-import { CheckCircle2, ChevronDown, FolderOpen, Save, TriangleAlert } from "lucide-react"
+import { CheckCircle2, ChevronDown, CircleDot, FolderOpen, LoaderCircle, RotateCcw, Save, TriangleAlert } from "lucide-react"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -28,6 +29,37 @@ function Hint({ children, secondary = false, id }: { children: React.ReactNode; 
   )
 }
 
+const LOAD_ERROR = "settings.error.load"
+
+/** Saving/Embed before their values are read: a loading line, or the read failure with a retry through the same load(). */
+function LoadState({ settings, s }: { settings: SettingsController; s: any }) {
+  const { t, msg } = useI18n()
+  if (s.loaded) return null
+  if (s.status.type === "error" && s.status.message === LOAD_ERROR)
+    return (
+      <Alert variant="destructive" data-slot="settings-load-error">
+        <AlertDescription className="flex flex-wrap items-center gap-2">
+          <span>{msg(s.status.message)}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={async (e) => {
+              // the alert (and this button) disappears after a successful read: focus moves to the panel
+              const panel = e.currentTarget.closest<HTMLElement>('[role="tabpanel"]')
+              await settings.load()
+              if (settings.store.getState().loaded) panel?.focus()
+            }}
+          >
+            <RotateCcw aria-hidden="true" />
+            {t("settings.retryLoad")}
+          </Button>
+        </AlertDescription>
+      </Alert>
+    )
+  return <p role="status" className="text-sm text-muted-foreground" data-slot="settings-loading">{t("settings.loading")}</p>
+}
+
 /** "Saving": subfolder and folder organization. Edited here, written by the explicit save action. */
 export function SavingPanel({ settings }: { settings: SettingsController }) {
   const s: any = useStore(settings.store)
@@ -41,11 +73,12 @@ export function SavingPanel({ settings }: { settings: SettingsController }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
+        <LoadState settings={settings} s={s} />
         <section aria-labelledby="destinationLabel" className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="min-w-0 flex-1 basis-48 space-y-1.5">
               <Label id="destinationLabel">{t('saving.baseFolder')}</Label>
-              <p className="break-all text-sm text-muted-foreground">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t('saving.browserFolder')}</p>
+              <p className="text-sm text-muted-foreground wrap-anywhere">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t('saving.browserFolder')}</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" disabled={!s.loaded || s.saving || s.picking} onClick={()=>void settings.pickDirectory()}><FolderOpen/>{t('saving.chooseFolder')}</Button>
@@ -94,13 +127,7 @@ export function SavingPanel({ settings }: { settings: SettingsController }) {
           </RadioGroup>
           <Hint secondary>{t("saving.modeHint")}</Hint>
 
-          <div className="flex items-center justify-between gap-4 border-t pt-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="xAuthorFolders" className="cursor-pointer">{t('saving.xAuthor')}</Label>
-              <Hint id="xAuthorHint">{t('saving.xAuthorHint')}</Hint>
-            </div>
-            <Switch id="xAuthorFolders" checked={s.xAuthorFolders} disabled={!s.loaded || s.saving} onCheckedChange={v=>settings.setField('xAuthorFolders',v)} aria-describedby="xAuthorHint"/>
-          </div>
+          <AuthorFolders settings={settings} s={s} />
         </section>
 
         <div className="rounded-lg border bg-muted/40 p-3">
@@ -118,6 +145,54 @@ export function SavingPanel({ settings }: { settings: SettingsController }) {
 
       </CardContent>
     </Card>
+  )
+}
+
+// Author folders (PIXIV-SAVING-POLISH-01): one service menu in the Embed control style; each choice is a Saving draft written by Save.
+const AUTHOR_SERVICES = [
+  ["xAuthorFolders", "x.com"],
+  ["redditAuthorFolders", "Reddit"],
+  ["pixivAuthorFolders", "Pixiv"],
+] as const
+
+function AuthorFolders({ settings, s }: { settings: SettingsController; s: any }) {
+  const { t } = useI18n()
+  const chosen = AUTHOR_SERVICES.filter(([key]) => s[key] === true).map(([, name]) => name)
+  return (
+    <div className="grid items-center gap-2 border-t pt-3 sm:grid-cols-[1fr_18rem]">
+      <div className="space-y-1.5">
+        <Label id="authorFoldersLabel" htmlFor="authorFoldersTrigger">{t("saving.authorFolders")}</Label>
+        <Hint id="authorFoldersHint">{t("saving.authorFoldersHint")}</Hint>
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild disabled={!s.loaded || s.saving}>
+          <button
+            id="authorFoldersTrigger"
+            type="button"
+            aria-labelledby="authorFoldersLabel authorFoldersSummary"
+            aria-describedby="authorFoldersHint"
+            className="flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30 dark:hover:bg-input/50"
+          >
+            <span id="authorFoldersSummary" className={cn("truncate", !chosen.length && "text-muted-foreground")}>{chosen.length ? chosen.join(", ") : t("saving.authorFoldersNone")}</span>
+            <ChevronDown className="size-4 shrink-0 opacity-50" aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" aria-labelledby="authorFoldersLabel">
+          {AUTHOR_SERVICES.map(([key, name]) => (
+            <DropdownMenuCheckboxItem
+              key={key}
+              data-service={key}
+              checked={s[key] === true}
+              // keep the menu open while several services are checked; Escape, Tab or a click outside closes it
+              onSelect={(event) => event.preventDefault()}
+              onCheckedChange={(value) => settings.setField(key, value === true)}
+            >
+              {name}
+            </DropdownMenuCheckboxItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }
 
@@ -267,6 +342,7 @@ export function EmbedPanel({ settings }: { settings: SettingsController }) {
         <CardDescription className="text-xs leading-relaxed">{t("embed.desc")}</CardDescription>
       </CardHeader>
       <CardContent>
+        <div className="mb-3 empty:hidden"><LoadState settings={settings} s={s} /></div>
         <div className="divide-y">
         {EMBED_FIELDS.map((f) => (
           <div key={f.key} className="grid items-center gap-2 py-3 first:pt-0 sm:grid-cols-[1fr_18rem]">
@@ -314,23 +390,29 @@ export function EmbedPanel({ settings }: { settings: SettingsController }) {
 export function SaveBar({ settings }: { settings: SettingsController }) {
   const s: any = useStore(settings.store)
   const { t, msg } = useI18n()
+  // One line for the whole lifecycle: reading, saving, an error (kept until the next attempt), unsaved edits, then success.
+  // A success message never hides a draft that differs from storage. A read failure is shown with its retry in the panels.
   const { message, type } = s.status
+  const state = !s.loaded ? (type === "error" ? "" : "loading") : s.saving ? "saving" : type === "error" ? "error" : s.dirty ? "dirty" : message ? type : ""
+  const text = state === "loading" ? t("settings.loading") : state === "saving" ? t("settings.saving") : state === "dirty" ? t("settings.unsaved") : state ? msg(message) : ""
   return (
     <div
       id="settingsSaveBar"
       className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center gap-3 border-t bg-background/95 px-1 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80"
     >
       <p className="min-w-0 flex-1 basis-56 text-xs text-muted-foreground">{t("savebar.hint")}</p>
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
         <div
           id="statusMessage"
           aria-live="polite"
-          data-type={type}
-          className={cn("flex min-h-5 items-center gap-1.5 text-xs", type === "success" && "text-success", type === "error" && "text-danger")}
+          data-type={state}
+          className={cn("flex min-h-5 items-center gap-1.5 text-xs", state === "success" && "text-success", state === "error" && "text-danger", state === "dirty" && "font-medium text-foreground")}
         >
-          {type === "success" ? <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" /> : null}
-          {type === "error" ? <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" /> : null}
-          {msg(message)}
+          {state === "success" ? <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" /> : null}
+          {state === "error" ? <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" /> : null}
+          {state === "dirty" ? <CircleDot className="size-3.5 shrink-0 text-primary" aria-hidden="true" /> : null}
+          {state === "saving" || state === "loading" ? <LoaderCircle className="size-3.5 shrink-0 motion-safe:animate-spin" aria-hidden="true" /> : null}
+          {text}
         </div>
         <Button id="saveButton" type="button" disabled={!s.loaded || s.saving || s.picking} onClick={() => { void settings.save() }}>
           <Save />

@@ -1611,6 +1611,16 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
   };
   const isBatch = (m) => m.action === 'REDDIT_INLINE_BATCH';
   const isItem = (i) => (m) => m.action === 'REDDIT_INLINE_OWNER_ITEM' && m.index === i;
+  // UNIVERSAL-SELECTION-SNAPSHOT-01: a batch is admitted when it opens and every slot's descriptor is frozen there. A page change after the open
+  // (removal, reorder, recycling, another source) saves every admitted slot with its exact admitted address and never requests what the page
+  // shows afterwards; a change before the open is still refused (see 9.9a, 9.9k, 9.9l, 9.9g).
+  const admittedOnly = (r, w, admitted, forbidden, label) => {
+    assert.deepStrictEqual(r.d.map((x) => x.url).slice().sort(), admitted.slice().sort(), `${label}: every admitted slot, exactly its admitted address`);
+    if (forbidden) assert(!w.bg.fetched.some((u) => forbidden.test(u)), `${label}: nothing the page showed after the admission is requested: ${w.bg.fetched.join(' ')}`);
+    assert.deepStrictEqual(failedCodes(r.ops), [], `${label}: no failure`);
+  };
+  // the downloads of the same fixture with no change (the admitted addresses)
+  const controlUrls = async (build, n, x = 100, y = 100) => { const w = await world(); build(w); await hover(w.env, x, y); const r = await saveAllClick(w, n); return r.d.map((d) => d.url); };
 
   await itAsync('9.9a the total grows from 3 to 4 before the batch opens: the open is refused, zero requests and downloads, one failed operation', async () => {
     const w = await world();
@@ -1625,53 +1635,45 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert(w.bg.warns.some((m) => /Inline Reddit Save all refused: STALE_LIST$/.test(m)), 'the open names its bounded reason: ' + w.bg.warns.join(' | '));
   });
 
-  await itAsync('9.9b a slide is removed after the batch opened: the structure changed, no item runs, every item is a failed operation', async () => {
+  await itAsync('9.9b a slide is removed after the batch opened: every admitted slide is still saved with its admitted address', async () => {
     const w = await world();
     const g = galleryPost(w.env, 'dr2', gal3('dr2'));
     await hover(w.env);
     mutateOn(w, isItem(0), () => g.slides[2].li.remove());
-    const r = await saveAllClick(w);
-    assert.strictEqual(r.d.length, 0);
-    assert.strictEqual(w.bg.fetched.length, 0);
-    assert.strictEqual(failedCodes(r.ops).length, 3);
-    assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 2, 'a changed structure ends the batch: the last item is never even asked');
+    const r = await saveAllClick(w, 3);
+    admittedOnly(r, w, gal3('dr2'), null, '9.9b');
+    assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 3, 'every slot was asked for its frozen descriptor');
   });
 
-  await itAsync('9.9c the total grows after two items were proven: they stay saved, the changed list stops the rest', async () => {
+  await itAsync('9.9c the total grows after two items were proven: the admitted three are saved, the added slide is not part of the batch', async () => {
     const w = await world();
     const g = galleryPost(w.env, 'dr3', gal3('dr3'));
     await hover(w.env);
     mutateOn(w, isItem(2), () => g.carousel.setAttribute('total-items', '4'));
-    const r = await saveAllClick(w, 2);
-    assert.strictEqual(r.d.length, 2);
-    assert(!w.bg.fetched.some((u) => /dr3_3/.test(u)), 'the third slide is not requested');
-    assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA']);
+    const r = await saveAllClick(w, 3);
+    admittedOnly(r, w, gal3('dr3'), /dr3_4/, '9.9c');
   });
 
-  await itAsync('9.9d two slides swap places before the last proof: the order changed, the last item is refused', async () => {
+  await itAsync('9.9d two slides swap places before the last proof: the admitted order and addresses are kept', async () => {
     const w = await world();
     const g = galleryPost(w.env, 'dr4', gal3('dr4'));
     await hover(w.env);
     mutateOn(w, isItem(2), () => { const [a, b] = [g.slides[0].li, g.slides[1].li]; g.carousel.children.splice(g.carousel.children.indexOf(a), 2, b, a); });
-    const r = await saveAllClick(w, 2);
-    assert.strictEqual(r.d.length, 2);
-    assert(!w.bg.fetched.some((u) => /dr4_3/.test(u)));
-    assert.strictEqual(failedCodes(r.ops).length, 1);
+    const r = await saveAllClick(w, 3);
+    admittedOnly(r, w, gal3('dr4'), null, '9.9d');
   });
 
-  await itAsync('9.9e another slide\'s source changes (same slot): only that item fails, the others are saved (item-level)', async () => {
+  await itAsync('9.9e another slide\'s source changes (same slot) after the open: its admitted address is saved, the new one is never requested', async () => {
     const w = await world();
     const g = galleryPost(w.env, 'dr5', gal3('dr5'));
     await hover(w.env);
     mutateOn(w, isItem(0), () => { g.slides[2].media.src = 'https://i.redd.it/dr5_3.jpg?width=640'; });
-    const r = await saveAllClick(w, 2);
-    assert.strictEqual(r.d.length, 2);
-    assert(!w.bg.fetched.some((u) => /dr5_3/.test(u)), 'the changed slide is not requested');
-    assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA']);
+    const r = await saveAllClick(w, 3);
+    admittedOnly(r, w, gal3('dr5'), /width=640/, '9.9e');
     assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 3, 'the batch kept going');
   });
 
-  await itAsync('9.9f a slide\'s element is replaced by a new node with the same source: that item fails alone (STALE_ITEM)', async () => {
+  await itAsync('9.9f a slide\'s element is replaced by a new node after the open: the admitted slot is still saved', async () => {
     const w = await world();
     const g = galleryPost(w.env, 'dr6', gal3('dr6'));
     await hover(w.env);
@@ -1684,9 +1686,8 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       li.removeChild(old);
       li.appendChild(fresh);
     });
-    const r = await saveAllClick(w, 2);
-    assert.strictEqual(r.d.length, 2);
-    assert.strictEqual(failedCodes(r.ops).length, 1);
+    const r = await saveAllClick(w, 3);
+    admittedOnly(r, w, gal3('dr6'), null, '9.9f');
   });
 
   await itAsync('9.9k the owner\'s identity changes (another permalink) before the batch opens: refused, nothing requested', async () => {
@@ -1724,6 +1725,17 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert.strictEqual(w.env.sentMessages.length, 0);
     assert.strictEqual(w.bg.asks.length, 0);
     assert.strictEqual(w.bg.downloads.length, 0);
+  });
+
+  await itAsync('9.9n navigation after the batch opened (the existing policy): the slot already running stays, the slots not started are refused, nothing else is requested', async () => {
+    const w = await world();
+    galleryPost(w.env, 'dr14', gal3('dr14'));
+    await hover(w.env);
+    mutateOn(w, isItem(1), () => { w.env.window.location.href = 'https://www.reddit.com/r/other/comments/zzz998/else/'; });
+    const r = await saveAllClick(w, 1);
+    assert.deepStrictEqual(r.d.map((x) => x.url), [gal3('dr14')[0]], 'only the slot that started before the navigation');
+    assert(!w.bg.fetched.some((u) => /dr14_(2|3)/.test(u)));
+    assert.strictEqual(failedCodes(r.ops).length, 2, 'the two remaining slots are visible failures');
   });
 
   await itAsync('9.9g navigation after the click: the batch is refused at the open, nothing is requested', async () => {
@@ -2036,22 +2048,19 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert(r.ops.every((o) => o.state === 'complete'));
   });
 
-  await itAsync('9.15b only the token (or the resolution) of the player changes after the open: the player fails alone (STALE_ITEM), both unchanged images are saved, the batch continues', async () => {
-    for (const [name, url] of [['token=new', 'https://v.redd.it/vidprobe/DASH_720.mp4?token=new'], ['resolution DASH_480', 'https://v.redd.it/vidprobe/DASH_480.mp4?token=old'], ['no query at all', 'https://v.redd.it/vidprobe/DASH_720.mp4']]) {
+  await itAsync('9.15b only the token (or the resolution) of the player changes after the open: the admitted signed address is saved exactly, the new one is never requested', async () => {
+    for (const [name, url, forbidden] of [['token=new', 'https://v.redd.it/vidprobe/DASH_720.mp4?token=new', /token=new/], ['resolution DASH_480', 'https://v.redd.it/vidprobe/DASH_480.mp4?token=old', /DASH_480/], ['no query at all', 'https://v.redd.it/vidprobe/DASH_720.mp4', /DASH_720\.mp4$/]]) {
       const w = await world();
       const g = galleryPost(w.env, 'kp2', mixed('kp2'));
       await hover(w.env);
       mutateOn(w, isItem(0), () => setPlayerSrc(g.slides[1], url));
-      const r = await saveAllClick(w, 2);
-      assert.strictEqual(r.d.length, 2, name);
-      assert(r.d.every((x) => /kp2_[ab]\.jpg/.test(x.url)), name);
-      assert(!w.bg.fetched.some((u) => /vidprobe/.test(u)), name + ': neither the old nor the new player address is requested');
-      assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA'], name);
-      assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 3, name + ': no STALE_LIST, the batch kept going');
+      const r = await saveAllClick(w, 3);
+      admittedOnly(r, w, mixed('kp2'), forbidden, name);
+      assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 3, name + ': the batch kept going');
     }
   });
 
-  await itAsync('9.15c the player node is replaced by a new node with the same identity: that item fails alone, the images are saved', async () => {
+  await itAsync('9.15c the player node is replaced by a new node with the same identity after the open: all admitted items are saved', async () => {
     const w = await world();
     const g = galleryPost(w.env, 'kp3', mixed('kp3'));
     await hover(w.env);
@@ -2068,46 +2077,36 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       fresh.appendChild(v);
       li.appendChild(fresh);
     });
-    const r = await saveAllClick(w, 2);
-    assert.strictEqual(r.d.length, 2);
-    assert(!w.bg.fetched.some((u) => /vidprobe/.test(u)));
-    assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA']);
-    assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 3);
+    const r = await saveAllClick(w, 3);
+    admittedOnly(r, w, mixed('kp3'), null, '9.15c');
   });
-
-  await itAsync('9.15d a genuinely different asset in the player slot is structural (STALE_LIST): the batch ends, it is never merged with the old one', async () => {
+  await itAsync('9.15d a genuinely different asset in the player slot after the open: the admitted asset is saved, the new one is never requested or merged', async () => {
     const w = await world();
     const g = galleryPost(w.env, 'kp4', mixed('kp4'));
     await hover(w.env);
     mutateOn(w, isItem(2), () => setPlayerSrc(g.slides[1], 'https://v.redd.it/vidother/DASH_720.mp4?token=old'));
-    const r = await saveAllClick(w, 2);
-    assert.strictEqual(r.d.length, 2, 'the two items proven before the change stay saved');
-    assert(!w.bg.fetched.some((u) => /kp4_b|vidother/.test(u)), 'the last image and the foreign asset are not requested');
-    assert.strictEqual(failedCodes(r.ops).length, 1);
+    const r = await saveAllClick(w, 3);
+    admittedOnly(r, w, mixed('kp4'), /vidother/, '9.15d');
   });
 
-  await itAsync('9.15e the player and the last image swap places (reordered): structural, the batch ends', async () => {
+  await itAsync('9.15e the player and the last image swap places after the open: the admitted slots are saved', async () => {
     const w = await world();
     const g = galleryPost(w.env, 'kp5', mixed('kp5'));
     await hover(w.env);
     mutateOn(w, isItem(2), () => { const [a, b] = [g.slides[1].li, g.slides[2].li]; g.carousel.children.splice(g.carousel.children.indexOf(a), 2, b, a); });
-    const r = await saveAllClick(w, 2);
-    assert.strictEqual(r.d.length, 2);
-    assert(!w.bg.fetched.some((u) => /kp5_b/.test(u)));
-    assert.strictEqual(failedCodes(r.ops).length, 1);
+    const r = await saveAllClick(w, 3);
+    admittedOnly(r, w, mixed('kp5'), null, '9.15e');
   });
 
-  await itAsync('9.15f the player slot is removed after the open: structural (the total no longer matches), the batch ends with zero downloads', async () => {
+  await itAsync('9.15f the player slot is removed after the open (scrolled away / unloaded): every admitted item is still saved', async () => {
     const w = await world();
     const g = galleryPost(w.env, 'kp6', mixed('kp6'));
     await hover(w.env);
     mutateOn(w, isItem(0), () => g.slides[1].li.remove());
-    const r = await saveAllClick(w);
-    assert.strictEqual(r.d.length, 0);
-    assert.strictEqual(w.bg.fetched.length, 0);
-    assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 2);
+    const r = await saveAllClick(w, 3);
+    admittedOnly(r, w, mixed('kp6'), null, '9.15f');
+    assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 3);
   });
-
   await itAsync('9.15g two different players in one gallery stay two slots (never merged); a failed authoritative video is not replaced by anything', async () => {
     const w = await world();
     galleryPost(w.env, 'kp7', ['https://v.redd.it/vidone/DASH_720.mp4?token=a', 'https://v.redd.it/vidtwo/DASH_720.mp4?token=a', 'https://i.redd.it/kp7_c.jpg']);
@@ -2535,30 +2534,28 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     }
   });
 
-  await itAsync('9.19 changed list versus changed item on the native gallery: a removed slide or a different asset ends the batch (STALE_LIST); a changed query of one slide fails that slide alone (STALE_ITEM)', async () => {
+  await itAsync('9.19 changed list or changed item on the native gallery after the open: the admitted five are saved with their admitted addresses, a foreign or changed address is never requested', async () => {
+    const admitted = await controlUrls((w) => nativeGallery(w.env, 'chg0', jpgSlides(JPG_ID.slice(0, 5))), 5);
+    assert.strictEqual(admitted.length, 5, 'control: the unchanged gallery saves its five slides');
     let w = await world();
     let g = nativeGallery(w.env, 'chg3', jpgSlides(JPG_ID.slice(0, 5)));
     await hover(w.env, 100, 100);
     mutateOn(w, isItem(0), () => g.slides[4].li.remove());
-    let r = await saveAllClick(w);
-    assert.strictEqual(r.d.length, 0, 'a slide removed after the open: the structure changed, no item runs');
-    assert.strictEqual(w.bg.fetched.length, 0);
+    let r = await saveAllClick(w, 5);
+    admittedOnly(r, w, admitted, null, 'a slide removed after the open');
     w = await world();
     g = nativeGallery(w.env, 'chg4', jpgSlides(JPG_ID.slice(0, 5)));
     await hover(w.env, 100, 100);
     mutateOn(w, isItem(1), () => { const u = 'https://preview.redd.it/found-a-full-pc-v0-zzzzzzzzzzzz1.jpg?width=640&s=x'; g.slides[3].main.src = u; g.slides[3].main.setAttribute('src', u); });
-    r = await saveAllClick(w, 2);
-    assert(r.d.length >= 1 && r.d.length < 5, 'a different asset in a slot is structural: the batch ends with the items already proven kept');
-    assert(!w.bg.fetched.some((u) => /zzzzzzzzzzzz1/.test(u)), 'the foreign asset is never requested');
+    r = await saveAllClick(w, 5);
+    admittedOnly(r, w, admitted, /zzzzzzzzzzzz1/, 'a different asset in a slot after the open');
     w = await world();
     g = nativeGallery(w.env, 'chg5', jpgSlides(JPG_ID.slice(0, 5)));
     await hover(w.env, 100, 100);
     mutateOn(w, isItem(0), () => { const u = g.slides[3].main.getAttribute('src').replace('width=640', 'width=1080'); g.slides[3].main.src = u; g.slides[3].main.setAttribute('src', u); });
-    r = await saveAllClick(w, 4);
-    assert.strictEqual(r.d.length, 4, 'the other four are saved');
-    assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA'], 'only the changed slide fails (item-level)');
+    r = await saveAllClick(w, 5);
+    admittedOnly(r, w, admitted, /width=1080/, 'a changed query of one slide after the open');
     assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 5, 'the batch kept going');
-    assert(w.bg.warns.some((m) => /Inline Reddit Save all item refused: 3 STALE_ITEM$/.test(m)), 'the refused item is named with its bounded reason: ' + w.bg.warns.join(' | '));
   });
 
   await itAsync('9.19c a gallery with a video slide: the player is its own slot (its poster and shadow video are not extra assets); Save all saves the images and the declared MP4; a nested crosspost\'s own carousel does not make the outer list ambiguous', async () => {
@@ -2715,22 +2712,28 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert.strictEqual(r.ops[0].state, 'complete');
   });
 
-  await itAsync('9.20e a video slide of a native gallery: a changed declaration before the open or between item proofs fails that item alone (STALE_ITEM); the images are saved and the changed address is never requested', async () => {
-    for (const [name, when] of [['before the batch opens', isBatch], ['between item proofs', isItem(0)]]) {
+  await itAsync('9.20e a video slide of a native gallery: a changed declaration before the open fails that item alone (STALE_ITEM); after the open the admitted file is saved and the changed address is never requested', async () => {
+    {
       const w = await world();
       const { player } = playerGallery(w.env, 'pgchg');
       await hover(w.env, 100, 100);
-      assert(hasAll(w), name);
-      mutateOn(w, when, () => player.setAttribute('packaged-media-json', CHANGED('vid9pg')));
+      assert(hasAll(w));
+      mutateOn(w, isBatch, () => player.setAttribute('packaged-media-json', CHANGED('vid9pg')));
       const r = await saveAllClick(w, 2);
-      assert.deepStrictEqual(r.d.map((x) => x.url).slice().sort(), [gif(0), gif(2)].sort(), name + ': both images, not the video');
-      assert(!w.bg.fetched.some((u) => /vid9pg|CHANGED/.test(u)), name + ': neither address of the changed player is requested');
-      assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA'], name);
-      assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 3, name + ': no STALE_LIST, the batch kept going');
+      assert.deepStrictEqual(r.d.map((x) => x.url).slice().sort(), [gif(0), gif(2)].sort(), 'before the open: both images, not the video');
+      assert(!w.bg.fetched.some((u) => /vid9pg|CHANGED/.test(u)), 'before the open: neither address of the changed player is requested');
+      assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA']);
+      assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 3, 'before the open: no STALE_LIST, the batch kept going');
     }
+    const w = await world();
+    const { player } = playerGallery(w.env, 'pgchg');
+    await hover(w.env, 100, 100);
+    mutateOn(w, isItem(0), () => player.setAttribute('packaged-media-json', CHANGED('vid9pg')));
+    const r = await saveAllClick(w, 3);
+    admittedOnly(r, w, [BEST('vid9pg'), gif(0), gif(2)], /CHANGED/, 'between item proofs');
   });
 
-  await itAsync('9.20f a video slide: an unchanged declaration saves the exact file with its siblings; another asset in the slot is structural (the batch ends)', async () => {
+  await itAsync('9.20f a video slide: an unchanged declaration saves the exact file with its siblings; another asset in the slot after the open is never requested, the admitted file is saved', async () => {
     let w = await world();
     playerGallery(w.env, 'pgok');
     await hover(w.env, 100, 100);
@@ -2740,9 +2743,8 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     const { player } = playerGallery(w.env, 'pgasset');
     await hover(w.env, 100, 100);
     mutateOn(w, isItem(2), () => { player.setAttribute('src', 'https://v.redd.it/vid9pg2/HLSPlaylist.m3u8?f=hd&t=1'); player.setAttribute('packaged-media-json', pmj('vid9pg2')); });
-    r = await saveAllClick(w, 2);
-    assert(r.d.length <= 2, 'the item behind the changed slot is not saved');
-    assert(!w.bg.fetched.some((u) => /vid9pg2|iwwn46bc02sh1/.test(u)), 'the changed asset and the item after it are never requested: ' + w.bg.fetched.join(' '));
+    r = await saveAllClick(w, 3);
+    admittedOnly(r, w, [BEST('vid9pg'), gif(0), gif(2)], /vid9pg2/, 'another asset after the open');
   });
 
   // ===== 9.21: the direct source read from the selected player's open shadow tree is part of the click proof =====
@@ -2898,29 +2900,36 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA']);
   });
 
-  await itAsync('9.21f a video slide of a native gallery: shadow-source changes fail that item alone (STALE_ITEM) before the open and between item proofs, replacement too; unchanged saves the exact address', async () => {
+  await itAsync('9.21f a video slide of a native gallery: a shadow-source change before the open fails that item alone (STALE_ITEM); after the open the admitted playing address is saved; unchanged saves the exact address', async () => {
     let w = await world();
     let pg = playerGallery(w.env, 'shok', { inner: P0('vid9pg') });
     await hover(w.env, 100, 100);
     assert(hasAll(w));
     let r = await saveAllClick(w, 3);
     assert.deepStrictEqual(r.d.map((x) => x.url).slice().sort(), [P0('vid9pg'), gif(0), gif(2)].sort(), 'unchanged: the playing address exactly, with its siblings');
-    for (const [name, inner, when, change] of [
-      ['playing source changes between item proofs', P0('vid9pg'), isItem(0), (p) => setPlaying(p.video, AFTER('vid9pg'))],
-      ['an unplayed player starts playing before the batch opens', '', isBatch, (p) => setPlaying(p.video, AFTER('vid9pg'))],
-      ['the shadow video is replaced between item proofs', P0('vid9pg'), isItem(0), (p) => { replaceShadow(w.env, { player: p.player }, P0('vid9pg')); }]
+    // before the open: the player is no longer the admitted selection
+    w = await world();
+    pg = playerGallery(w.env, 'shchg', { inner: '' });
+    await hover(w.env, 100, 100);
+    assert(hasAll(w));
+    mutateOn(w, isBatch, () => setPlaying(pg.video, AFTER('vid9pg')));
+    r = await saveAllClick(w, 2);
+    assert.deepStrictEqual(r.d.map((x) => x.url).slice().sort(), [gif(0), gif(2)].sort(), 'before the open: both images, not the video');
+    assert(!w.bg.fetched.some((u) => /vid9pg|AFTER/.test(u)), 'before the open: no address of the changed player is requested: ' + w.bg.fetched.join(' '));
+    assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA']);
+    noSigned(w, 'before the open');
+    // after the open: the admitted playing address is saved, never the new one
+    for (const [name, change] of [
+      ['playing source changes between item proofs', (p) => setPlaying(p.video, AFTER('vid9pg'))],
+      ['the shadow video is replaced between item proofs', (p) => { replaceShadow(w.env, { player: p.player }, P0('vid9pg')); }]
     ]) {
       w = await world();
-      pg = playerGallery(w.env, 'shchg', { inner });
+      pg = playerGallery(w.env, 'shchg', { inner: P0('vid9pg') });
       await hover(w.env, 100, 100);
       assert(hasAll(w), name);
-      mutateOn(w, when, () => change(pg));
-      r = await saveAllClick(w, 2);
-      assert.deepStrictEqual(r.d.map((x) => x.url).slice().sort(), [gif(0), gif(2)].sort(), name + ': both images, not the video');
-      assert(!w.bg.fetched.some((u) => /vid9pg|AFTER/.test(u)), name + ': no address of the changed player is requested: ' + w.bg.fetched.join(' '));
-      assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA'], name);
-      assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 3, name + ': no STALE_LIST, the batch kept going');
-      noSigned(w, name);
+      mutateOn(w, isItem(0), () => change(pg));
+      r = await saveAllClick(w, 3);
+      admittedOnly(r, w, [P0('vid9pg'), gif(0), gif(2)], /AFTER/, name);
     }
   });
 
@@ -3058,30 +3067,29 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert(!w.bg.fetched.some((x) => /evil\.example/.test(x)) && !r.d.some((x) => /evil\.example/.test(x.url)), 'only Reddit hosts are requested and saved: ' + w.bg.fetched.join(' '));
   });
 
-  await itAsync('9.22e on the encoded gallery: a reorder or removal is structural (STALE_LIST), another asset is structural, a changed signed query of one slide fails that item alone (STALE_ITEM); the exact signed address is never rewritten', async () => {
+  await itAsync('9.22e on the encoded gallery: a reorder, removal, another asset or a changed signed query after the open keeps every admitted slot with its exact signed address', async () => {
     const slug = enc('как-вы-относитесь-к-dns');
     const ids = ['aaaa1x', 'bbbb2x', 'cccc3x', 'dddd4x'];
+    const admitted = await controlUrls((w) => slugGallery(w.env, 'enc4z', ids, slug), 4);
+    assert.strictEqual(admitted.length, 4, 'control: the unchanged gallery saves its four slides');
     let w = await world();
     let g = slugGallery(w.env, 'enc4a', ids, slug);
     await hover(w.env, 100, 100);
     mutateOn(w, isItem(2), () => { const [a, b] = [g.slides[0].li, g.slides[1].li]; g.ul.children.splice(g.ul.children.indexOf(a), 2, b, a); });
-    let r = await saveAllClick(w, 2);
-    assert(r.d.length <= 3 && !w.bg.fetched.some((u) => /dddd4x/.test(u)), 'a reordered list ends the batch: ' + w.bg.fetched.join(' '));
+    let r = await saveAllClick(w, 4);
+    admittedOnly(r, w, admitted, null, 'a reorder after the open');
     w = await world();
     g = slugGallery(w.env, 'enc4b', ids, slug);
     await hover(w.env, 100, 100);
     mutateOn(w, isItem(0), () => g.slides[3].li.remove());
-    r = await saveAllClick(w);
-    assert.strictEqual(r.d.length, 0, 'a removed slide: no item runs');
+    r = await saveAllClick(w, 4);
+    admittedOnly(r, w, admitted, null, 'a removed slide after the open');
     w = await world();
     g = slugGallery(w.env, 'enc4c', ids, slug);
     await hover(w.env, 100, 100);
     mutateOn(w, isItem(0), () => { const u = g.slides[2].main.getAttribute('src').replace('width=600', 'width=1080'); g.slides[2].main.src = u; g.slides[2].main.setAttribute('src', u); });
-    r = await saveAllClick(w, 3);
-    assert.strictEqual(r.d.length, 3, 'the other three are saved');
-    assert.deepStrictEqual(failedCodes(r.ops), ['NO_MEDIA'], 'only the changed slide fails');
-    assert.strictEqual(proofs(w).filter((a) => /^ITEM/.test(a)).length, 4, 'the batch kept going');
-    assert(!w.bg.fetched.some((u) => /cccc3x/.test(u) && /width=1080/.test(u)), 'the changed address is not requested');
+    r = await saveAllClick(w, 4);
+    admittedOnly(r, w, admitted, /width=1080/, 'a changed signed query after the open');
     w = await world();
     g = slugGallery(w.env, 'enc2s', DNS2, slug);
     await hover(w.env, 100, 100);
@@ -4150,18 +4158,18 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert.strictEqual(r.d.length, 2);
   });
 
-  await itAsync('10.4d slide replaced between hover and click fails closed with zero downloads', async () => {
+  await itAsync('10.4d a slide removed after the batch opened (scrolled away): both admitted slides are still saved', async () => {
     const fix = loadNativeFixture('gallery_rupc_two_image.json');
+    const admitted = await controlUrls((w) => buildGalleryFromFixture(w.env, fix), 2);
+    assert.strictEqual(admitted.length, 2, 'control');
     const w = await world();
     const g = buildGalleryFromFixture(w.env, fix);
     await hover(w.env, 100, 100);
     assert(hasAll(w));
-
     mutateOn(w, isItem(0), () => g.slides[0].li.remove());
-    const r = await saveAllClick(w);
-    assert.strictEqual(r.d.length, 0, 'Structure changed, zero downloads');
+    const r = await saveAllClick(w, 2);
+    admittedOnly(r, w, admitted, null, '10.4d');
   });
-
   await itAsync('10.4e a DASH-only player (a manifest nothing can save) fails closed as an UNSUPPORTED_SOURCE: no request, no assembly, no download', async () => {
     const w = await world();
     const { document } = w.env.context;
@@ -5094,6 +5102,199 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert.strictEqual(w.env.sentMessages.filter(m => /^REDDIT_INLINE_SAVE/.test(m.action)).length, 0);
     assert.strictEqual(w.bg.fetched.length, 0);
     w.env.context.__riTeardown();
+  });
+
+  // --- Suite 12: PIXIV-SAVING-POLISH-01 author folders on Reddit (the real content script, content_context_target.js and background.js) ---
+  // The author of the post that owns the selected media is fixed at admission (UNIVERSAL-SELECTION-SNAPSHOT-01): an inline save carries it in its
+  // proven descriptor, a context-menu save freezes it when the injected verifier admits the gesture. Changes before admission give none (ordinary
+  // layout); changes after admission cannot alter it. Crossposts, nested posts, comments and unrelated link posts keep the ordinary layout.
+  console.log('\n--- Suite 12: Reddit author folders ---');
+  const AUTHOR_ON = { subfolder: 'SavedImages', folderOrganizationMode: 'single', redditAuthorFolders: true };
+  const PAGE_FEED = 'https://www.reddit.com/r/pics/';
+  const authored = (g, id, author, type) => { g.post.setAttribute('id', `t3_${id}`); g.post.setAttribute('author', author); g.post.setAttribute('post-type', type); return g; };
+  const rightClick = (w, g) => w.env.fireWin('contextmenu', { clientX: 300, clientY: 300, target: g.img, composedPath: () => [g.img, g.cont, g.post], timeStamp: Date.now() });
+  async function menuSave(w, g, { during = null, before: beforeAdmission = null } = {}) {
+    rightClick(w, g);
+    // `before`: what happens between the right-click and the menu action (before admission)
+    if (beforeAdmission) beforeAdmission();
+    const local = w.bg.sandbox.chrome.storage.local, get = local.get;
+    // `during`: what happens while the admitted save waits for its settings (after admission, before the author is read)
+    if (during) local.get = async (k) => { local.get = get; during(); return get(k); };
+    const before = w.bg.downloads.length;
+    await w.bg.sandbox.onContextMenuClicked({ menuItemId: 'save-image-item', mediaType: 'image', frameId: 0, srcUrl: g.img.src, pageUrl: PAGE_FEED }, { id: 101, url: PAGE_FEED });
+    await quiesce(120);
+    return w.bg.downloads.slice(before);
+  }
+  const authorAsks = (w) => w.bg.asks.filter((x) => x.msg.action === 'GET_REDDIT_POST_AUTHOR');
+  // the fake document lacks document.querySelectorAll, which the author answer uses for an inline post as a browser document has it
+  const authorWorld = async (settings) => { const w = await world(settings); const d = w.env.context.document; d.querySelectorAll = (sel) => d.body.querySelectorAll(sel); return w; };
+
+  await itAsync('12.1 context menu: the admitted post\'s author names the folder; a right-click on another post during the save keeps the admitted author', async () => {
+    const w = await authorWorld(AUTHOR_ON);
+    armNativeMenu(w);
+    const a = authored(imgPost(w.env, 'firsta', 'https://i.redd.it/first-post.jpg'), 'firsta', 'FirstPoster', 'image');
+    let d = await menuSave(w, a);
+    assert.deepStrictEqual(d.map((x) => [x.url, x.filename]), [['https://i.redd.it/first-post.jpg', 'SavedImages/firstposter/first-post.jpg']]);
+    const b = authored(imgPost(w.env, 'otherb', 'https://i.redd.it/other-post.jpg'), 'otherb', 'OtherPoster', 'image');
+    d = await menuSave(w, a, { during: () => rightClick(w, b) });
+    assert.deepStrictEqual(d.map((x) => [x.url, x.filename]), [['https://i.redd.it/first-post.jpg', 'SavedImages/firstposter/first-post.jpg']], 'A\'s file in A\'s folder, never B\'s');
+    const q = authorAsks(w);
+    assert(q.length === 2 && q.every((x) => /^\d+-\d+$/.test(x.msg.proof) && x.msg.ownerId === undefined) && q[0].msg.proof !== q[1].msg.proof, 'each question names its own admission proof');
+    // a proof is answered once: a replay gets nothing
+    assert.deepStrictEqual({ ...(await w.env.ask(q[1].msg, { id: EXT_ID })) }, {}, 'a replayed proof is not answered');
+    // the setting off: no question at all
+    const off = await authorWorld({ subfolder: 'SavedImages', folderOrganizationMode: 'single' });
+    armNativeMenu(off);
+    const c = authored(imgPost(off.env, 'thirdc', 'https://i.redd.it/third.jpg'), 'thirdc', 'ThirdPoster', 'image');
+    assert.deepStrictEqual((await menuSave(off, c)).map((x) => x.filename), ['SavedImages/third.jpg']);
+    assert.strictEqual(authorAsks(off).length, 0);
+  });
+
+  await itAsync('12.2 context menu negatives: a nested crosspost post, a [slot="crosspost-post"] container, a comment image and a link post without a proven embed keep the ordinary layout', async () => {
+    const found = [];
+    const shapes = {
+      nested: (env) => { const outer = authored(imgPost(env, 'outer1', 'https://i.redd.it/outer-unused.jpg'), 'outer1', 'OuterPoster', 'crosspost'); const g = authored(imgPost(env, 'inner1', 'https://i.redd.it/nested.jpg'), 'inner1', 'InnerPoster', 'image'); outer.post.appendChild(g.post); return g; },
+      slot: (env) => { const outer = authored(imgPost(env, 'outer2', 'https://i.redd.it/outer-unused2.jpg'), 'outer2', 'OuterPoster', 'crosspost'); const slot = env.context.document.createElement('div'); slot.setAttribute('slot', 'crosspost-post'); outer.post.appendChild(slot); const g = authored(imgPost(env, 'inner2', 'https://i.redd.it/slotted.jpg'), 'inner2', 'InnerPoster', 'image'); slot.appendChild(g.post); return g; },
+      comment: (env) => { const g = authored(imgPost(env, 'cmnt3', 'https://i.redd.it/comment.jpg'), 'cmnt3', 'PostAuthor', 'image'); const c = env.context.document.createElement('shreddit-comment'); g.post.appendChild(c); c.appendChild(g.cont); return g; },
+      link: (env) => authored(imgPost(env, 'link4', 'https://i.redd.it/link-thumb.jpg'), 'link4', 'LinkPoster', 'link')
+    };
+    for (const [name, make] of Object.entries(shapes)) {
+      const w = await authorWorld(AUTHOR_ON);
+      armNativeMenu(w);
+      const g = make(w.env);
+      const d = await menuSave(w, g);
+      const q = authorAsks(w);
+      const answers = [];
+      for (const x of q) answers.push(await w.env.ask(x.msg, { id: EXT_ID }));
+      if (q.length !== 1) found.push(`${name}: ${q.length} author questions`);
+      if (d.length !== 1 || d[0].filename !== 'SavedImages/' + g.img.src.split('/').pop()) found.push(`${name}: ${JSON.stringify(d.map((x) => x.filename))}`);
+      if (answers.some((x) => x && x.author)) found.push(`${name}: answered ${JSON.stringify(answers)}`);
+    }
+    assert.deepStrictEqual(found, [], found.join('\n'));
+  });
+
+  await itAsync('12.3 inline Save this: the author arrives with the proven descriptor (no later page question); crosspost and nested posts give none', async () => {
+    const w = await authorWorld(AUTHOR_ON);
+    authored(imgPost(w.env, 'inl1', 'https://i.redd.it/inline-one.jpg'), 'inl1', 'InlinePoster', 'gallery');
+    await hover(w.env, 300, 300);
+    let r = await saveThis(w);
+    assert.deepStrictEqual(r.d.map((x) => x.filename), ['SavedImages/inlineposter/inline-one.jpg']);
+    assert.strictEqual(authorAsks(w).length, 0, 'the author is never read from the page later');
+    // crossposted and nested posts: the inline save works, the author is not attributed
+    for (const [name, nest] of [['slot crosspost', true], ['nested post', false]]) {
+      const x = await authorWorld(AUTHOR_ON);
+      const { document } = x.env.context;
+      const outer = authored(imgPost(x.env, 'out5', 'https://i.redd.it/o5.jpg'), 'out5', 'OuterPoster', 'crosspost');
+      outer.post.removeChild(outer.cont);
+      const inner = authored(imgPost(x.env, 'in5', 'https://i.redd.it/i5.jpg'), 'in5', 'InnerPoster', 'image');
+      if (nest) { const slot = document.createElement('div'); slot.setAttribute('slot', 'crosspost-post'); outer.post.appendChild(slot); slot.appendChild(inner.post); }
+      else outer.post.appendChild(inner.post);
+      await hover(x.env, 300, 300);
+      assert(x.state.btn, `${name}: the inline control is offered`);
+      r = await saveThis(x);
+      assert(r.d.every((d) => !/innerposter|outerposter/.test(d.filename)), `${name}: no author folder: ${JSON.stringify(r.d.map((d) => d.filename))}`);
+    }
+    // a forged author in a descriptor is not a username: refused by the background sanitizer
+    assert.strictEqual(w.bg.sandbox.sanitizeRedditInlineMedia({ kind: 'image', url: 'https://i.redd.it/inline-one.jpg', ownerId: 't3_inl1', author: '../evil' }, null).author, '');
+  });
+
+  await itAsync('12.4 RedGIFs embed in a Reddit link post: the inline save goes to the Reddit poster\'s folder from the proven descriptor (no later page question)', async () => {
+    const w = await authorWorld(AUTHOR_ON);
+    const frame = redgifsFrame(CLIP_A, { frameId: 11, declares: SILENT_A });
+    wireTab(w, [frame]);
+    const g = embedPost(w.env, 'rg30', CLIP_A);
+    g.post.setAttribute('author', 'ClipPoster');
+    await enter(w.env, g.iframe);
+    const r = await saveThis(w);
+    assert.deepStrictEqual(r.d.map((x) => [x.url, x.filename]), [[SILENT_A, `SavedImages/clipposter/${SILENT_A.split('/').pop()}`]]);
+    assert.strictEqual(authorAsks(w).length, 0, 'no question to any frame');
+    // an image of a link post that is not a proven embed: saved, no author
+    const x = await authorWorld(AUTHOR_ON);
+    authored(imgPost(x.env, 'link9', 'https://i.redd.it/link-thumb9.jpg'), 'link9', 'LinkPoster', 'link');
+    await hover(x.env, 300, 300);
+    assert(x.state.btn, 'the inline control is offered');
+    {
+      const r2 = await saveThis(x);
+      assert(r2.d.every((d) => !/linkposter/.test(d.filename)), 'an unproven link post gives no author');
+    }
+  });
+
+  // a covering layer over a post's image: the capture selects the image under it
+  const overlayPost = (env, id, src, author) => {
+    const g = authored(imgPost(env, id, src), id, author, 'image');
+    const layer = env.context.document.createElement('div');
+    R(layer, 100, 100, 600, 500); g.cont.appendChild(layer);
+    return { ...g, img: layer, media: g.img };
+  };
+
+  await itAsync('12.5 recycled post: before admission the changed identity gives the ordinary layout; after admission the admitted author is kept', async () => {
+    const recycle = (p) => () => { p.post.setAttribute('id', 't3_newpost'); p.post.setAttribute('permalink', '/r/pics/comments/newpost/a_post/'); p.post.setAttribute('author', 'RecycledPoster'); };
+    // after admission (while the save waits for its settings)
+    const w = await authorWorld(AUTHOR_ON);
+    armNativeMenu(w);
+    const old = authored(imgPost(w.env, 'firstold', 'https://i.redd.it/original-owner.jpg'), 'firstold', 'FirstPoster', 'image');
+    let d = await menuSave(w, old, { during: recycle(old) });
+    assert.deepStrictEqual(d.map((x) => [x.url, x.filename]), [['https://i.redd.it/original-owner.jpg', 'SavedImages/firstposter/original-owner.jpg']], 'the admitted author, never the recycled one');
+    // after admission the post is removed (scrolled away / virtualized): still the admitted author
+    const w4 = await authorWorld(AUTHOR_ON);
+    armNativeMenu(w4);
+    const gone = authored(imgPost(w4.env, 'gonepost', 'https://i.redd.it/gone.jpg'), 'gonepost', 'FirstPoster', 'image');
+    assert.deepStrictEqual((await menuSave(w4, gone, { during: () => gone.post.remove() })).map((x) => x.filename), ['SavedImages/firstposter/gone.jpg']);
+    // before admission: the post's identity changed between the right-click and the menu action: no author
+    for (const [name, change] of [['id, permalink and author', (p) => recycle(p)()], ['only the author', (p) => p.post.setAttribute('author', 'OtherPoster')]]) {
+      const w2 = await authorWorld(AUTHOR_ON);
+      armNativeMenu(w2);
+      const p2 = authored(imgPost(w2.env, 'sameid', 'https://i.redd.it/same-id.jpg'), 'sameid', 'FirstPoster', 'image');
+      d = await menuSave(w2, p2, { before: () => change(p2) });
+      assert.deepStrictEqual(d.map((x) => x.filename), ['SavedImages/same-id.jpg'], `${name} changed before admission: ordinary layout`);
+    }
+    // before admission the pressed IMG shows another source: the admission refuses, nothing is saved
+    const w3 = await authorWorld(AUTHOR_ON);
+    armNativeMenu(w3);
+    const p3 = authored(imgPost(w3.env, 'resrc', 'https://i.redd.it/admitted.jpg'), 'resrc', 'FirstPoster', 'image');
+    rightClick(w3, p3);
+    p3.img.src = 'https://i.redd.it/replaced.jpg';
+    await w3.bg.sandbox.onContextMenuClicked({ menuItemId: 'save-image-item', mediaType: 'image', frameId: 0, srcUrl: 'https://i.redd.it/admitted.jpg', pageUrl: PAGE_FEED }, { id: 101, url: PAGE_FEED });
+    await quiesce(120);
+    assert.strictEqual(w3.bg.downloads.length, 0, 'a changed source before admission: no download');
+    assert(!w3.bg.fetched.some((u) => /replaced\.jpg/.test(u)), 'the replacement is never requested');
+  });
+
+  await itAsync('12.6 overlay: media moved into post B before admission refuses the save; after admission the admitted author is kept; an unchanged overlay names its own post', async () => {
+    // after admission (while the save waits for its settings)
+    const w = await authorWorld(AUTHOR_ON);
+    armNativeMenu(w);
+    const dest = authored(imgPost(w.env, 'destpost', 'https://i.redd.it/unused-dest.jpg'), 'destpost', 'MovedPoster', 'image');
+    const sel = overlayPost(w.env, 'overlayold', 'https://i.redd.it/overlay-original.jpg', 'FirstPoster');
+    const d = await menuSave(w, sel, { during: () => dest.cont.appendChild(sel.media) });
+    assert.deepStrictEqual(d.map((x) => [x.url, x.filename]), [['https://i.redd.it/overlay-original.jpg', 'SavedImages/firstposter/overlay-original.jpg']], 'the admitted author, never the destination post\'s');
+    // before admission: the capture's media proof fails, the admission refuses: nothing is saved or requested
+    const pre = await authorWorld(AUTHOR_ON);
+    armNativeMenu(pre);
+    const dest2 = authored(imgPost(pre.env, 'destpost2', 'https://i.redd.it/unused-dest2.jpg'), 'destpost2', 'MovedPoster', 'image');
+    const sel2 = overlayPost(pre.env, 'overlaypre', 'https://i.redd.it/overlay-pre.jpg', 'FirstPoster');
+    const d2 = await menuSave(pre, sel2, { before: () => dest2.cont.appendChild(sel2.media) });
+    assert.strictEqual(d2.length, 0, 'moved before admission: refused');
+    assert(!pre.bg.fetched.some((u) => /overlay-pre/.test(u)));
+    // control: the same overlay left unchanged
+    const ok = await authorWorld(AUTHOR_ON);
+    armNativeMenu(ok);
+    const keep = overlayPost(ok.env, 'overlaykeep', 'https://i.redd.it/overlay-kept.jpg', 'LayerPoster');
+    assert.deepStrictEqual((await menuSave(ok, keep)).map((x) => [x.url, x.filename]), [['https://i.redd.it/overlay-kept.jpg', 'SavedImages/layerposter/overlay-kept.jpg']]);
+  });
+
+  await itAsync('12.7 the question is pinned to the admitting document: a replaced document cannot answer (ordinary layout); the unchanged document still does', async () => {
+    const w = await authorWorld(AUTHOR_ON);
+    armNativeMenu(w);
+    const chromeTabs = w.bg.sandbox.chrome.tabs, send = chromeTabs.sendMessage;
+    let docNow = 'doc-R';
+    // Chrome rejects a message pinned to a document that is no longer in the frame
+    chromeTabs.sendMessage = async (tabId, msg, options = {}) => { if (options.documentId && options.documentId !== docNow) throw new Error('The document no longer exists'); return send(tabId, msg, options); };
+    const a = authored(imgPost(w.env, 'docpost', 'https://i.redd.it/doc-a.jpg'), 'docpost', 'DocPoster', 'image');
+    assert.deepStrictEqual((await menuSave(w, a)).map((x) => x.filename), ['SavedImages/docposter/doc-a.jpg']);
+    const q = authorAsks(w);
+    assert.strictEqual(q[0].options.documentId, 'doc-R');
+    assert.deepStrictEqual((await menuSave(w, a, { during: () => { docNow = 'doc-next'; } })).map((x) => x.filename), ['SavedImages/doc-a.jpg']);
   });
 
 }

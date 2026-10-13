@@ -15,7 +15,7 @@ export function QuickApp({quick}:{quick:QuickController}) {
       <div className="min-w-0 flex-1"><h1 className="text-base font-bold tracking-tight">MediaLatch</h1><p className="text-xs text-muted-foreground">{t('downloads.heading')}</p></div>
       <Button id="openSettingsButton" variant="ghost" size="icon" aria-label={t('quick.settings')} onClick={()=>void quick.openSettings('saving')}><Settings/></Button>
     </header>
-    <main id="quickMain" className="min-h-0 overflow-y-auto"><DownloadsPanel/></main>
+    <main id="quickMain" tabIndex={0} className="min-h-0 overflow-y-auto"><DownloadsPanel/></main>
     <Button variant="ghost" size="sm" className="w-full shrink-0" onClick={()=>void quick.openSettings('downloads')}>{t('downloads.open')}</Button>
   </div>
 }

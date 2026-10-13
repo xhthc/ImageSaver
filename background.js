@@ -436,11 +436,11 @@ function parseZerochanMediaUrl(urlStr) {
 }
 
 /**
- * Infers transport type from URL ('protectedBlob', 'pixivDataUrl', or 'direct').
+ * Infers transport type from URL ('protectedBlob', 'pixiv', or 'direct').
  */
 function inferTransportForUrl(url) {
   if (!url || typeof url !== 'string') return 'direct';
-  if (url.includes('pximg.net')) return 'pixivDataUrl';
+  if (url.includes('pximg.net')) return 'pixiv';
   if (isProtectedImageHost(url)) return 'protectedBlob';
   return 'direct';
 }
@@ -455,7 +455,7 @@ function createCandidateGroup({
   tier = 'original', // 'original' | 'preview' | 'fallback'
   score = 0,
   validationMode = 'probe', // 'probe' | 'deferred'
-  transport = 'direct', // 'direct' | 'protectedBlob' | 'pixivDataUrl'
+  transport = 'direct', // 'direct' | 'protectedBlob' | 'pixiv'
   variants = [],
   variantPolicy = null,
   metadata = {}
@@ -1409,7 +1409,20 @@ chrome.runtime.onInstalled.addListener((details) => {
   setupDeclarativeNetRequestRules();
   setupContextMenus();
   if (details?.reason === 'install' || details?.reason === 'update') injectContextTargetIntoOpenTabs().catch(() => {});
+  if (details?.reason === 'install') openFirstRunGuide();
 });
+
+// FIRST-RUN-SETUP-01: only a fresh install opens the full page with the quick-start guide (?welcome=1 is read by
+// ui/src/core/onboarding.js). Updates, startups and worker restarts never do; a failed tab open never blocks the extension.
+function openFirstRunGuide() {
+  const failed = () => dbg('lifecycle', 'guide', 'failed');
+  try {
+    const opened = chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html?welcome=1') });
+    if (opened && typeof opened.catch === 'function') opened.catch(failed);
+  } catch (_) {
+    failed();
+  }
+}
 
 chrome.runtime.onStartup.addListener(() => {
   dbg('lifecycle', 'startup', 'info');
@@ -1812,6 +1825,9 @@ async function probeCandidateImpl(candidate) {
       candidate.status = err.status;
       if (err.status === 429) candidate.rateLimited = true;
       if (err.status === 403 || err.status === 401) candidate.authRequired = true;
+    } else {
+      // no response at all: the 3.5 s probe deadline (AbortError) or a network failure; no HTTP status was observed
+      candidate.networkError = err?.name === 'AbortError' ? 'NETWORK_TIMEOUT' : 'NETWORK_ERROR';
     }
   } finally {
     if (timeoutId) {
@@ -1959,6 +1975,82 @@ function extractMd5FromUrl(urlStr) {
   if (!urlStr || typeof urlStr !== 'string') return null;
   const match = urlStr.match(/\b([a-f0-9]{32})\b/i);
   return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * BOORU-ENGINE-01: the content hash a booru names its files by: 32 hex (MD5) or 40 hex (SHA-1 names, e.g. safebooru.org), taken
+ * from the file name with its sample_/thumbnail_/sample- prefix removed. Null when the name carries no such hash.
+ */
+function extractBooruFileHash(urlStr) {
+  if (!urlStr || typeof urlStr !== 'string') return null;
+  let pathname = urlStr;
+  try { pathname = new URL(urlStr).pathname; } catch (_) {}
+  const name = pathname.split('/').pop() || '';
+  const m = /^(?:sample[-_]|thumbnail[-_]|thumb[-_])?([a-f0-9]{40}|[a-f0-9]{32})\.[a-z0-9]+$/i.exec(name);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * BOORU-ENGINE-01: the first post of an md5 metadata answer, only when it is that very file. Danbooru keeps the md5 on the post and
+ * on media_asset, Moebooru on the post: at least one must be present, and every one present must equal the clicked md5.
+ */
+function booruPostForMd5(posts, md5) {
+  const p = Array.isArray(posts) ? posts[0] : null;
+  if (!p || !md5) return null;
+  const hashes = [p.md5, p.media_asset?.md5].filter(Boolean).map(h => String(h).toLowerCase());
+  return hashes.length && hashes.every(h => h === md5) ? p : null;
+}
+
+/** The content hash a booru URL names: its file-name hash (md5/sha1), else the first md5 in its path (Moebooru /image/<md5>/...). */
+function booruUrlHash(urlStr) {
+  let pathname = '';
+  try { pathname = new URL(urlStr).pathname; } catch (_) { return null; }
+  return extractBooruFileHash(urlStr) || extractMd5FromUrl(pathname);
+}
+
+// BOORU-ENGINE-01: the non-original renditions of the Danbooru/Gelbooru/Moebooru families (feed previews, samples, Danbooru size
+// variants and Moebooru's /jpeg/ conversion). Selecting one of these on such a board means "the original of this file".
+const BOORU_SELECTION_ENGINES = Object.freeze(['DanbooruEngine', 'GelbooruEngine', 'MoebooruEngine']);
+function isBooruNonOriginalUrl(urlStr) {
+  let pathname = '';
+  try { pathname = new URL(urlStr).pathname; } catch (_) { return false; }
+  return /\/(?:preview|thumbnails?|samples?|180x180|360x360|720x720)\/|\/jpeg\/[a-f0-9]{32}\//i.test(pathname);
+}
+
+/**
+ * The admission rule of a booru selection (null when `selectedUrl` is not a non-original rendition on a Danbooru/Gelbooru/Moebooru
+ * board): `admits(url)` refuses another non-original rendition (the selection itself included) and any URL naming another file
+ * hash than the selection. Opaque URLs are not judged by a hash they do not name.
+ */
+function booruSelectionRule(selectedUrl, pageUrl) {
+  if (!selectedUrl || !isBooruNonOriginalUrl(selectedUrl)) return null;
+  let u;
+  try { u = new URL(selectedUrl); } catch (_) { return null; }
+  if (!BOORU_ENGINE_RESOLVERS.some(e => BOORU_SELECTION_ENGINES.includes(e.name) && e.match(u, pageUrl))) return null;
+  const hash = booruUrlHash(selectedUrl);
+  return {
+    hash,
+    admits(url) {
+      if (!url || isBooruNonOriginalUrl(url)) return false;
+      const named = booruUrlHash(url);
+      return !hash || !named || named === hash;
+    }
+  };
+}
+
+/**
+ * An http(s) URL whose host belongs to `isOwnHost` and that names no other file than `hash`; otherwise null. A URL naming no
+ * hash at all (opaque) is kept as declared; no hash is guessed for it.
+ */
+function booruOwnUrl(urlStr, isOwnHost, hash) {
+  try {
+    const u = new URL(urlStr);
+    if ((u.protocol !== 'https:' && u.protocol !== 'http:') || !isOwnHost(u.hostname.toLowerCase())) return null;
+    const named = booruUrlHash(u.toString());
+    return hash && named && named !== hash ? null : u.toString();
+  } catch (_) {
+    return null;
+  }
 }
 
 /**
@@ -2190,6 +2282,14 @@ function generateExtensionCandidates(urlObj, basePath, currentExt, options = {})
   return results;
 }
 
+// BOORU-ENGINE-01: Moebooru boards and their public metadata origins (Sakugabooru answers on www; the bare host redirects).
+const MOEBOORU_API = Object.freeze({
+  'konachan.com': 'https://konachan.com',
+  'konachan.net': 'https://konachan.net',
+  'yande.re': 'https://yande.re',
+  'sakugabooru.com': 'https://www.sakugabooru.com'
+});
+
 const BOORU_ENGINE_RESOLVERS = [
   // --------------------------------------------------------------------------
   // 5.1 Danbooru & Danbooru-based (Danbooru, Safebooru.donmai.us, BleachBooru, Booruvar, etc.)
@@ -2230,36 +2330,18 @@ const BOORU_ENGINE_RESOLVERS = [
             } catch (_) {}
           }
           const apiUrl = `${apiDomain}/posts.json?tags=md5:${md5}`;
-          const posts = await fetchResolverMetadata(apiUrl);
-
-          if (posts) {
-            if (Array.isArray(posts) && posts[0]) {
-              const p = posts[0];
-              apiKnownExt = (p.file_ext || '').toLowerCase();
-              const isVid = apiKnownExt === 'mp4' || apiKnownExt === 'webm';
-
-              if (p.file_url) {
-                candidates.push(createCandidateDescriptor(p.file_url, {
-                  score: 90,
-                  tier: 'original',
-                  allowVideo: isVid
-                }));
-              }
-              const origVariant = p.media_asset?.variants?.find(v => v.type === 'original');
-              if (origVariant?.url) {
-                candidates.push(createCandidateDescriptor(origVariant.url, {
-                  score: 90,
-                  tier: 'original',
-                  allowVideo: isVid
-                }));
-              }
-              if (p.large_file_url) {
-                candidates.push(createCandidateDescriptor(p.large_file_url, {
-                  score: 85,
-                  tier: 'original',
-                  allowVideo: isVid
-                }));
-              }
+          // Only a post that is this very file counts; large_file_url is the sample of a large image, never an original.
+          const p = booruPostForMd5(await fetchResolverMetadata(apiUrl), md5);
+          if (p) {
+            apiKnownExt = (p.file_ext || p.media_asset?.file_ext || '').toLowerCase();
+            const isVid = apiKnownExt === 'mp4' || apiKnownExt === 'webm';
+            const declared = [p.file_url, p.media_asset?.variants?.find(v => v.type === 'original')?.url];
+            for (const url of new Set(declared.map(u => booruOwnUrl(u, isDanbooruDomain, md5)).filter(Boolean))) {
+              candidates.push(createCandidateDescriptor(url, {
+                score: 90,
+                tier: 'original',
+                allowVideo: isVid
+              }));
             }
           }
         } catch (e) {}
@@ -2304,9 +2386,8 @@ const BOORU_ENGINE_RESOLVERS = [
       const pathname = urlObj.pathname;
       const urlStr = urlObj.toString();
 
-      // Extract expected MD5 from clicked preview if present
-      const clickedMd5Match = urlStr.match(/\b([a-f0-9]{32})\b/i);
-      const expectedMd5 = clickedMd5Match ? clickedMd5Match[1].toLowerCase() : null;
+      // The clicked file's content hash (md5, or the 40-hex names of e.g. safebooru.org) binds what a post page declares
+      const expectedMd5 = extractBooruFileHash(urlStr);
 
       // 1. Post view link resolution (index.php?page=post&s=view&id=... or /post&s=view&id=...)
       // Strict pre-fetch validation: candidate must be on a verified Gelbooru domain with http(s)
@@ -2323,8 +2404,13 @@ const BOORU_ENGINE_RESOLVERS = [
       });
 
       const postUrlCandidate = postCandidates[0] || null;
+      // safebooru.org-style previews carry their post id as the bare query (thumbnail_<hash>.jpg?7228683): another post's page
+      // must not supply the original of this preview.
+      const previewPostId = /^\?\d+$/.test(urlObj.search) ? urlObj.search.slice(1) : null;
+      const readPostId = (function() { try { return new URL(postUrlCandidate).searchParams.get('id'); } catch (_) { return null; } })();
+      const samePost = !previewPostId || !readPostId || previewPostId === readPostId;
 
-      if (postUrlCandidate) {
+      if (postUrlCandidate && samePost) {
         try {
           const html = await fetchResolverMetadata(postUrlCandidate, { redirect: 'error', text: true });
 
@@ -2336,20 +2422,19 @@ const BOORU_ENGINE_RESOLVERS = [
                                html.match(/<video[^>]*id=["']gelcomVideoPlayer["'][^>]*>[\s\S]*?<source[^>]*\bsrc=["']([^"']+)["']/i);
 
             // B. Original image anchor
-            const origMatch = html.match(/<a[^>]+href=["']([^"']+\/images\/[^"']+)["'][^>]*>(?:Original\s+(?:image|video)|View\s+larger)<\/a>/i) ||
-                              html.match(/<li[^>]*><a[^>]+href=["']([^"']+\/images\/[^"']+)["'][^>]*>Original image<\/a>/i);
+            const origMatch = html.match(/<a[^>]+href=["']([^"']+\/images\/[^"']+)["'][^>]*>\s*(?:Original\s+(?:image|video)|View\s+larger)\s*<\/a>/i);
 
             const rawFound = (videoMatch && (videoMatch[1] || videoMatch[2])) || (origMatch && origMatch[1]);
             if (rawFound) {
               try {
-                const parsedFound = new URL(rawFound.replace('//images/', '/images/'), postUrlCandidate);
+                // a protocol-relative "//images/..." path is site-relative; a declared absolute URL is kept exactly as written
+                const parsedFound = new URL(rawFound.startsWith('//images/') ? rawFound.slice(1) : rawFound, postUrlCandidate);
                 // Security check 1: verified Gelbooru domain & http(s)
                 if (isGelbooruDomain(parsedFound.hostname) && (parsedFound.protocol === 'https:' || parsedFound.protocol === 'http:')) {
                   // Security check 2: media path must be under /images/
                   if (/\/images\//i.test(parsedFound.pathname)) {
-                    // Security check 3: bind scraped media to clicked post MD5 if known
-                    const foundMd5Match = parsedFound.pathname.match(/\b([a-f0-9]{32})\b/i);
-                    const foundMd5 = foundMd5Match ? foundMd5Match[1].toLowerCase() : null;
+                    // Security check 3: bind scraped media to the clicked file hash (md5/sha1) when both are known
+                    const foundMd5 = extractBooruFileHash(parsedFound.toString());
                     if (!expectedMd5 || !foundMd5 || expectedMd5 === foundMd5) {
                       const isVid = parsedFound.pathname.endsWith('.mp4') || parsedFound.pathname.endsWith('.webm');
                       candidates.push(createCandidateDescriptor(parsedFound.toString(), {
@@ -2429,14 +2514,30 @@ const BOORU_ENGINE_RESOLVERS = [
     name: 'MoebooruEngine',
     match: (urlObj, pageUrl) => {
       const host = urlObj.hostname.toLowerCase();
-      const moebooruRoots = ['konachan.com', 'konachan.net', 'yande.re', 'sakugabooru.com'];
-      return moebooruRoots.some(r => isSameOrSubdomain(host, r));
+      return Object.keys(MOEBOORU_API).some(r => isSameOrSubdomain(host, r));
     },
     resolve: async (urlObj, pageUrl, linkUrl) => {
       const candidates = [];
       const pathname = urlObj.pathname;
       const host = urlObj.hostname.toLowerCase();
-      const pageHost = pageUrl ? (function() { try { return new URL(pageUrl).hostname.toLowerCase(); } catch (e) { return ''; } })() : '';
+      const root = Object.keys(MOEBOORU_API).find(r => isSameOrSubdomain(host, r));
+
+      // 0. The board's own md5 lookup for any md5-named path: feed preview /data/preview/aa/bb/<md5>.jpg, post sample
+      // /sample/<md5>/..., the JPEG version /jpeg/<md5>/... (Konachan's "larger version") or /image/<md5>/... The declared
+      // file_url of that very md5 on the board's own hosts is the original (yande.re/Konachan PNG, Sakugabooru MP4).
+      const md5 = extractMd5FromUrl(pathname);
+      if (md5 && root) {
+        const p = booruPostForMd5(await fetchResolverMetadata(`${MOEBOORU_API[root]}/post.json?tags=md5:${md5}`), md5);
+        const fileUrl = p && booruOwnUrl(p.file_url, h => isSameOrSubdomain(h, root), md5);
+        if (fileUrl) {
+          const fileExt = String(p.file_ext || '').toLowerCase();
+          candidates.push(createCandidateDescriptor(fileUrl, {
+            score: 90,
+            tier: 'original',
+            allowVideo: fileExt === 'mp4' || fileExt === 'webm' || /\.(mp4|webm)$/i.test(new URL(fileUrl).pathname)
+          }));
+        }
+      }
 
       // 1. Sample transformation: /sample/<hash>/<title> sample <tags>.jpg -> /image/<hash>/<title> <tags>.<ext>
       if (pathname.includes('/sample/')) {
@@ -2463,42 +2564,9 @@ const BOORU_ENGINE_RESOLVERS = [
         }
       }
 
-      // 2. Thumbnail from /data/preview/<hash>.jpg via Moebooru API and deterministic fallback
+      // 2. Deterministic fallback for /data/preview/<md5>.jpg (the flat /data/<md5>.<ext> layout of Sakugabooru)
       if (pathname.includes('/preview/')) {
-        const md5Match = pathname.match(/([a-f0-9]{32})/i);
-        if (md5Match) {
-          const md5 = md5Match[1].toLowerCase();
-          try {
-            let apiDomain = urlObj.origin;
-            if (host.endsWith('konachan.com') || pageHost.endsWith('konachan.com')) {
-              apiDomain = 'https://konachan.com';
-            } else if (host.endsWith('konachan.net') || pageHost.endsWith('konachan.net')) {
-              apiDomain = 'https://konachan.net';
-            } else if (host.endsWith('sakugabooru.com') || pageHost.endsWith('sakugabooru.com')) {
-              apiDomain = 'https://sakugabooru.com';
-            } else if (host === 'yande.re' || host.endsWith('.yande.re') || pageHost === 'yande.re' || pageHost.endsWith('.yande.re')) {
-              apiDomain = 'https://yande.re';
-            }
-            const apiUrl = `${apiDomain}/post.json?tags=md5:${md5}`;
-            const posts = await fetchResolverMetadata(apiUrl);
-
-            if (posts) {
-              if (Array.isArray(posts) && posts[0]?.file_url) {
-                const fileUrl = posts[0].file_url;
-                const fileExt = (posts[0].file_ext || '').toLowerCase();
-                const isVid = fileExt === 'mp4' || fileExt === 'webm' ||
-                              fileUrl.endsWith('.mp4') || fileUrl.endsWith('.webm') ||
-                              /\.(mp4|webm)($|\?)/i.test(fileUrl);
-                candidates.unshift(createCandidateDescriptor(fileUrl, {
-                  score: 90,
-                  tier: 'original',
-                  allowVideo: isVid
-                }));
-              }
-            }
-          } catch (e) {}
-
-          // Deterministic fallback candidates for Moebooru preview
+        if (md5) {
           const extCands = generateExtensionCandidates(urlObj, `/data/${md5}`, '.mp4', { includeVideo: true });
           for (const c of extCands) {
             const isVid = c.endsWith('.mp4') || c.endsWith('.webm');
@@ -2850,7 +2918,8 @@ function readContextMediaTarget() {
  * itself or selected as the media under a pressed layer: 'preview', whatever source Chrome claims. 'unproven' = the capture script is not running in this frame (not injected), so
  * nothing contradicts the claim. A script that runs here but recorded no gesture in this document (null: the document was
  * navigated or reloaded after the right-click, or the gesture was not a real one) is not the document the menu was built for:
- * its claim is stale and is 'refused'. Local DOM reads only: no network, no messages.
+ * its claim is stale and is 'refused'. Local DOM reads only: no network, no messages. A proven claim's proof token is handed to
+ * the admission hook below: a later author question (content_reddit.js) answers only what was frozen for this very admission.
  */
 function verifyContextOwner(claim) {
   try {
@@ -2884,6 +2953,11 @@ function verifyContextOwner(claim) {
       const a = typeof el.closest === 'function' ? el.closest('a') : null;
       if (!a || typeof a.href !== 'string' || new URL(a.href).href !== new URL(link).href) return 'refused';
     }
+    // the admission point: a provider script of this same isolated world may freeze what it proves about the selection now (content_reddit.js:
+    // the owning post's author under this proof), so later scrolling or recycling of the page cannot change it
+    if (claim && typeof claim.proof === 'string' && claim.proof && typeof globalThis.__imageSaverAdmitRedditAuthor === 'function') {
+      globalThis.__imageSaverAdmitRedditAuthor(claim.proof, el, mediaEl);
+    }
     return 'proven';
   } catch (e) {
     return 'refused';
@@ -2900,6 +2974,8 @@ async function resolveContextOwner(tabId, frameId, claim) {
       args: [claim]
     });
     const res = results && results[0] && results[0].result;
+    // the document that admitted the claim: a later question about this selection (selectedAuthorFolder) is pinned to it
+    if (claim && results && results[0] && typeof results[0].documentId === 'string') claim.documentId = results[0].documentId;
     return res === 'refused' || res === 'proven' || res === 'preview' ? res : 'unproven';
   } catch (e) {
     return 'unproven';
@@ -3736,6 +3812,10 @@ async function getTrackedDownloadCount() {
 }
 
 if (typeof importScripts === 'function') importScripts('lib/toolbar_badge.js');
+void globalThis.MediaLatchToolbarBadge.installThemeIcon({
+  action:chrome.action,storage:chrome.storage,
+  log:()=>console.warn('[MediaLatch] Toolbar icon update failed')
+});
 const toolbarBadge = globalThis.MediaLatchToolbarBadge.create({
   action: chrome.action,
   readBusy: () => ({resolving: activeResolvingCount, downloads: trackedDownloadIds.size,
@@ -4132,11 +4212,11 @@ downloadManager?.ready.then(()=>{downloadManagerRecovering=false;void restoreOrC
 async function searchDirectoryExport(id,url){
   const owner=acquireOffscreenTask();try{await ensureOffscreenDocument();const r=await offscreenRequest({action:'STAGING_DIRECTORY_SEARCH',id,url});if(!r?.success)throw Error(r?.error || 'DIRECTORY_WRITE_FAILED');return r.item;}finally{await releaseOffscreenTask(owner);}
 }
-async function managedDownload(options, feedbackOp=null, mime='') {
+async function managedDownload(options, feedbackOp=null, mime='', maxBytes=0) {
   // Offline legacy harnesses omit IndexedDB; the installed extension always uses the durable queue.
   const {saveDirectoryId=''}=await chrome.storage.local.get({saveDirectoryId:''});
   if(!downloadManager){if(saveDirectoryId)throw Error('DIRECTORY_ACCESS_REQUIRED');return chrome.downloads.download(options);}
-  return downloadManager.enqueue(options,{op:feedbackOp,mime,directoryId:saveDirectoryId});
+  return downloadManager.enqueue(options,{op:feedbackOp,mime,maxBytes,directoryId:saveDirectoryId});
 }
 async function downloadManagerSnapshot() {
   const snapshot=await downloadManager.list();
@@ -4224,7 +4304,7 @@ function buildFeedbackOutput({ finalPath, structuredResult, group, isFallback = 
   const evidence = group?.metadata?.mimeEvidence;
   const verified = !isFallback && Boolean(mime) && (
     group?.transport === 'protectedBlob' ||
-    group?.transport === 'pixivDataUrl' ||
+    group?.transport === 'pixiv' ||
     evidence === MIME_EVIDENCE.HTTP_RESPONSE ||
     evidence === MIME_EVIDENCE.PROTECTED_FETCH
   );
@@ -4353,7 +4433,7 @@ function isNativeResumeCandidate(id, errorCode) {
   if (!trackedDownloadIds.has(id) || earlyTerminalDownloadStates.has(id) || activeProtectedBlobsByDownloadId.has(id)) return false;
   const meta = activeDownloadsMetadata.get(id);
   const transport = meta?.plan?.transport;
-  return Boolean(meta?.plan) && transport !== 'protectedBlob' && transport !== 'pixivDataUrl' && /^https?:\/\//i.test(meta.url || '');
+  return Boolean(meta?.plan) && transport !== 'protectedBlob' && transport !== 'pixiv' && /^https?:\/\//i.test(meta.url || '');
 }
 
 // The current DownloadItem of an id, or null when it cannot be read.
@@ -4540,10 +4620,8 @@ if (typeof chrome !== 'undefined' && chrome.downloads?.onChanged?.addListener) {
 // ============================================================================
 
 /**
- * Downloads image from i.pximg.net via fetch() in extension context with Referer injection (DNR),
- * reads response into a binary buffer, and converts it into a local Data URL.
- * This resolves the HTTP 403 (SERVER_FORBIDDEN) issue in chrome.downloads.download,
- * as the download manager saves pre-fetched data locally without a secondary external network request.
+ * Pixiv originals (i.pximg.net) are acquired by the download manager's offscreen staging with the DNR Referer rule; see
+ * pixivExpectedMime in lib/worker_pipeline.js. chrome.downloads never requests the pximg URL itself (it would get HTTP 403).
  */
 if (typeof importScripts === 'function') importScripts('lib/worker_pipeline.js');
 
@@ -4854,18 +4932,31 @@ async function verifyFinalMediaMimeImpl(targetUrl, mediaPlan, isVideoContext) {
     }
   }
 
+  // PIXIV-SAVING-POLISH-01: a Pixiv probe that got no answer at all (its 3.5 s deadline on a busy link, or a network failure) says
+  // nothing about the file. The manager's staging verifies the actual bytes against this expected image type before any export, so
+  // the save continues with that check instead of failing here. An answered probe (status, size, MIME) still decides above.
+  if (!isOk && mediaPlan?.transport === 'pixiv' && !probeTarget.status && probeTarget.networkError) {
+    const expected = pixivExpectedMime(mediaPlan, targetUrl);
+    if (expected) {
+      console.warn(`[MediaLatch] Pixiv probe got no answer (${probeTarget.networkError}); bytes are verified by staging:`, sanitizeUrlForLog(targetUrl));
+      return expected;
+    }
+  }
+
   if (!isOk) {
     console.warn(`[MediaLatch] Финальная проверка изображения не подтвердила тип (HTTP: ${probeTarget.status || 'не наблюдался'}):`, sanitizeUrlForLog(targetUrl));
     if (mediaPlan) {
       mediaPlan._verificationStatus = probeTarget.status || 500;
       mediaPlan._verificationStatusObserved = Boolean(probeTarget.status);
       mediaPlan._probeFailed = true;
+      mediaPlan._probeNetworkError = probeTarget.networkError || '';
     }
   }
 
   return null;
 }
 
+let contextOwnerProofs = 0;
 async function onContextMenuClicked(info, tab) {
   // DEBUG-MENU-01: one attempt id per save (an inline save brings the id of its click); journal only, never an authority
   if (!info.dbgCid) info.dbgCid = dbgNewCid();
@@ -4891,7 +4982,11 @@ async function onContextMenuClicked(info, tab) {
     // bypasses it, and no provider recovery, probe or download runs before it passes.
     const claimsMediaLink = !rawImageUrl && hasMediaAssociation('', rawLinkUrl);
     // An inline Reddit click (UX-11-RD) was proven by the document right before this call; a gesture capture, possibly of another tile, must not decide it.
-    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || postMediaItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '' });
+    // the admitted gesture carries a proof token: the selected post's author is later read for this gesture only (selectedAuthorFolder)
+    const ownerProof = `${Date.now()}-${++contextOwnerProofs}`;
+    const ownerClaim = { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '', proof: ownerProof };
+    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || postMediaItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, ownerClaim);
+    if (owner === 'proven' && !redditInlineInfos.has(info)) Object.assign(info, { authorProof: ownerProof, authorDocumentId: ownerClaim.documentId || '' });
     dbg('menu', 'owner', owner === 'refused' || owner === 'preview' ? 'refused' : 'ok', owner === 'preview' ? 'SEEK_PREVIEW' : (owner === 'refused' ? 'STALE_OWNER' : undefined), { owner }, { cid: info.dbgCid, tab: tab && tab.id });
     if (owner === 'refused' || owner === 'preview') {
       console.warn(owner === 'preview'
@@ -5027,10 +5122,13 @@ async function onContextMenuClicked(info, tab) {
       const settings = await chrome.storage.local.get({
         subfolder: 'SavedImages',
         folderOrganizationMode: 'single',
-        xAuthorFolders: false
+        xAuthorFolders: false,
+        redditAuthorFolders: false,
+        pixivAuthorFolders: false
       });
 
       if(settings.xAuthorFolders===true && isXPageUrl(info.pageUrl || tab?.url))settings.xAuthor=await selectedXAuthor(info,tab,rawImageUrl);
+      else settings.author=await selectedAuthorFolder(settings,info,tab,rawImageUrl);
 
       // An HLS-only post video proven by the selected Reddit player's document (inline): its frozen master address goes straight to the assembly
       if (redditInlineInfos.has(info) && info.redditInlineMedia && info.redditInlineMedia.redditHls === true) {
@@ -5165,8 +5263,11 @@ async function onContextMenuClicked(info, tab) {
       }
 
       if(mediaPlan?.pixivPostMedia){
-        const current=await resolveContextOwner(tab?.id,info.frameId,{src:rawImageUrl,link:''});
-        if(current!=='proven'){await fbFail(op,{stage:'resolve',code:'NO_MEDIA'});await flashBadge('ERR','#ef4444');return;}
+        // admitted at entry for this exact preview; resolvePixivPostMedia bound the artwork id to that proven source and validated the complete list.
+        // The preview may scroll away or be recycled during /pages: only a replaced (documentId) or navigated admitting document cancels the batch.
+        let current='';
+        if(owner==='proven' && ownerClaim.documentId)try{current=(await chrome.scripting.executeScript({target:{tabId:tab.id,documentIds:[ownerClaim.documentId]},injectImmediately:true,func:()=>location.href}))?.[0]?.result;}catch(_){}
+        if(!current || current!==(info.frameUrl || info.pageUrl)){await fbFail(op,{stage:'resolve',code:'NO_MEDIA'});await flashBadge('ERR','#ef4444');return;}
         await fbDiscard(op);
         await savePixivPostMedia(mediaPlan.pixivPostMedia,info,tab);
         return;
@@ -5263,7 +5364,8 @@ async function onContextMenuClicked(info, tab) {
 
       if (!verifiedMime && (isVideo || isProtected || mediaPlan?._domFastPath || mediaPlan?._probeFailed)) {
         console.warn('[MediaLatch] Финальная верификация MIME завершилась неудачей, скачивание отклонено:', sanitizeUrlForLog(targetMediaUrl));
-        await fbFail(op, { stage: 'verify', code: 'MIME_NOT_VERIFIED' });
+        // PIXIV-SAVING-POLISH-01: a Pixiv probe that got no answer (deadline/network) is a network failure, not invalid content
+        await fbFail(op, { stage: 'verify', code: (mediaPlan?.transport === 'pixiv' && mediaPlan._probeNetworkError) || 'MIME_NOT_VERIFIED' });
         if (mediaPlan?.verifiedBlob?.probeTaskKey) {
           await releaseOffscreenTask(mediaPlan.verifiedBlob.probeTaskKey, mediaPlan.verifiedBlob.blobUrl).catch(() => {});
           delete mediaPlan.verifiedBlob;
@@ -5904,7 +6006,9 @@ function sanitizeRedditInlineMedia(raw, expect) {
     sig = typeof raw.sig === 'string' && /^[a-f0-9]{8}$/.test(raw.sig) ? raw.sig : '';
     if (ownerId !== expect.ownerId || count !== expect.count || index !== expect.index || sig !== expect.sig) return null;
   }
-  return { kind, url, ownerId, postUrl, blobPlayer: raw.blobPlayer === true, index, count, sig, redgifsEmbedClip: embedClip, redditHls };
+  // the post's author, proven by the document with this descriptor (author folders); a username or nothing
+  const author = typeof raw.author === 'string' && /^[A-Za-z0-9_-]{3,20}$/.test(raw.author) ? raw.author : '';
+  return { kind, url, ownerId, postUrl, blobPlayer: raw.blobPlayer === true, index, count, sig, redgifsEmbedClip: embedClip, redditHls, author };
 }
 
 // Why a proof was refused, for the log only: one of a fixed set of codes, never page data. The generic "owner not proven" wording hid whether the

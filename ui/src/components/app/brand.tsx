@@ -11,7 +11,7 @@ export function BrandMark({ className = "" }: { className?: string }) {
         </linearGradient>
       </defs>
       <rect x="16" y="16" width="96" height="96" rx="24" fill={`url(#${gradient})`} />
-      <g fill="none" stroke="#fff" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round">
+      <g fill="none" stroke="var(--brand-foreground, #fff)" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M38 78V45L64 67L90 45V78" />
         <path d="M64 67V88M55 79L64 88L73 79" />
       </g>

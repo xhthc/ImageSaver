@@ -38,9 +38,17 @@
   --ring: #60a5fa;
   --brand-start: #a855f7;
   --brand-end: #7e22ce;
+  --brand-foreground: #ffffff;
+}
+
+:root[data-theme="blue"] {
+  --brand-start: #3b82f6;
+  --brand-end: #1d4ed8;
 }
 
 :root[data-theme="dark"] {
+  --brand-start: #52525b;
+  --brand-end: #27272a;
   --background: #111113;
   --foreground: #f4f4f5;
   --card: #1b1b1f;
@@ -59,6 +67,9 @@
 }
 
 :root[data-theme="light"] {
+  --brand-start: #e2e8f0;
+  --brand-end: #cbd5e1;
+  --brand-foreground: #172033;
   color-scheme: light;
   --background: #ffffff;
   --foreground: #172033;
@@ -182,6 +193,13 @@
   border-radius: 20px;
   box-shadow: none;
 }
+/* Keep native wheel/keyboard scrolling without reserving space for a visible rail in the compact popup. */
+#quickMain {
+  scrollbar-width: none;
+}
+#quickMain::-webkit-scrollbar {
+  display: none;
+}
 [data-popup="quick"] > header {
   padding: 12px;
   border-radius: 16px;
@@ -220,15 +238,17 @@
   from { opacity: 1; transform: scale(1); }
   to { opacity: 0; transform: scale(0.98); }
 }
-[data-slot="select-content"], [data-slot="tooltip-content"] {
-  transform-origin: var(--radix-select-content-transform-origin, var(--radix-tooltip-content-transform-origin, center));
+[data-slot="select-content"], [data-slot="tooltip-content"], [data-slot="dropdown-menu-content"] {
+  transform-origin: var(--radix-select-content-transform-origin, var(--radix-tooltip-content-transform-origin, var(--radix-dropdown-menu-content-transform-origin, center)));
 }
 [data-slot="select-content"][data-state="open"],
+[data-slot="dropdown-menu-content"][data-state="open"],
 [data-slot="tooltip-content"][data-state="delayed-open"],
 [data-slot="tooltip-content"][data-state="instant-open"] {
   animation: medialatch-menu-enter var(--motion-normal) var(--motion-enter);
 }
-[data-slot="select-content"][data-state="closed"], [data-slot="tooltip-content"][data-state="closed"] {
+[data-slot="select-content"][data-state="closed"], [data-slot="tooltip-content"][data-state="closed"],
+[data-slot="dropdown-menu-content"][data-state="closed"] {
   animation: medialatch-menu-exit var(--motion-fast) var(--motion-exit);
   pointer-events: none;
 }

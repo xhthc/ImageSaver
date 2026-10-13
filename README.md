@@ -31,12 +31,16 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 
 <table>
   <tr>
+    <td width="50%"><img src="docs/assets/welcome.png" alt="Violet welcome screen: three short steps and one Continue button"><br><strong>Start in three steps</strong><br>A fresh install opens a short welcome screen once; Continue opens the Saving settings (development main only).</td>
+    <td width="50%"><img src="docs/assets/downloads.png" alt="Download manager on a fresh install, showing its empty state"><br><strong>Follow every download</strong><br>Progress, cancel, retry and plain-language failure explanations with the technical code.</td>
+  </tr>
+  <tr>
     <td width="50%"><img src="docs/assets/settings-saving.png" alt="Violet Saving settings: destination, organization and example path"><br><strong>Choose where files go</strong><br>Destination, optional subfolder, author folders and a live path example.</td>
     <td width="50%"><img src="docs/assets/settings-links.png" alt="Link previews: one domain selector per platform"><br><strong>Choose how links are shared</strong><br>One selector per platform; service details stay expandable.</td>
   </tr>
 </table>
 
-Current interface with demonstration settings. Violet by default, English/Russian localization and short transitions that respect reduced motion.
+Screenshots from an isolated fresh install of the current development main (default settings, no downloads). Violet by default, English/Russian localization and short transitions that respect reduced motion.
 
 ---
 
@@ -47,7 +51,7 @@ Current interface with demonstration settings. Violet by default, English/Russia
 3. Track downloads in the popup. **Open download manager** leads to details, cancellation and retrying export from prepared bytes. MediaLatch notices appear on the original page.
 4. Open **Saving**, choose a destination and organization, then press **Save settings**. Files default to `Downloads/SavedImages/`.
 
-An automatic first-run introduction is planned; this quick guide is available now.
+Development main only (not in the published v2.0.0.32 ZIP): a fresh install opens a separate welcome screen with three short steps. **Continue** remembers it and opens **Saving**; the welcome is shown only for that first install, never after updates or browser restarts, and there is no tutorial button afterwards. Saving and Embed show **Unsaved changes** whenever the form differs from what is stored (also right after a save), saving progress, success or a lasting error; a failed settings read offers **Try again**. Both download managers explain failures in plain language, consistently on the card and in its details, and keep the technical code on a small line.
 
 ---
 
@@ -107,10 +111,11 @@ The packaged preview includes these features. Ordinary downloads, themes, Statis
 | RedGIFs | Selected clip and same-clip video renditions; inline saving; provider audio recovery where available |
 | Pawchive | Declared post originals from previews or individual attachments; common 100-file batch limit, with spaced starts and a rate-limit stop |
 | Sankaku | Selected preview/sample to declared same-post original via the context menu in feeds/opened posts; image/video smoke tests reported working in Helium, native GIF test pending |
+| Booru boards (development main) | Gelbooru, safebooru.org, yande.re, Konachan and Sakugabooru: a feed preview or the image/video on an opened post saves the post's declared original (photo, GIF or video), checked in an isolated browser; Danbooru and rule34.xxx use the same engine rules but were not reachable from an isolated profile (challenge page) |
 | Pixiv | Feed previews save the post's declared original pages (up to 100); an image selected inside an opened artwork remains single |
 | Other sites | Generic discovery plus existing rules, including selected booru paths; coverage varies |
 
-Kemono is deferred while the site is unavailable. Broader booru compatibility needs separate integration and live validation. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
+Kemono is deferred while the site is unavailable. Booru originals come from the post's own page or metadata and must name the same file (hash) and post; a sample, JPEG version or thumbnail is never saved as the original. Other booru deployments are not promised. The published v2.0.0.32 ZIP has the earlier booru rules. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
 
 Existing post batches on X, Reddit, Pixiv and Pawchive share a limit of 100 owned items. Completeness and per-item ownership checks remain; a larger limit does not turn a whole feed into a download batch. Source preparation stays bounded and HTTP 429 stops further admission where supported.
 
@@ -128,7 +133,7 @@ To discover this preview in **Updates**, set **Update channel** to **Regular and
 
 For troubleshooting, enable recording in **Debug**, reproduce the problem, then copy or export the filtered events. Recording starts when enabled; turning it off preserves the journal until it is cleared or expires. Reports stay local unless you share them.
 
-In **Saving**, choose a writable base folder and press **Save settings**. Subfolders are created inside it. Without a selected folder, files use the browser's Downloads directory. The optional **X: create a folder for each author** setting uses the selected post's username, in lowercase: `SavedImages/username/file.jpg`, or `SavedImages/x/username/pic/file.jpg` with site/type organization. Quotes use their own author; an unproven author keeps the usual layout. Other sites keep their existing layout.
+In **Saving**, choose a writable base folder and press **Save settings**. Subfolders are created inside it. Without a selected folder, files use the browser's Downloads directory. The optional **X: create a folder for each author** setting uses the selected post's username, in lowercase: `SavedImages/username/file.jpg`, or `SavedImages/x/username/pic/file.jpg` with site/type organization. Quotes use their own author; an unproven author keeps the usual layout. Other sites keep their existing layout. Development main replaces it with one **Author folders** menu (x.com, Reddit, Pixiv; any combination, applied by Save settings): Reddit uses the username of the post that owns the selected media (including its RedGIFs embed; crossposts, comments and unclear cases keep the usual layout), Pixiv `Name (user ID)` from the artwork's own metadata; the earlier X choice is kept.
 
 Directory selection requires a browser supporting the File System Access API. Selected-folder files are written directly and appear in MediaLatch's manager rather than Chrome's download history. Existing files are preserved with numbered names on collisions. Browser restart may require selecting the same folder again and saving settings to restore write access; prepared files can then be retried. Changing destination affects newly queued files. Cancellation before writing finishes can leave an empty placeholder. The extension receives files into private disk storage and validates them before export. The byte-transfer queue runs up to three files concurrently, at most two per source origin; Pause queue stops new transfers, not source discovery or an active transfer. Unknown totals have no invented percentage or ETA. Processing keeps the existing GIF/HLS resource limits.
 
@@ -140,7 +145,7 @@ Failed exports retain prepared bytes for explicit retry; removing a record delet
 
 DRM, access bypass, arbitrary blob/MSE players and general HLS/DASH downloads are not supported. Separate audio tracks are assembled only within the supported Reddit HLS path. Missing files, rate limits and permission failures cannot be guaranteed away.
 
-GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output, 15 MiB encoded output and 45 seconds of processing. Buffered Pixiv images have a 50 MiB ceiling. These are limits of specific processing paths, not every direct browser download.
+GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output, 15 MiB encoded output and 45 seconds of processing. Pixiv images have a 50 MiB ceiling on the declared and the actually received size; in development main they are acquired by the download manager with progress and a stall timeout instead of a 20-second whole-transfer deadline. These are limits of specific processing paths, not every direct browser download.
 
 There is no telemetry or extension backend. Statistics and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
 
@@ -152,7 +157,7 @@ Statuses distinguish implemented features from future work. They describe direct
 
 | Area | Planned result | Status |
 |---|---|---|
-| Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Next compatibility work |
+| Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Booru part implemented in development main (Gelbooru/Moebooru boards verified; Danbooru pending live access); image-result discovery next |
 | Controls and selection | Small universal inline controls and optional post/media multi-selection | Planned |
 | Download manager | Extend the implemented file queue to paced post resolution, batch totals and proven transfer resume | File queue in preview; remaining work planned |
 | Complete-file staging | Disk-backed acquisition/validation before export and local retry; broaden native restart, quota and media checks | Included in preview; ordinary Helium checks passed, stress checks pending |
@@ -162,7 +167,7 @@ Statuses distinguish implemented features from future work. They describe direct
 | Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
 | Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Planned; security/privacy gates first |
 | Settings and documentation | Compact settings groups, visual quick start and EN/RU README | Included in preview; user visual acceptance pending |
-| First-run setup | Short introduction: choose a destination, learn context-menu/inline saving, open the manager and start a first download; skip or reopen the guide | Planned; separate task |
+| First-run setup | One-time three-step welcome screen with Continue to Saving; settings save states; readable download failures and list retry | Implemented in development main; not in the published v2.0.0.32 ZIP; awaiting review and release |
 
 The Telegram/VK roadmap concerns **publishing**.
 

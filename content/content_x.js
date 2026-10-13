@@ -2330,7 +2330,10 @@
     }
   }
 
-  // Phase 1 of a batch: every item and the owner's list of media are proven again before any privileged work starts.
+  // Phase 1 of a batch: every item and the owner's list of media are proven again before any privileged work starts. This is the batch's
+  // admission: each slot's descriptor is frozen here (its exact source addresses and post/media identity), so later scrolling, unloading or
+  // recycling of the post cannot change, add or drop a slot. A player's page point is dropped: a later recovery finds its post by id, never at a
+  // position that scrolling has since given to another post.
   function xiBatchOpen(token) {
     const entry = typeof token === 'string' ? xiBatches.get(token) : null;
     if (!entry || Date.now() - entry.at > XI.BATCH_TTL) { xiBatches.delete(token); return { ok: false, reason: 'NO_TOKEN' }; }
@@ -2341,10 +2344,16 @@
     const owner = entry.items[0].snap.ownerRef.deref();
     const now = xiEnumerate(owner);
     if (now.length !== entry.items.length || !now.every((it, i) => it.el === entry.items[i].snap.elRef.deref())) return { ok: false, reason: 'STALE_ITEM' };
+    entry.frozen = entry.items.map((it) => {
+      const d = xiDescribe(it.snap);
+      if (d.ok) { d.media.x = null; d.media.y = null; }
+      return d;
+    });
     return { ok: true, count: entry.items.length, ownerId: entry.id, sig: entry.sig };
   }
 
-  // Phase 2: the proof of ONE item, asked for right before that item is saved; one shot per item.
+  // Phase 2: ONE item's frozen descriptor, asked for right before that item is saved; one shot per item. The page is not read again, except
+  // that a navigation away from the admitted page still stops the slots that have not started.
   function xiBatchItem(token, index) {
     const entry = typeof token === 'string' ? xiBatches.get(token) : null;
     if (!entry || Date.now() - entry.at > XI.BATCH_TTL) { xiBatches.delete(token); return { ok: false, reason: 'NO_TOKEN' }; }
@@ -2353,9 +2362,8 @@
     if (item.used) return { ok: false, reason: 'USED' };
     item.used = true;
     if (entry.items.every((it) => it.used)) xiBatches.delete(token);
-    if (!xiOwnerHolds(item.snap, entry)) return { ok: false, reason: 'STALE_OWNER' };
-    if (!xiHolds(item.snap)) return { ok: false, reason: 'STALE_ITEM' };
-    return xiDescribe(item.snap);
+    if (((typeof location !== 'undefined' && location.href) || '') !== entry.href) return { ok: false, reason: 'STALE_OWNER' };
+    return entry.frozen[index];
   }
 
   function xiTeardown() {

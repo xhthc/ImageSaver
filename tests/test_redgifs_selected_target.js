@@ -1425,7 +1425,9 @@ runTestAsync('F4 wrong clip or provider failure stays a refusal: another clip id
   }
 }));
 
-runTestAsync('F4 continuity: a poster, a source or the node that changes during the lookup refuses the answer, each before the next request or before the answer', strictly(async () => {
+// UNIVERSAL-SELECTION-SNAPSHOT-01: the clip is fixed when the gesture's selection is proven, before the lookup; afterwards the player's lifecycle
+// cannot change it (the admitted clip is saved, never the new one), while a navigation away still refuses before the next request.
+runTestAsync('F4 continuity: a poster, a source or the node that changes during the lookup keeps the admitted clip; a navigation refuses', strictly(async () => {
   const mutations = {
     'poster changed to another clip': (c) => c.poster.setAttribute('src', posterUrl('ClipAlpha')),
     'player source changed': (c) => setSource(c.video, 'blob:https://www.redgifs.com/recycled'),
@@ -1437,12 +1439,23 @@ runTestAsync('F4 continuity: a poster, a source or the node that changes during 
       const { env, cards } = nicheFeed(['ClipBravo']);
       const c = cards[0];
       env.ctx.setLastContextmenuTarget(c.video, c.path);
-      providerMock(env, { clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: mediaOf('ClipBravo') } } }, { onRequest: (u, n) => { if (n === atRequest) mutate(c); } });
+      providerMock(env, { clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: mediaOf('ClipBravo') } }, clipalpha: { id: 'ClipAlpha', hasAudio: true, urls: { hd: mediaOf('ClipAlpha') } } }, { onRequest: (u, n) => { if (n === atRequest) mutate(c); } });
       const answer = await answerAsync(env, c.blob);
-      refusedAnswer(answer, `${what} at request ${atRequest}`);
-      assert.strictEqual(answer.diagnostics.providerAudio, 'FRAME_CHANGED', `${what} at request ${atRequest}`);
-      assert.strictEqual(env.fetchCalls.length, atRequest, `${what}: nothing is asked after the change was seen`);
+      assert.strictEqual(answer && answer.success, true, `${what} at request ${atRequest}: answered`);
+      assert.strictEqual(answer.targetUrl, mediaOf('ClipBravo'), `${what} at request ${atRequest}: the admitted clip`);
+      assert.strictEqual(env.fetchCalls.length, 2, `${what} at request ${atRequest}: the two bounded requests`);
+      assert.ok(!env.fetchCalls.some((u) => /clipalpha/i.test(String(u))), `${what} at request ${atRequest}: never the new clip`);
     }
+  }
+  for (const atRequest of [1, 2]) {
+    const { env, cards } = nicheFeed(['ClipBravo']);
+    const c = cards[0];
+    env.ctx.setLastContextmenuTarget(c.video, c.path);
+    providerMock(env, { clipbravo: { id: 'ClipBravo', hasAudio: true, urls: { hd: mediaOf('ClipBravo') } } }, { onRequest: (u, n) => { if (n === atRequest) env.ctx.window.location = new URL('https://www.redgifs.com/watch/clipalpha'); } });
+    const answer = await answerAsync(env, c.blob);
+    refusedAnswer(answer, `navigation at request ${atRequest}`);
+    assert.strictEqual(answer.diagnostics.providerAudio, 'FRAME_CHANGED');
+    assert.strictEqual(env.fetchCalls.length, atRequest, 'nothing is asked after the navigation');
   }
 }));
 

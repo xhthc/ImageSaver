@@ -20,7 +20,7 @@ let passed = 0, failed = 0;
             let reads = 0, cancels = 0, unboundedReads = 0;
             const original = path + '?sig=EXACT%2Bsignature&expires=123456&order=2';
             const max = name === 'GelbooruEngine' ? 8 * 1024 * 1024 : 2 * 1024 * 1024;
-            const data = name === 'PixivEngine' ? { error: false, body: [{ urls: { original } }] } : name === 'PhilomenaEngine' ? { image: { representations: { full: original } } } : name === 'EShuushuuImagesEngine' ? { url: original } : [{ id: 123, file_url: original, file_ext: 'png', file: { url: original, md5: hash } }];
+            const data = name === 'PixivEngine' ? { error: false, body: [{ urls: { original } }] } : name === 'PhilomenaEngine' ? { image: { representations: { full: original } } } : name === 'EShuushuuImagesEngine' ? { url: original } : [{ id: 123, md5: hash, file_url: original, file_ext: 'png', file: { url: original, md5: hash } }];
             const text = name === 'GelbooruEngine' ? `<a href="${original}">Original image</a>` : JSON.stringify(data);
             s.TextDecoder = TextDecoder;
             s.setTimeout = (fn, ms) => { const id = setTimeout(fn, Math.min(ms, 20)); timers.add(id); return id; };

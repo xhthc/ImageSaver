@@ -1,4 +1,5 @@
 const assert=require('node:assert/strict');
+const fs=require('node:fs'),path=require('node:path');
 require('../lib/toolbar_badge.js');
 function fixture(){
   const state={downloads:0,pending:0,resolving:0,failures:0},writes=[],timers=new Map();
@@ -32,5 +33,34 @@ function fixture(){
   const old=race.badge.refresh();await Promise.resolve();await race.badge.set('DL','#9333ea');resolve({downloads:0,pending:0,resolving:0,failures:0});await old;
   assert.equal(race.text,'DL','A delayed idle snapshot cannot overwrite newer activity');
   const repeat=fixture();repeat.state.pending=1;await repeat.badge.refresh();for(let i=0;i<30;i++)await repeat.badge.refresh();assert.deepEqual(repeat.writes,['DL'],'Identical refreshes do not rewrite browser text');
-  console.log('PASS toolbar badge: peer completion, stable busy phase, idle grace, result lifetime, persistent failure, stale snapshots and deduplicated API writes');
+  const icon=globalThis.MediaLatchToolbarBadge.installThemeIcon;
+  const flush=async()=>{for(let i=0;i<24;i++)await Promise.resolve();};
+  const icons=[];let changed,releaseRead;
+  const init=icon({action:{setIcon:async({path})=>icons.push(path)},storage:{local:{get:()=>new Promise(r=>{releaseRead=r;})},onChanged:{addListener:cb=>{changed=cb;}}}});
+  await flush();
+  changed({uiTheme:{newValue:'blue'}},'local');
+  releaseRead({uiTheme:'violet'});await init;
+  assert.equal(icons.at(-1)[32],'icons/blue-32.png','A stale initial read cannot overwrite the newer theme');
+  for(const theme of ['dark','light','violet','invalid']){
+    changed({uiTheme:{newValue:theme}},'local');await flush();
+    const prefix=['dark','light'].includes(theme)?theme+'-':'';
+    assert.equal(icons.at(-1)[48],`icons/${prefix}48.png`);
+  }
+  const before=icons.length;changed({uiTheme:{newValue:'blue'}},'session');await flush();assert.equal(icons.length,before);
+  let releaseIcon,hold=false,fail=false,logged=0,notify;const serial=[];
+  await icon({action:{setIcon:async({path})=>{serial.push(path[16]);if(hold){hold=false;await new Promise(r=>{releaseIcon=r;});}if(fail)throw Error('controlled');}},storage:{local:{get:async()=>({uiTheme:'violet'})},onChanged:{addListener:cb=>{notify=cb;}}},log:()=>logged++});
+  hold=true;notify({uiTheme:{newValue:'blue'}},'local');await flush();
+  notify({uiTheme:{newValue:'dark'}},'local');notify({uiTheme:{newValue:'light'}},'local');releaseIcon();await flush();
+  assert.equal(serial.at(-1),'icons/light-16.png','Serialized icon writes finish with the latest saved theme');
+  assert(!serial.includes('icons/dark-16.png'),'Superseded pending writes are skipped');
+  fail=true;notify({uiTheme:{newValue:'dark'}},'local');await flush();assert.equal(logged,1);
+  fail=false;notify({uiTheme:{newValue:'blue'}},'local');await flush();assert.equal(serial.at(-1),'icons/blue-16.png');
+  const fallback=[];await icon({action:{setIcon:async({path})=>fallback.push(path[16])},storage:{local:{get:async()=>{throw Error('unreadable');}}}});
+  assert.deepEqual(fallback,['icons/16.png'],'Unreadable storage uses the original Violet icon');
+  await icon({action:{},storage:{}});
+  for(const theme of ['blue','dark','light'])for(const size of [16,32,48]){
+    const png=fs.readFileSync(path.join(__dirname,`../icons/${theme}-${size}.png`));
+    assert.equal(png.subarray(1,4).toString(),'PNG');assert.equal(png.readUInt32BE(16),size);assert.equal(png.readUInt32BE(20),size);
+  }
+  console.log('PASS toolbar badge concurrency, result lifetime and theme icon synchronization');
 })().catch(error=>{console.error(error);process.exitCode=1;});

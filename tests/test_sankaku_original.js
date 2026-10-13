@@ -127,8 +127,17 @@ async function test(name, run) { await run(); passed++; console.log('PASS ' + na
     ['changed image', doc => { doc.querySelector('img').src = PREVIEW + 'changed'; }],
     ['detached card', doc => { doc.querySelector('a').remove(); }],
     ['relinked card', doc => { doc.querySelector('a').href = '/ru/posts/09az5jkleMk'; }]
-  ]) await test(name + ' during fetch refuses before probing', async () => {
-    const h = setup({ mutate }); assert.equal(await h.plan(), null); assert.equal(h.env.fetchedUrls.length, 0);
+  ]) await test(name + ' during fetch keeps the admitted post (its id and hash were fixed before the request)', async () => {
+    // UNIVERSAL-SELECTION-SNAPSHOT-01: the declaration must still name the admitted post and the clicked file hash; the card scrolling away,
+    // unloading or being relinked to another post afterwards cannot change what is saved
+    const h = setup({ mutate }); assert.equal((await h.plan()).primaryUrl, h.expected); assert.equal(h.requests.length, 1); assert.equal(h.requests[0].url, POST);
+  });
+  await test('navigation during fetch refuses before probing', async () => {
+    const h = setup({ mutate: doc => { doc.defaultView.history.pushState(null, '', '/ru/posts?page=2'); } }); assert.equal(await h.plan(), null); assert.equal(h.env.fetchedUrls.length, 0);
+  });
+  await test('a recycled card whose post declares another file still refuses (hash bound)', async () => {
+    const h = setup({ mutate: doc => { doc.querySelector('a').href = '/ru/posts/09az5jkleMk'; }, declaration: postHtml(original().replace('96ff39f4efbc327c9e603b094e760c7f', '0123456789abcdef0123456789abcdef').replace('/96/ff/', '/01/23/')) });
+    assert.equal(await h.plan(), null); assert.equal(h.env.fetchedUrls.length, 0);
   });
   for (const status of [401,403,404,410,429]) {
     await test('post HTTP ' + status + ' reported without preview fallback', async () => {

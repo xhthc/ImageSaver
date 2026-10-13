@@ -10,6 +10,7 @@ import {
   filenameLine,
   hasReport,
   postUrlOf,
+  summarize,
 } from "@/core/present.js"
 import { uiLog } from "@/core/debuglog.js"
 import { useI18n } from "@/hooks/use-i18n"
@@ -152,7 +153,7 @@ export function ResultDetails({
   onOpenFull?: (record: any) => void
 }) {
   const { t, lang } = useI18n()
-  const summary = env.FB.summarize(record, lang)
+  const summary = summarize(env.FB, record, lang)
   const nameLine = filenameLine(record, lang)
   return (
     <div className="space-y-3 rounded-lg border bg-background/50 p-3 text-xs" data-slot="result-details">

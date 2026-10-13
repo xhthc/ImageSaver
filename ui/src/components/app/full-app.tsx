@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { Bell, Bug, ChartColumn, FolderCog, Download, Link2, PackageCheck } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -10,6 +11,7 @@ import { StatisticsPanel } from "@/components/app/statistics-panel"
 import { LanguageSelect } from "@/components/app/language-select"
 import { ThemeSelect } from "@/components/app/theme-select"
 import { DownloadsPanel } from "@/components/app/downloads-panel"
+import { WelcomeScreen, useOnboarding } from "@/components/app/onboarding-panel"
 import {
   EmbedPanel,
   NotificationsPanel,
@@ -21,10 +23,15 @@ import {
 import { I18n } from "@/core/i18n.js"
 import { DEFAULT_SECTION, SECTIONS, SETTINGS_SECTIONS, focusIdFromLocation, sectionFromLocation } from "@/core/nav.js"
 import { uiLog } from "@/core/debuglog.js"
+import { welcomeFromLocation } from "@/core/onboarding.js"
 import { useI18n } from "@/hooks/use-i18n"
+import { useStore } from "@/hooks/use-store"
 import { useTheme } from "@/hooks/use-theme"
 import { getEnv } from "@/lib/env"
 
+// Stands in for the guide controller until the page has created it (hooks cannot be conditional).
+const NO_GUIDE_STATE = { open: false, ready: false }
+const NO_GUIDE = { getState: () => NO_GUIDE_STATE, subscribe: () => () => {} }
 const TAB_ICONS: Record<string, typeof Download> = { history: ChartColumn, downloads: Download, saving: FolderCog, notifications: Bell, embed: Link2, updates: PackageCheck, debug: Bug }
 
 /**
@@ -32,6 +39,7 @@ const TAB_ICONS: Record<string, typeof Download> = { history: ChartColumn, downl
  * popup.html?op=<operation id> (Downloads, that operation is opened).
  * All panels stay mounted (hidden when inactive) so unsaved edits survive a tab switch and a language change, and a results
  * list that was rendered while hidden acknowledges its failures only after Downloads is actually shown.
+ * The install welcome replaces the tabs, panels, Save bar and footer; they stay mounted but hidden.
  */
 export function FullApp({ settings }: { settings: SettingsController }) {
   const env = getEnv()
@@ -39,6 +47,8 @@ export function FullApp({ settings }: { settings: SettingsController }) {
   const { t } = useI18n()
   const [section, setSection] = useState<string>(() => sectionFromLocation(env.location))
   const focusId = focusIdFromLocation(env.location)
+  const onboarding = useOnboarding()
+  const [closed, setClosed] = useState(0)
 
   const select = useCallback((name: string) => {
     const next = (SECTIONS as readonly string[]).includes(name) ? name : DEFAULT_SECTION
@@ -60,6 +70,21 @@ export function FullApp({ settings }: { settings: SettingsController }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const guide = useStore(onboarding ? onboarding.store : NO_GUIDE) as { open: boolean; ready: boolean }
+  // Continue leads to Saving: it is selected behind the welcome while that is open, so the first frame after a successful
+  // marker write already shows Saving (never the previous section, which could acknowledge hidden Downloads failures).
+  useEffect(() => {
+    if (guide.open) select("saving")
+  }, [guide.open, select])
+  // Its panel is focused once the main interface is shown again.
+  useEffect(() => {
+    if (closed) env.window?.document?.querySelector('[role="tabpanel"][data-state="active"]')?.focus()
+    // env is stable for the page lifetime
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closed])
+  // The install URL keeps the main interface hidden until the marker read decided whether the welcome screen is due.
+  const welcome = guide.open || (welcomeFromLocation(env.location) && !guide.ready)
+
   const showSave = (SETTINGS_SECTIONS as readonly string[]).includes(section)
 
   return (
@@ -77,6 +102,15 @@ export function FullApp({ settings }: { settings: SettingsController }) {
           </div>
         </header>
 
+        {onboarding ? (
+          <WelcomeScreen
+            onboarding={onboarding}
+            onClosed={() => setClosed((n) => n + 1)}
+          />
+        ) : null}
+        {welcome && !guide.ready ? <p role="status" className="text-sm text-muted-foreground" data-slot="welcome-loading">{t("onboarding.loading")}</p> : null}
+
+        <div hidden={welcome} className="flex flex-1 flex-col gap-4" data-slot="main">
         <Tabs value={section} onValueChange={select} className="flex-1 gap-4">
           <TabsList aria-label={t("app.sections")} className="w-full min-w-0 flex-nowrap justify-start gap-1.5 overflow-x-auto bg-transparent p-1 group-data-[orientation=horizontal]/tabs:h-auto">
             {SECTIONS.map((name) => {
@@ -103,8 +137,8 @@ export function FullApp({ settings }: { settings: SettingsController }) {
           <TabsContent value="downloads" forceMount hidden={section !== "downloads"} className="space-y-4 data-[state=inactive]:hidden" tabIndex={-1}>
             <h2 className="sr-only">{t("tab.downloads")}</h2>
             <Card data-slot="recent">
-              <CardContent>
-                <DownloadsPanel full focusId={focusId} visible={section === "downloads"} />
+              <CardContent className="px-3 sm:px-6">
+                <DownloadsPanel full focusId={focusId} visible={section === "downloads" && !welcome} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -145,6 +179,7 @@ export function FullApp({ settings }: { settings: SettingsController }) {
             .
           </p>
         </footer>
+        </div>
       </div>
     </TooltipProvider>
   )

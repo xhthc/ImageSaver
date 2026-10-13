@@ -12,7 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { PENDING_STATES, formatDateTime, formatTime, rowParts } from "@/core/present.js"
+import { PENDING_STATES, formatDateTime, formatTime, rowParts, summarize } from "@/core/present.js"
 import { useI18n } from "@/hooks/use-i18n"
 import { cn } from "@/lib/utils"
 import { ResultDetails, type DetailsEnv } from "@/components/app/result-details"
@@ -59,7 +59,7 @@ export function ResultRow({
   const { t, lang, locale } = useI18n()
   // the record keeps structured fields only, so an older record is shown in the language selected now
   const parts = rowParts(env.FB, record, lang)
-  const summary = env.FB.summarize(record, lang)
+  const summary = summarize(env.FB, record, lang)
   const time = dateTime ? formatDateTime(record.updatedAt, locale) : formatTime(record.updatedAt, locale)
 
   // A deep link (?op=<id>) opens this row and brings it into view.

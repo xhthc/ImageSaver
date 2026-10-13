@@ -1229,30 +1229,26 @@
     };
   }
 
-  async function enrichWithProviderAudio(base, clipId, clickedSrc, requireGesture = false, gestureAt = null, explicit = null) {
+  async function enrichWithProviderAudio(base, clipId, explicit = null) {
     const evidence = base.candidateAudio || {};
     const hrefBefore = window.location.href;
     const docBefore = typeof document !== 'undefined' ? document : null;
-    const selectedNow = () => (explicit ? (inlineHolds(explicit) ? explicit.video : null) : findClickedVideo(clickedSrc, requireGesture));
-    const videoBefore = selectedNow();
-    const srcBefore = videoBefore ? (videoBefore.src || '') : '';
-    const currentSrcBefore = videoBefore ? (videoBefore.currentSrc || '') : '';
-    const posterBefore = videoBefore ? posterKeyOf(videoBefore) : '';
 
-    const checkContinuity = () => {
-      if (explicit && !inlineHolds(explicit)) return false;
-      if (requireGesture && !admittedCaptureHolds(gestureAt)) return false;
-      if (window.location.href !== hrefBefore) return false;
-      if (typeof document !== 'undefined' && docBefore && document !== docBefore) return false;
-      if (videoBefore) {
-        if (selectedNow() !== videoBefore) return false;
-        if (typeof videoBefore.isConnected === 'boolean' && !videoBefore.isConnected) return false;
-        if ((videoBefore.src || '') !== srcBefore) return false;
-        if ((videoBefore.currentSrc || '') !== currentSrcBefore) return false;
-        if (posterKeyOf(videoBefore) !== posterBefore) return false;
-      }
-      return true;
+    // The clip is fixed before this lookup (UNIVERSAL-SELECTION-SNAPSHOT-01): resolveFrameRedGifsMedia read it synchronously from the selected
+    // player while that player still proved the admitted selection: an inline Save's one-shot token taken while its player held the trusted
+    // click's node, source and poster evidence (takeInlineTarget, inlineHolds), or a context-menu request whose gesture capture is still this
+    // document's latest and unchanged (admittedCaptureHolds, selectionProofHolds) or whose exact source the document shows. From here the requests
+    // and every rendition are bound to that clip id and never read the player again, so it may reload, change its transport source, scroll away,
+    // be removed or be recycled, or another gesture may follow, without changing what is saved. Only this same document may answer: an inline
+    // Save on the provider's own top player page, a context-menu save without navigating away (the existing navigation policy).
+    // '' while that holds, else a fixed code of the first predicate that changed (journal evidence only)
+    const changed = () => {
+      if (typeof document !== 'undefined' && docBefore && document !== docBefore) return 'DOCUMENT';
+      if (explicit) return inlineAllowed() ? '' : 'ORIGIN';
+      return window.location.href === hrefBefore ? '' : 'NAVIGATED';
     };
+    let firstChange = '';
+    const checkContinuity = () => { const c = changed(); if (c && !firstChange) firstChange = c; return !c; };
 
     const found = await lookupProviderClip(clipId, checkContinuity);
     // the document, node, and source the answer was computed for must still be the ones asked about
@@ -1261,7 +1257,7 @@
         success: false,
         error: 'UNRESOLVED_BLOB_MEDIA',
         targetUrl: null,
-        diagnostics: { ...base.diagnostics, providerAudio: 'FRAME_CHANGED', rejectionReasons: ['FRAME_CHANGED_DURING_LOOKUP'] }
+        diagnostics: { ...base.diagnostics, providerAudio: 'FRAME_CHANGED', continuity: firstChange, rejectionReasons: ['FRAME_CHANGED_DURING_LOOKUP'] }
       };
     }
     if (!found.ok) return withProviderDiagnostic(base, found.reason);
@@ -1295,7 +1291,7 @@
   async function resolveFrameRedGifsMediaWithProvider(clickedSrc = '', options = {}) {
     const base = resolveFrameRedGifsMedia(clickedSrc, options);
     const clipId = providerClipToAsk(base);
-    return clipId ? enrichWithProviderAudio(base, clipId, clickedSrc, options.requireGesture === true, options.gestureAt, options.explicit || null) : base;
+    return clipId ? enrichWithProviderAudio(base, clipId, options.explicit || null) : base;
   }
 
   // ---- Inline Save control on own-site players (REDGIFS-INLINE-01) ----
@@ -1634,7 +1630,7 @@
           const reasons = Array.isArray(diag.rejectionReasons) ? diag.rejectionReasons : [];
           DBG.log('redgifs.frame', 'resolve', res && res.success ? 'ok' : 'failed', res && res.success ? undefined : (/^[A-Z][A-Z0-9_]{1,47}$/.test(String(reasons[0] || '')) ? reasons[0] : 'UNRESOLVED'), () => ({
             host: res && res.targetUrl, clipId: typeof diag.videoId === 'string' ? diag.videoId : undefined, source: diag.videoIdSource, n: diag.candidateCount, count: diag.validCandidateCount,
-            audio: diag.providerAudio === 'present', inline: message.inlineToken !== undefined, gesture: message.requireGesture === true
+            audio: diag.providerAudio === 'present', inline: message.inlineToken !== undefined, gesture: message.requireGesture === true, which: diag.continuity || undefined
           }));
           return reply(res);
         };
@@ -1668,7 +1664,7 @@
           const clipId = providerClipToAsk(base);
           // the answer is immediate unless the provider's audio declaration can change it (only then it is asynchronous)
           if (!clipId) sendResponse(base);
-          else enrichWithProviderAudio(base, clipId, message.clickedSrc, requireGesture, message.gestureAt, explicit).then(sendResponse, failed);
+          else enrichWithProviderAudio(base, clipId, explicit).then(sendResponse, failed);
         } catch (e) {
           failed(e);
         }

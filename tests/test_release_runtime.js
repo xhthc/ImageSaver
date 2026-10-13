@@ -74,8 +74,7 @@ function environment(fixture) {
   vm.runInContext([
     functionSource(background, 'sniffMediaMagicBytes'),
     functionSource(background, 'sanitizeUrlForLog'),
-    functionSource(background, 'cancelResponseBody'),
-    functionSource(background, 'fetchPixivImageAsDataUrl')
+    functionSource(background, 'cancelResponseBody')
   ].join('\n'), sandbox);
   return { sandbox, requests, logs, deadlines, timers, close: () => { for (const t of timers) clearTimeout(t); timers.clear(); } };
 }
@@ -85,44 +84,8 @@ async function test(name, run) {
   try { await run(); passed++; console.log(`PASS ${name}`); }
   catch (error) { failed++; console.error(`FAIL ${name}: ${error.message}`); }
 }
-async function pixivRefusal(name, config, error) {
-  await test(name, async () => {
-    const fixture = response(config), env = environment(fixture);
-    try {
-      await assert.rejects(Promise.race([
-        env.sandbox.fetchPixivImageAsDataUrl('https://i.pximg.net/a.jpg'),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('TEST_BODY_STALLED')), 100))
-      ]), error);
-      assert.equal(fixture.state.buffered, 0, 'No unbounded body API');
-      assert.equal(env.requests[0].options.signal.aborted, true, 'Request aborted on exit');
-      assert.equal(env.timers.size, 0, 'Deadline released');
-    } finally { env.close(); }
-  });
-}
-
 (async () => {
-  for (const [type, bytes] of [['image/jpeg', JPEG], ['image/png', PNG]]) {
-    await test(`Pixiv ${type} bytes and request URL survive`, async () => {
-      const fixture = response({ type, bytes }), env = environment(fixture);
-      const url = 'https://i.pximg.net/a.png?token=PIXIV_SECRET&sig=SIGNATURE';
-      try {
-        const result = await env.sandbox.fetchPixivImageAsDataUrl(url);
-        assert.equal(result, `data:${type};base64,${Buffer.from(bytes).toString('base64')}`);
-        assert.equal(env.requests[0].url, url);
-        assert.equal(fixture.state.buffered, 0);
-        assert.equal(env.requests[0].options.signal.aborted, true);
-        assert(!env.logs.join('\n').includes('PIXIV_SECRET'));
-        assert(env.deadlines.includes(20000));
-      } finally { env.close(); }
-    });
-  }
-  await pixivRefusal('Pixiv rejects HTTP200 HTML', { type: 'text/html', bytes: Buffer.from('<html>Error</html>') }, /MIME|non-image/i);
-  await pixivRefusal('Pixiv rejects HTML labelled JPEG', { bytes: Buffer.from('<html>Error</html>') }, /Invalid.*image|non-media/i);
-  await pixivRefusal('Pixiv rejects empty body', { bytes: new Uint8Array() }, /empty|Invalid.*image/i);
-  await pixivRefusal('Pixiv rejects oversized declared body before reading', { declared: CAP + 1 }, /SIZE|budget|limit/i);
-  await pixivRefusal('Pixiv rejects chunked overflow before buffering', { overflow: true }, /SIZE|budget|limit/i);
-  await pixivRefusal('Pixiv requires a bounded stream', { stream: false }, /ReadableStream|stream/i);
-  await pixivRefusal('Pixiv body keeps the20s deadline', { stalled: true }, /Aborted|abort|TIMEOUT/i);
+  // Pixiv originals are no longer fetched into worker memory: see tests/test_pixiv_saving.js (manager staging path).
 
   for (const [name, config, error] of [
     ['GIF declared input ceiling selects source MP4', { declared: CAP + 1 }, null],

@@ -835,6 +835,7 @@
         lastContextmenuPath = path;
         lastContextmenuTime = Date.now();
         lastContextmenuPoint = Number.isFinite(event.clientX) && Number.isFinite(event.clientY) ? { x: event.clientX, y: event.clientY } : null;
+        bindGestureAuthor(event);
         notifyContextMenuDetected(event.target, path, event.timeStamp);
       }
     }, true);
@@ -846,6 +847,7 @@
       lastContextmenuPath = path;
       lastContextmenuTime = Date.now();
       lastContextmenuPoint = Number.isFinite(event.clientX) && Number.isFinite(event.clientY) ? { x: event.clientX, y: event.clientY } : null;
+      bindGestureAuthor(event);
       notifyContextMenuDetected(event.target, path, event.timeStamp);
     }, true);
   }
@@ -941,9 +943,66 @@
     return null;
   }
 
+  // PIXIV-SAVING-POLISH-01 / UNIVERSAL-SELECTION-SNAPSHOT-01 (author folders): the author of the post that owns the selected media, fixed when
+  // the selection is admitted and never read from the page again. An inline save carries it in its proven descriptor (riAuthored). A context-menu
+  // save is admitted by the background's injected verifier (verifyContextOwner), which calls admitContextAuthor in this same isolated world while
+  // its proof holds; a later question names that admission's proof token. The owner rules are the inline control's (riOwnerOf/riIdOf/riEmbedOf):
+  // comments, search cards, lightboxes, crossposts and nested posts give none; a link post qualifies only through its proven RedGIFs embed.
+  const AUTHOR_POST_TYPES = new Set(['image', 'gallery', 'gif', 'video']);
+  // { post, ownerId, author } of the post that owns `node` now, or null
+  function postAuthorOf(node) {
+    const o = node ? riOwnerOf(node) : null;
+    const post = o && !o.isCrosspost && o.owner && o.owner.tagName === 'SHREDDIT-POST' && o.owner.isConnected !== false ? o.owner : null;
+    if (!post) return null;
+    const type = post.getAttribute('post-type');
+    const embed = type === 'link' && (() => { const x = riEmbedOf(node); return x && x.owner === post; })();
+    const id = (riIdOf(post) || {}).ownerId || '', author = post.getAttribute('author') || '';
+    return id && (AUTHOR_POST_TYPES.has(type) || embed) && /^[A-Za-z0-9_-]{3,20}$/.test(author) ? { post, ownerId: id, author } : null;
+  }
+  // The owning post as the trusted right-click found it, bound to the pressed node the gesture capture keeps (composedPath()[0]).
+  let gestureAuthor = null;
+  function bindGestureAuthor(event) {
+    gestureAuthor = null;
+    try {
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      const pressed = path[0] || event.target;
+      const a = event.isTrusted && pressed ? postAuthorOf(pressed) : null;
+      if (a) gestureAuthor = { node: new WeakRef(pressed), post: new WeakRef(a.post), ownerId: a.ownerId, author: a.author };
+    } catch (_) {}
+  }
+  // Admission of a context-menu save (called synchronously by the verifier while its proof holds): the selected media's post now must be the very
+  // post the gesture found, with the same id and author; then that author is frozen under the admission's proof. A recycled post, moved media or
+  // another gesture before admission gives none; later scrolling, removal or recycling cannot change the frozen answer. Bounded, one-shot.
+  const admittedAuthors = new Map();
+  function admitContextAuthor(proof, pressed, media) {
+    if (typeof proof !== 'string' || !proof) return;
+    const now = postAuthorOf(media || pressed), bound = gestureAuthor;
+    const same = now && bound && bound.node.deref() === pressed && bound.post.deref() === now.post && bound.ownerId === now.ownerId && bound.author === now.author;
+    admittedAuthors.set(proof, same ? { ownerId: now.ownerId, author: now.author } : null);
+    while (admittedAuthors.size > 8) admittedAuthors.delete(admittedAuthors.keys().next().value);
+  }
+  globalThis.__imageSaverAdmitRedditAuthor = admitContextAuthor;
+  function selectedPostAuthor(proof) {
+    const a = admittedAuthors.get(proof) || null;
+    admittedAuthors.delete(proof);
+    return a;
+  }
+  // an inline descriptor carries its post's author, proven with the descriptor itself
+  function riAuthored(described, snap) {
+    if (described && described.ok && described.media) {
+      const a = postAuthorOf(snap && snap.elRef ? snap.elRef.deref() : null);
+      if (a && a.ownerId === described.media.ownerId) described.media.author = a.author;
+    }
+    return described;
+  }
+
   // Runtime messaging interface for background script
   if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.action === 'GET_REDDIT_POST_AUTHOR') {
+        sendResponse(selectedPostAuthor(typeof message.proof === 'string' ? message.proof : '') || {});
+        return true;
+      }
       if (message?.action === 'GET_REDDIT_POST_URL') {
         const postUrl = extractRedditPostUrl({
           target: lastContextmenuTarget,
@@ -2265,7 +2324,7 @@
     const href = (typeof location !== 'undefined' && location.href) || '';
     if (href !== entry.href) return { ok: false, reason: 'STALE_OWNER' };
     if (!riLayout(el, owner, RI.SIZE, RI.SIZE)) return { ok: false, reason: 'STALE_OWNER' };
-    return riDescribe(snap);
+    return riAuthored(riDescribe(snap), snap);
   }
 
   function riOwnerHolds(snap, entry) {
@@ -2303,9 +2362,15 @@
     // riOwnerHolds also compares the page URL and the owner's id
     if (!entry.items.every((it) => riOwnerHolds(it.snap, entry))) return refuse('STALE_OWNER');
     if (!riListHolds(entry)) return refuse('STALE_LIST');
-    let described = 0;
-    entry.items.forEach((it, i) => { if (riHolds(it.snap) && riDescribe(it.snap, i, entry.count).ok) described++; });
-    if (!described) return refuse('NO_MEDIA');
+    // The batch's admission: every slot's descriptor (exact address, post id, author) or its own refusal is frozen now, so later scrolling,
+    // unloading or recycling of the post cannot change, add or drop a slot; a navigation away still stops the slots that have not started.
+    entry.frozen = entry.items.map((it, i) => {
+      if (!riHolds(it.snap)) return { ok: false, reason: 'STALE_ITEM' };
+      const d = riAuthored(riDescribe(it.snap, i, entry.count), it.snap);
+      if (d.ok) d.media.sig = entry.sig;
+      return d;
+    });
+    if (!entry.frozen.some((d) => d.ok)) return refuse('NO_MEDIA');
     return { ok: true, count: entry.count, ownerId: entry.ownerId, sig: entry.sig };
   }
 
@@ -2318,15 +2383,8 @@
     item.used = true;
     if (entry.items.every((it) => it.used)) riBatches.delete(token);
     const href = (typeof location !== 'undefined' && location.href) || '';
-    if (href !== entry.href || !riOwnerHolds(item.snap, entry)) return { ok: false, reason: 'STALE_OWNER' };
-    // right before the item runs the whole list is proven again: a changed structure ends the batch, only this slot's own change is item-level
-    const now = riListHolds(entry);
-    if (!now) return { ok: false, reason: 'STALE_LIST' };
-    const el = item.snap.elRef.deref();
-    if (!el || now[index].el !== el || !riHolds(item.snap)) return { ok: false, reason: 'STALE_ITEM' };
-    const described = riDescribe(item.snap, index, entry.count);
-    if (described.ok) described.media.sig = entry.sig;
-    return described;
+    if (href !== entry.href) return { ok: false, reason: 'STALE_OWNER' };
+    return entry.frozen[index];
   }
 
   function riTeardown() {

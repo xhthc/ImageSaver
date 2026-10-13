@@ -3,19 +3,30 @@ import { createStore } from './store.js';
 /** @param {{chrome: import('../../../lib/download_contracts').DownloadsChrome}} dependencies */
 export function createDownloads({ chrome }) {
     const store = createStore(/** @type {import('../../../lib/download_contracts').DownloadsViewState} */ ({ jobs: [], paused: false, status: 'loading', error: '', busy: false, removingIds: [], dismissedIds: [] }));
-    let disposed = false, loading = false, again = false;
+    let disposed = false;
+    /** @type {Promise<void> | null} */
+    let current = null;
+    /** @type {Promise<void> | null} */
+    let next = null;
     /** @type {import('../../../lib/download_contracts').DownloadJob[]} */
     let lastJobs = [];
     /** @type {Set<string>} */
     const removed = new Set();
-    async function load() {
+    /** Reads the list once more. A call during a read queues one more read (shared by all such callers) and resolves when that
+     * read has finished, so a caller always awaits a result that started after its call.
+     * @returns {Promise<void>} */
+    function load() {
         if (disposed)
-            return;
-        if (loading) {
-            again = true;
-            return;
+            return Promise.resolve();
+        if (!current) {
+            current = read().finally(() => { current = null; });
+            return current;
         }
-        loading = true;
+        if (!next)
+            next = current.then(() => { next = null; return load(); });
+        return next;
+    }
+    async function read() {
         try {
             const r = await chrome.runtime.sendMessage({ action: 'DOWNLOADS_LIST' });
             if (!r?.success)
@@ -30,13 +41,6 @@ export function createDownloads({ chrome }) {
         catch (_) {
             if (!disposed)
                 store.setState({ status: 'error', error: store.getState().error === 'downloads.commandFailed' ? 'downloads.commandFailed' : 'downloads.unavailable' });
-        }
-        finally {
-            loading = false;
-            if (again) {
-                again = false;
-                void load();
-            }
         }
     }
     /** @param {import('../../../lib/download_contracts').DownloadNotice} m */

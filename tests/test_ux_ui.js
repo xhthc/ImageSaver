@@ -373,7 +373,7 @@ function makeChrome(state) {
   // =================================================================================================
   console.log('\n--- 26. Settings: persistence and isolation (ui/src/core/settings.js, history.js) ---');
   {
-    const DEFAULTS_KEYS = ['subfolder', 'folderOrganizationMode', 'saveDirectoryId', 'xAuthorFolders', 'xShareHost', 'igShareHost', 'ttShareHost', 'youtubeShareHost'];
+    const DEFAULTS_KEYS = ['subfolder', 'folderOrganizationMode', 'saveDirectoryId', 'xAuthorFolders', 'redditAuthorFolders', 'pixivAuthorFolders', 'xShareHost', 'igShareHost', 'ttShareHost', 'youtubeShareHost'];
     const timers = [];
     const mountSettings = async (stateOver = {}, deps = {}) => {
       const state = { session: [], history: [], local: { notifySuccess: false, historyEnabled: true, unrelatedKey: 'keep-me', ...stateOver } };
@@ -396,7 +396,7 @@ function makeChrome(state) {
     assert(await reopen.settings.save() && reopen.state.local.saveDirectoryId==='','26folder7: explicit reset restores standard downloads');
     const st = a.st;
     assert(st().subfolder === 'SavedImages' && st().folderOrganizationMode === 'single' && !('askEveryTime' in st()) && st().xShareHost === 'fixupx.com' && st().igShareHost === 'oginstagram.com' && st().ttShareHost === 'tnktok.com' && st().youtubeShareHost === 'koutube.com' && st().loaded === true, '26a: preview defaults are loaded on the full page');
-    assert(JSON.stringify(Object.keys(DEFAULTS).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && JSON.stringify(DEFAULTS) === JSON.stringify({ subfolder: 'SavedImages', folderOrganizationMode: 'single', saveDirectoryId: '', xAuthorFolders: false, xShareHost: 'fixupx.com', igShareHost: 'oginstagram.com', ttShareHost: 'tnktok.com', youtubeShareHost: 'koutube.com' }), '26a2: the remaining settings have preview defaults; Save As is absent');
+    assert(JSON.stringify(Object.keys(DEFAULTS).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && JSON.stringify(DEFAULTS) === JSON.stringify({ subfolder: 'SavedImages', folderOrganizationMode: 'single', saveDirectoryId: '', xAuthorFolders: false, redditAuthorFolders: false, pixivAuthorFolders: false, xShareHost: 'fixupx.com', igShareHost: 'oginstagram.com', ttShareHost: 'tnktok.com', youtubeShareHost: 'koutube.com' }), '26a2: the remaining settings have preview defaults; Save As is absent');
     assert(st().notify.checked === false && st().notify.error === '', '26b: the Notifications section reflects the stored notifySuccess preference');
     assert(a.calls.localSets.length === 0, '26b2: loading and editing write nothing');
 
@@ -415,7 +415,7 @@ function makeChrome(state) {
     assert(a.settings.preview().text === 'Загрузки/My/Pics/x/pic/photo.jpg' && a.settings.preview().error === false, '26b4: the example path follows the folder and the organization mode');
     assert(await a.settings.save() === true);
     const saved = a.calls.localSets[a.calls.localSets.length - 1];
-    assert(JSON.stringify(Object.keys(saved).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && saved.folderOrganizationMode === 'by_site_and_type' && !('askEveryTime' in saved) && saved.xShareHost === 'fixupx.com' && saved.youtubeShareHost === 'koutube.com' && saved.igShareHost === 'oginstagram.com' && saved.ttShareHost === 'tnktok.com', '26c: "Сохранить настройки" writes exactly the eight Saving/Embed keys with allowlisted values');
+    assert(JSON.stringify(Object.keys(saved).sort()) === JSON.stringify([...DEFAULTS_KEYS].sort()) && saved.folderOrganizationMode === 'by_site_and_type' && !('askEveryTime' in saved) && saved.xShareHost === 'fixupx.com' && saved.youtubeShareHost === 'koutube.com' && saved.igShareHost === 'oginstagram.com' && saved.ttShareHost === 'tnktok.com', '26c: "Сохранить настройки" writes exactly the ten Saving/Embed keys with allowlisted values');
     assert(a.state.local.notifySuccess === false && a.state.local.historyEnabled === true && a.state.local.unrelatedKey === 'keep-me', '26d: saving settings leaves notifySuccess, historyEnabled and unrelated values untouched');
     assert(st().subfolder === 'My/Pics' && /Настройки успешно сохранены/.test(ru(st().status.message)) && st().status.type === 'success' && timers.pop().ms === STATUS_MS, '26d2: the form shows the sanitized value and a success message that clears itself');
 
@@ -464,6 +464,71 @@ function makeChrome(state) {
     unreadableState.failGet = false;
     await unreadable.load();
     assert(unreadable.store.getState().loaded && unreadable.store.getState().subfolder === 'MyMedia' && unreadable.store.getState().xShareHost === 'fixupx.com' && await unreadable.save(), '26j3: successful reloading restores existing settings and permits saving');
+    // UI-COMPLETION-01: unsaved / saving / saved / failed lifecycle of the explicit-Save draft
+    {
+      const local = { subfolder: 'Stored', xShareHost: 'x.com' };
+      let gate = null, failSet = false, failGet = false;
+      const sets = [];
+      const chromeLife = { storage: { local: {
+        get: async (d) => { if (failGet) throw Error('UNREADABLE'); return { ...d, ...local }; },
+        set: async (v) => { if (gate) await gate; if (failSet) throw Error('QUOTA'); sets.push(v); Object.assign(local, v); },
+      } } };
+      const lifeTimers = [];
+      const handles = new Map(), handle = { name: 'Media', queryPermission: async () => 'granted', isSameEntry: async (o) => o === handle };
+      const L = createSettings({ chrome: chromeLife, FolderPath, setTimeout: (fn, ms) => { lifeTimers.push(ms); return lifeTimers.length; }, clearTimeout() {},
+        directory: { get: async (id) => handles.get(id), set: async (id, h) => { handles.set(id, h); } }, chooseDirectory: async () => handle, id: () => 'same' });
+      const ls = () => L.store.getState();
+      assert(ls().loaded === false && ls().dirty === false, 'life1: before the read nothing is loaded or dirty');
+      await L.load();
+      assert(ls().loaded && !ls().dirty, 'life2: freshly loaded values are not dirty');
+      L.setField('subfolder', 'Other');
+      assert(ls().dirty && sets.length === 0, 'life3: an edit marks the draft dirty and writes nothing');
+      L.setField('subfolder', 'Stored');
+      assert(!ls().dirty, 'life4: returning to the stored value clears the dirty mark');
+      L.setField('xShareHost', 'fixupx.com');
+      let release; gate = new Promise((r) => { release = r; });
+      const saving = L.save();
+      await Promise.resolve();
+      assert(ls().saving && ls().dirty, 'life5: while the write is awaited the draft is still unsaved');
+      L.setField('subfolder', 'Edited during save');
+      release(); gate = null;
+      assert(await saving === true && local.xShareHost === 'fixupx.com' && local.subfolder === 'Stored', 'life6: the awaited write stores the values it started with');
+      assert(ls().subfolder === 'Edited during save' && ls().dirty && !ls().saving, 'life7: an edit made during the save is kept and stays unsaved');
+      L.setField('subfolder', 'Stored');
+      assert(!ls().dirty, 'life8: the saved values are the new reference');
+      L.setField('subfolder', 'Will fail');
+      failSet = true;
+      const timersBeforeFail = lifeTimers.length;
+      assert(await L.save() === false && ls().dirty && ls().status.type === 'error' && ls().subfolder === 'Will fail', 'life9: a failed write keeps the draft unsaved with an error');
+      const timersAfterFail = lifeTimers.length;
+      assert(timersAfterFail === timersBeforeFail && ls().status.message === 'settings.saveFailed', 'life10: the failure does not clear itself');
+      failSet = false;
+      assert(await L.save() === true && !ls().dirty && ls().status.type === 'success' && lifeTimers.length === timersAfterFail + 1, 'life11: the retry saves, clears dirty and shows a transient success');
+      // a reselected directory keeps its ID but still needs Save
+      L.setField('saveDirectoryId', 'directory-same'); await L.save();
+      assert(!ls().dirty && local.saveDirectoryId === 'directory-same', 'life12: setup of a stored directory');
+      handles.set('directory-same', handle);
+      assert(await L.pickDirectory() && ls().saveDirectoryId === 'directory-same' && ls().dirty, 'life13: reselecting the same folder keeps its ID and still requires Save');
+      L.resetDirectory();
+      assert(ls().dirty && ls().saveDirectoryId === '', 'life14: switching back to the browser folder is unsaved');
+      await L.pickDirectory();
+      assert(ls().dirty && ls().saveDirectoryId === 'directory-same', 'life15: reverting the ID with a pending handle stays dirty');
+      assert(await L.save() && !ls().dirty, 'life16: Save writes the pending handle and clears dirty');
+      // load never runs over a dirty draft; a failed read is retried through load()
+      L.setField('subfolder', 'Draft');
+      await L.load();
+      assert(ls().subfolder === 'Draft' && ls().dirty && ls().loaded, 'life17: reloading cannot overwrite a loaded draft');
+      const R = createSettings({ chrome: chromeLife, FolderPath, setTimeout: () => 0, clearTimeout() {} });
+      failGet = true;
+      const quiet = console.error; console.error = () => {};
+      await R.load();
+      console.error = quiet;
+      assert(!R.store.getState().loaded && R.store.getState().status.message === 'settings.error.load' && !R.store.getState().dirty && await R.save() === false, 'life18: a failed read stays visible and blocks saving defaults');
+      failGet = false;
+      await R.load();
+      assert(R.store.getState().loaded && R.store.getState().status.message === '' && R.store.getState().subfolder === local.subfolder, 'life19: the retry reads the stored values and clears the error');
+      L.dispose(); R.dispose();
+    }
     const e3 = createHistory({ chrome: makeChrome({ session: [], history: [], local: { historyEnabled: 'true' } }).chrome, FB });
     await e3.start();
     assert(e3.store.getState().enabled === false, '26k: a malformed history preference is shown as off (opt-in preserved)');
@@ -488,6 +553,18 @@ function makeChrome(state) {
     await c.command('retry','job-test');assert(calls.some(m=>m.action==='DOWNLOADS_COMMAND' && m.command==='retry' && m.id==='job-test'),'manager-ui-3: retry sends exactly the selected job');
     fail=true;await c.command('pause');assert(c.store.getState().error==='downloads.commandFailed' && !c.store.getState().busy,'manager-ui-4: a refused action is truthful and releases buttons');
     fail=false;listeners[0]({action:'DOWNLOADS_CHANGED'});await settle();
+    // UI-COMPLETION-01 follow-up: a load() during an automatic read waits for the queued read it caused, not the old one
+    {
+      let gates=[];const ov={runtime:{onMessage:{addListener(){},removeListener(){}},sendMessage:async m=>{const g=gates.shift();const r=g?await g:'ok';if(r==='fail')throw Error('DOWN');return {success:true,jobs:[],paused:false};}}};
+      const d=createDownloads({chrome:ov});let finishAuto;gates=[Promise.resolve('fail')];await d.load();
+      assert(d.store.getState().status==='error','manager-ui-overlap-0: setup: the list is unavailable');
+      gates=[new Promise(r=>{finishAuto=r;}),Promise.resolve('ok')];
+      const auto=d.load();let retried=false;const retry=d.load().then(()=>{retried=true;});const third=d.load();
+      await settle();assert(!retried,'manager-ui-overlap-1: a load during an in-flight read does not resolve early');
+      finishAuto('fail');await auto;assert(d.store.getState().status==='error' && !retried,'manager-ui-overlap-2: the older read finishing does not resolve the queued caller');
+      await retry;await third;assert(d.store.getState().status==='ready','manager-ui-overlap-3: the queued read is shared and resolves with its own result');
+      d.dispose();
+    }
     assert(c.store.getState().error==='downloads.commandFailed','manager-ui-4a: automatic progress does not erase a refused action');
     await c.command('pause');assert(!c.store.getState().error,'manager-ui-4b: the next successful explicit action clears the error');
     replies={success:true,jobs:[{id:'done',state:'complete'},{id:'bad',state:'failed'},{id:'stopped',state:'cancelled'},{id:'live',state:'receiving'},{id:'waiting',state:'queued'}],paused:false};
@@ -523,7 +600,7 @@ function makeChrome(state) {
       const started = list.start();
       return { state, calls, list, started, seen: () => calls.messages.filter((m) => m === 'FEEDBACK_MARK_SEEN').length, rows: () => list.store.getState().records.length };
     };
-    assert(/visible=\{section === "downloads"\}/.test(read('ui/src/components/app/full-app.tsx')) && /forceMount/.test(read('ui/src/components/app/full-app.tsx')), '29a0: the full-page results list is told whether the History panel is displayed, and the panels stay mounted');
+    assert(/visible=\{section === "downloads" && !welcome\}/.test(read('ui/src/components/app/full-app.tsx')) && /forceMount/.test(read('ui/src/components/app/full-app.tsx')), '29a0: the full-page results list is told whether the History panel is displayed, and the panels stay mounted');
 
     // hidden panel: a pending response arrives while another section is displayed
     const gate = deferred();
