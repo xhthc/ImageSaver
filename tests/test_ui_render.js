@@ -1286,6 +1286,15 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     }
   }
 
+  // Localized group captions remain passive; Radix still owns exactly seven tabs.
+  for (const lang of ['en', 'ru']) {
+    const p = await page('full', { session: [], history: [], local: { uiLanguage: lang } }, { hash: '#embed' });
+    const captions = p.qa('[data-slot="nav-group"]');
+    assert(captions.map((n) => n.textContent).join('|') === (lang === 'en' ? 'Media|Settings|Tools' : 'Медиа|Настройки|Инструменты') && captions.every((n) => n.tabIndex === -1), `R26a ${lang}: three localized nonfocusable navigation captions`);
+    assert(p.qa('[role="tab"]').map((n) => n.getAttribute('data-section')).join('|') === 'downloads|history|saving|notifications|embed|updates|debug' && p.q('[role="tab"][data-section="embed"]').getAttribute('data-state') === 'active', `R26b ${lang}: captions preserve the seven tabs and deep link`);
+    await p.unmount();
+  }
+
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);
   process.exit(failed > 0 ? 1 : 0);
 })().catch((err) => {
