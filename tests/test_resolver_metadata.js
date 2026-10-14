@@ -3,6 +3,7 @@ const assert = require('node:assert/strict'), vm = require('node:vm');
 const { createTestEnv } = require('./test_context_target_avatar');
 const hash = '1234567890abcdef1234567890abcdef';
 const providers = [
+    ['ZerochanEngine', 'https://s3.zerochan.net/240/15/27/4728645.avif', 'https://www.zerochan.net/4728645', 'https://static.zerochan.net/Test.full.4728645.png'],
     ['PixivEngine', 'https://i.pximg.net/c/250x250_80_a2/img-master/img/2026/09/23/00/00/41/149989236_p0_master1200.jpg', 'https://www.pixiv.net/artworks/149989236', `https://i.pximg.net/img-original/img/2026/09/23/00/00/41/149989236_p0.png`],
     ['YandereImagesEngine', `https://assets.yande.re/data/preview/${hash}.jpg`, 'https://yande.re/post/show/123', `https://files.yande.re/image/${hash}.png`],
     ['EShuushuuImagesEngine', 'https://e-shuushuu.net/thumbs/2026-09-23-123456.jpg', 'https://e-shuushuu.net/images/123456', `https://e-shuushuu.net/fullsize/${hash}.png`],
@@ -20,7 +21,7 @@ let passed = 0, failed = 0;
             let reads = 0, cancels = 0, unboundedReads = 0;
             const original = path + '?sig=EXACT%2Bsignature&expires=123456&order=2';
             const max = name === 'GelbooruEngine' ? 8 * 1024 * 1024 : 2 * 1024 * 1024;
-            const data = name === 'PixivEngine' ? { error: false, body: [{ urls: { original } }] } : name === 'PhilomenaEngine' ? { image: { representations: { full: original } } } : name === 'EShuushuuImagesEngine' ? { url: original } : [{ id: 123, md5: hash, file_url: original, file_ext: 'png', file: { url: original, md5: hash } }];
+            const data = name === 'ZerochanEngine' ? { id: 4728645, full: original } : name === 'PixivEngine' ? { error: false, body: [{ urls: { original } }] } : name === 'PhilomenaEngine' ? { image: { representations: { full: original } } } : name === 'EShuushuuImagesEngine' ? { url: original } : [{ id: 123, md5: hash, file_url: original, file_ext: 'png', file: { url: original, md5: hash } }];
             const text = name === 'GelbooruEngine' ? `<a href="${original}">Original image</a>` : JSON.stringify(data);
             s.TextDecoder = TextDecoder;
             s.setTimeout = (fn, ms) => { const id = setTimeout(fn, Math.min(ms, 20)); timers.add(id); return id; };
@@ -46,7 +47,7 @@ let passed = 0, failed = 0;
             try {
                 const engine = vm.runInContext(`[...KNOWN_SITE_RESOLVERS,...BOORU_ENGINE_RESOLVERS].find(e=>e.name===${JSON.stringify(name)})`, env.bgContext);
                 let done = false;
-                const run = engine.resolve(new URL(src), page, page).then(value => { done = true; return value; });
+                const run = (name === 'ZerochanEngine' ? engine.resolveGroups(new URL(src), page, page) : engine.resolve(new URL(src), page, page)).then(value => { done = true; return value; });
                 const raced = await Promise.race([run, new Promise(r => setTimeout(() => r(null), 200))]);
                 if (!done)
                     throw Error('resolver body did not finish before test deadline');
@@ -55,13 +56,13 @@ let passed = 0, failed = 0;
                 assert(signals.every(signal => signal.aborted), 'request controller released');
                 assert.equal(timers.size, 0, 'deadline timers cleared');
                 if (mode === 'valid')
-                    assert(raced.some(c => (typeof c === 'string' ? c : c.url) === original), 'exact signed original preserved');
+                    assert(raced.some(c => (typeof c === 'string' ? c : c.url || c.primaryUrl) === original), 'exact signed original preserved');
                 if (mode === 'oversized' || mode === 'stalled')
                     assert(cancels > 0, 'reader cancelled');
                 if (mode === 'declared oversized')
                     assert.equal(reads, 0, 'declared size rejected before reading');
                 if (mode === 'malformed' || mode === 'HTTP error' || mode === 'no stream' || mode === 'fetch failure')
-                    assert(!raced.some(c => (typeof c === 'string' ? c : c.url) === original), 'unverified API original refused');
+                    assert(!raced.some(c => (typeof c === 'string' ? c : c.url || c.primaryUrl) === original), 'unverified API original refused');
                 passed++;
                 console.log('PASS ' + name + ' ' + mode);
             }

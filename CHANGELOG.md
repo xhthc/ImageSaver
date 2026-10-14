@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.5.2 — first Chrome Web Store submission candidate
+
+- Include the reviewed interface cleanup and project file organization while preserving download workflows and stored preferences.
+- Restore the original seven-item sidebar without category captions or collapse controls.
+- Add `kkclip.com` as an optional Instagram link-preview host; keep existing hosts and explicit Save settings.
+- Prepare a separate, commit-derived runtime package for the first Chrome Web Store review. The published GitHub pre-release remains v2.5.1 until a separate publication.
+
+- Restrict privileged offscreen commands to the worker and reject synthetic converter IPC fields.
+- Refuse literal local-network media from public pages and unchecked redirects; preserve deliberately selected local-page media. Hostname DNS changes remain outside this guard.
+- Bound Zerochan metadata to 2 MiB with cancellation throughout its deadline.
+
+Store submission and approval are separate states. User-reported X, Reddit and RedGIFs checks were performed in Helium; this does not establish Google Chrome, all-provider or audio acceptance.
+
 ## 2.5.1 — redesigned interface and violet gradient branding
 
 - Redesign the manager, popup, settings, statistics and diagnostics with grouped navigation and consistent panels across Violet, Blue, Dark and Light themes. Preserve English/Russian localization and existing preferences.

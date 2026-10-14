@@ -4,16 +4,19 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || typeof message !== 'object') return false;
 
-    if (chrome.runtime?.id && sender?.id && sender.id !== chrome.runtime.id) {
+    const action = message.action;
+    const workerCommand = typeof action === 'string' && (action.startsWith('STAGING_') || [
+      'FETCH_GELBOORU_BLOB', 'FETCH_PROTECTED_BLOB', 'REVOKE_BLOB_URL',
+      'CONVERT_X_TWEET_VIDEO_TO_GIF', 'CONVERT_REDDIT_VIDEO_TO_GIF', 'ASSEMBLE_REDDIT_HLS'
+    ].includes(action));
+    // All privileged offscreen work must pass the worker's selected-media admission first.
+    if (workerCommand && (!chrome.runtime.id || sender?.id !== chrome.runtime.id || sender?.tab ||
+        (sender?.url && sender.url !== chrome.runtime.getURL('background.js')))) {
       sendResponse({ success: false, error: 'UNAUTHORIZED_SENDER' });
       return false;
     }
 
-    if (typeof message.action === 'string' && message.action.startsWith('STAGING_')) {
-      // Only the worker may pass private source addresses or control prepared files; page/content messages are refused.
-      if (sender?.id !== chrome.runtime.id || sender?.tab || (sender?.url && sender.url !== chrome.runtime.getURL('background.js'))) {
-        sendResponse({success:false,error:'UNAUTHORIZED_SENDER'}); return false;
-      }
+    if (typeof action === 'string' && action.startsWith('STAGING_')) {
       (async () => {
         const s = getStaging();
         if(message.action === 'STAGING_DIRECTORY_EXPORT') return {success:true,id:await getDirectoryExporter().write(message.job,message.url)};
@@ -65,6 +68,11 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
     }
 
   if (message.action === 'CONVERT_X_TWEET_VIDEO_TO_GIF' || message.action === 'CONVERT_REDDIT_VIDEO_TO_GIF') {
+    // Synthetic frame fixtures are direct-function tests, never production IPC input.
+    if (['frames', 'duration', 'width', 'height'].some(key => Object.prototype.hasOwnProperty.call(message, key))) {
+      sendResponse({ success: false, error: 'INVALID_CONVERSION_OPTIONS' });
+      return false;
+    }
     const isReddit = message.action === 'CONVERT_REDDIT_VIDEO_TO_GIF';
     const converter = isReddit ? convertRedditVideoToGif : convertXTweetVideoToGif;
     converter(message.url, {
@@ -72,11 +80,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
       maxDuration: message.maxDuration,
       maxFrames: message.maxFrames,
       maxDimension: message.maxDimension,
-      maxSizeBytes: message.maxSizeBytes,
-      frames: message.frames,
-      duration: message.duration,
-      width: message.width,
-      height: message.height
+      maxSizeBytes: message.maxSizeBytes
     })
       .then(result => {
         if (result && result.exceedsSize) {
@@ -1119,7 +1123,7 @@ async function convertMp4VideoToGif(mediaUrl, options = {}, providerName = 'x') 
 
     // 2. Fetch video media
     console.log(`[Offscreen] Fetching ${providerName === 'reddit' ? 'Reddit animation' : 'tweet_video'} for GIF conversion:`, sanitizeUrlForLog(mediaUrl));
-    const resp = await fetch(mediaUrl, { signal: controller.signal });
+    const resp = await fetch(mediaUrl, { redirect: 'error', signal: controller.signal });
     response = resp;
     if (!resp.ok) {
       const err = new Error(`Failed to fetch video: HTTP ${resp.status}`);

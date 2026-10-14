@@ -1,6 +1,6 @@
 # Release preparation
 
-The GitHub build is an early public release. This document prepares a later Chrome Web Store submission; it is not a claim of store approval or complete browser acceptance.
+The published GitHub pre-release remains v2.5.1. The current v2.5.2 checkout prepares the first Chrome Web Store submission, including the reviewed project organization, original sidebar without category captions and optional Instagram `kkclip.com` previews. Preparation, submission and approval are separate states; this document does not claim store approval or complete browser acceptance.
 
 ## Build and package
 
@@ -9,7 +9,7 @@ The GitHub build is an early public release. This document prepares a later Chro
 3. Run `npm run build --prefix ui`, then `node tools/verify.mjs --ui`.
 4. Independently review the exact candidate, resolve blockers, and commit only product source/docs/tests/build assets.
 5. Run `node tools/package.mjs <accepted-commit>`; inspect its ZIP, SHA-256 and per-file inventory. The manifest is at the ZIP root.
-6. Publish that exact source commit and runtime asset together. Source ZIPs contain development files; the runtime ZIP does not.
+6. Upload the verified runtime ZIP to the existing Chrome Web Store draft. Do not upload the WebStore-Materials ZIP as extension code. Source ZIPs contain development files; the runtime ZIP does not. GitHub publication is a separate action.
 
 Never package arbitrary working-folder contents. Local agent files, recovery archives, credentials, logs, dependencies and task notes are excluded. A numeric version alone does not identify a build; use the recorded source SHA and ZIP hash.
 

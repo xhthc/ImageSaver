@@ -14,6 +14,7 @@ if (typeof importScripts === 'function') {
   importScripts('lib/debug_journal.js');     // the opt-in debug journal
   importScripts('lib/media_format.js');      // MIME, signatures, extensions and media classification
   importScripts('lib/download_paths.js');    // file names, folder layout and authors
+  importScripts('lib/media_sources.js');    // shared privileged URL admission
   importScripts('lib/candidates.js');        // candidate addresses, groups, scoring and the image probe
   importScripts('lib/site_resolvers.js');    // site resolvers (X, Pixiv, Reddit, Zerochan, Sankaku, Pawchive, ...)
   importScripts('lib/booru_resolvers.js');   // booru engine families
@@ -222,8 +223,8 @@ async function recoverXPostMp4Variant(tabId, mediaDescriptor) {
   }, { tab: tabId });
   return r;
 }
-async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext) {
-  const mime = await verifyFinalMediaMimeImpl(targetUrl, mediaPlan, isVideoContext);
+async function verifyFinalMediaMime(targetUrl, mediaPlan, isVideoContext, selectedPage = '') {
+  const mime = await verifyFinalMediaMimeImpl(targetUrl, mediaPlan, isVideoContext, selectedPage);
   dbg('mime', 'final', mime ? 'ok' : 'failed', mime ? undefined : 'MIME_NOT_VERIFIED', () => ({ host: targetUrl, mime: typeof mime === 'string' ? mime : undefined, transport: mediaPlan && mediaPlan.transport, kind: isVideoContext ? 'video' : 'image' }));
   return mime;
 }
@@ -1174,11 +1175,14 @@ downloadManager?.ready.then(()=>{downloadManagerRecovering=false;void restoreOrC
 async function searchDirectoryExport(id,url){
   const owner=acquireOffscreenTask();try{await ensureOffscreenDocument();const r=await offscreenRequest({action:'STAGING_DIRECTORY_SEARCH',id,url});if(!r?.success)throw Error(r?.error || 'DIRECTORY_WRITE_FAILED');return r.item;}finally{await releaseOffscreenTask(owner);}
 }
-async function managedDownload(options, feedbackOp=null, mime='', maxBytes=0) {
+async function managedDownload(options, feedbackOp=null, mime='', maxBytes=0, selectedPage='') {
+  if (!options.url.startsWith('blob:') && !options.url.startsWith('data:') && !MediaLatchSources.allows(options.url, selectedPage)) throw Error('INVALID_SOURCE');
   // Offline legacy harnesses omit IndexedDB; the installed extension always uses the durable queue.
   const {saveDirectoryId=''}=await chrome.storage.local.get({saveDirectoryId:''});
   if(!downloadManager){if(saveDirectoryId)throw Error('DIRECTORY_ACCESS_REQUIRED');return chrome.downloads.download(options);}
-  return downloadManager.enqueue(options,{op:feedbackOp,mime,maxBytes,directoryId:saveDirectoryId});
+  // Only the admitting origin is needed by delayed staging; do not persist its full page URL.
+  let selectedOrigin='';try{selectedOrigin=new URL(selectedPage).origin;}catch(_){}
+  return downloadManager.enqueue(options,{op:feedbackOp,mime,maxBytes,selectedPage:selectedOrigin,directoryId:saveDirectoryId});
 }
 async function downloadManagerSnapshot() {
   const snapshot=await downloadManager.list();
@@ -1863,7 +1867,7 @@ async function onContextMenuClicked(info, tab) {
               isXVideoPoster: isXPoster
             }),
             srcUrl: rawImageUrl,
-            pageUrl: info.pageUrl,
+            pageUrl: info.frameUrl || info.pageUrl || tab?.url,
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
             frameId: info.frameId,
@@ -1883,7 +1887,7 @@ async function onContextMenuClicked(info, tab) {
         } else {
           mediaPlan = await resolveOriginalMediaPlan({
             srcUrl: rawImageUrl || '',
-            pageUrl: info.pageUrl,
+            pageUrl: info.frameUrl || info.pageUrl || tab?.url,
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
             frameId: info.frameId,
@@ -1969,7 +1973,7 @@ async function onContextMenuClicked(info, tab) {
       // Verify the final media MIME via actual network probe/protected fetch
       const tProfilerMimeStart = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
       console.log(`[Chooser Profiler] 3. MIME check started (+${(tProfilerMimeStart - tProfilerStart).toFixed(1)}ms, target: ${sanitizeUrlForLog(targetMediaUrl)})`);
-      const verifiedMime = await verifyFinalMediaMime(targetMediaUrl, mediaPlan, isVideo);
+      const verifiedMime = await verifyFinalMediaMime(targetMediaUrl, mediaPlan, isVideo, info.frameUrl || info.pageUrl || tab?.url);
       const tProfilerMimeEnd = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
       console.log(`[Chooser Profiler] 4. MIME check completed (+${(tProfilerMimeEnd - tProfilerStart).toFixed(1)}ms, duration: ${(tProfilerMimeEnd - tProfilerMimeStart).toFixed(1)}ms, verifiedMime: ${verifiedMime})`);
 
@@ -2032,7 +2036,7 @@ async function onContextMenuClicked(info, tab) {
         rawImageUrl: rawImageUrl || targetMediaUrl,
         settings,
         mediaPlan,
-        pageUrl: info.pageUrl || tab?.url || '',
+        pageUrl: info.frameUrl || info.pageUrl || tab?.url || '',
         feedbackOp: op
       });
     } catch (downloadError) {

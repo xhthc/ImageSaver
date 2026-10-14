@@ -196,7 +196,8 @@ function createTestEnv() {
     String,
     Boolean,
     RegExp,
-    AbortController
+    AbortController,
+    TextDecoder
   };
 
   const bgContext = vm.createContext(bgSandbox);

@@ -4914,6 +4914,7 @@ async function runTests() {
     let messageListener = null;
     const offscreenChrome = {
       runtime: {
+        id: 'offscreen-test', getURL: p => 'chrome-extension://offscreen-test/' + p,
         onMessage: {
           addListener: (cb) => { messageListener = cb; }
         }
@@ -4972,7 +4973,7 @@ async function runTests() {
       };
     };
 
-    const res1 = await new Promise(r => messageListener({ action: 'FETCH_PROTECTED_BLOB', url: 'https://oimages.anime-pictures.net/test.jpg' }, {}, r));
+    const res1 = await new Promise(r => messageListener({ action: 'FETCH_PROTECTED_BLOB', url: 'https://oimages.anime-pictures.net/test.jpg' }, { id: 'offscreen-test' }, r));
     const hasReferer = Object.keys(capturedOpts.headers || {}).some(h => h.toLowerCase() === 'referer');
     assert(
       res1.success === true &&
@@ -4995,7 +4996,7 @@ async function runTests() {
       },
       blob: async () => new Blob(['<html>challenge</html>'], { type: 'text/html' })
     });
-    const res2 = await new Promise(r => messageListener({ action: 'FETCH_PROTECTED_BLOB', url: 'https://oimages.anime-pictures.net/test.jpg' }, {}, r));
+    const res2 = await new Promise(r => messageListener({ action: 'FETCH_PROTECTED_BLOB', url: 'https://oimages.anime-pictures.net/test.jpg' }, { id: 'offscreen-test' }, r));
     assert(
       res2.success === false && res2.error.includes('Rejected non-image Content-Type'),
       'offscreen.js: fetchProtectedBlob отклоняет text/html'
@@ -5016,7 +5017,7 @@ async function runTests() {
       },
       blob: async () => new Blob([], { type: 'image/jpeg' })
     });
-    const res3 = await new Promise(r => messageListener({ action: 'FETCH_PROTECTED_BLOB', url: 'https://oimages.anime-pictures.net/test.jpg' }, {}, r));
+    const res3 = await new Promise(r => messageListener({ action: 'FETCH_PROTECTED_BLOB', url: 'https://oimages.anime-pictures.net/test.jpg' }, { id: 'offscreen-test' }, r));
     assert(
       res3.success === false && res3.error.includes('Received empty blob body'),
       'offscreen.js: fetchProtectedBlob отклоняет пустой Blob (0 байт)'
@@ -5031,7 +5032,7 @@ async function runTests() {
         get: () => null
       }
     });
-    const res4 = await new Promise(r => messageListener({ action: 'FETCH_PROTECTED_BLOB', url: 'https://oimages.anime-pictures.net/test.jpg' }, {}, r));
+    const res4 = await new Promise(r => messageListener({ action: 'FETCH_PROTECTED_BLOB', url: 'https://oimages.anime-pictures.net/test.jpg' }, { id: 'offscreen-test' }, r));
     assert(
       res4.success === false && res4.status === 403,
       'offscreen.js: fetchProtectedBlob отклоняет HTTP 403 и передает status 403'
@@ -5064,7 +5065,7 @@ async function runTests() {
     let messageListener = null;
     let fetchCalled = false;
     const offscreenSandbox = {
-      chrome: { runtime: { onMessage: { addListener: (cb) => { messageListener = cb; } } } },
+      chrome: { runtime: { id: 'offscreen-test', getURL: p => 'chrome-extension://offscreen-test/' + p, onMessage: { addListener: (cb) => { messageListener = cb; } } } },
       fetch: async () => { fetchCalled = true; return {}; },
       AbortController,
       setTimeout,
@@ -5079,7 +5080,7 @@ async function runTests() {
     const evilRes = await new Promise(r => messageListener({
       action: 'FETCH_PROTECTED_BLOB',
       url: 'https://anime-pictures.net.evil.example/picture.jpg'
-    }, {}, r));
+    }, { id: 'offscreen-test' }, r));
 
     assert(
       evilRes.success === false &&
@@ -5120,7 +5121,7 @@ async function runTests() {
     await new Promise(r => messageListener({
       action: 'FETCH_PROTECTED_BLOB',
       url: 'https://oimages.anime-pictures.net/picture.jpg'
-    }, {}, r));
+    }, { id: 'offscreen-test' }, r));
     assert(
       capturedFetchOpts && capturedFetchOpts.headers && capturedFetchOpts.headers['Cookie'] === undefined,
       'fetch options не пытаются вручную установить Cookie'
@@ -5135,7 +5136,7 @@ async function runTests() {
     let sleepDelays = [];
 
     const offscreenSandbox = {
-      chrome: { runtime: { onMessage: { addListener: (cb) => { messageListener = cb; } } } },
+      chrome: { runtime: { id: 'offscreen-test', getURL: p => 'chrome-extension://offscreen-test/' + p, onMessage: { addListener: (cb) => { messageListener = cb; } } } },
       AbortController,
       setTimeout,
       clearTimeout,
@@ -5185,7 +5186,7 @@ async function runTests() {
     const res1 = await new Promise(r => messageListener({
       action: 'FETCH_PROTECTED_BLOB',
       url: 'https://oimages.anime-pictures.net/pic.jpg'
-    }, {}, r));
+    }, { id: 'offscreen-test' }, r));
 
     assert(
       res1.success === true &&
@@ -5211,7 +5212,7 @@ async function runTests() {
     const res2 = await new Promise(r => messageListener({
       action: 'FETCH_PROTECTED_BLOB',
       url: 'https://oimages.anime-pictures.net/pic.jpg'
-    }, {}, r));
+    }, { id: 'offscreen-test' }, r));
 
     assert(
       res2.success === false &&
@@ -5235,7 +5236,7 @@ async function runTests() {
     const res3 = await new Promise(r => messageListener({
       action: 'FETCH_PROTECTED_BLOB',
       url: 'https://oimages.anime-pictures.net/pic.jpg'
-    }, {}, r));
+    }, { id: 'offscreen-test' }, r));
 
     assert(
       res3.success === false &&
@@ -5259,7 +5260,7 @@ async function runTests() {
     const res4 = await new Promise(r => messageListener({
       action: 'FETCH_PROTECTED_BLOB',
       url: 'https://oimages.anime-pictures.net/pic.jpg'
-    }, {}, r));
+    }, { id: 'offscreen-test' }, r));
 
     assert(
       res4.success === false &&
@@ -5391,7 +5392,7 @@ async function runTests() {
     let offscreenMsgHandler = null;
     const testOffscreenSandbox = {
       chrome: {
-        runtime: {
+        runtime: { id: 'offscreen-test', getURL: p => 'chrome-extension://offscreen-test/' + p,
           onMessage: {
             addListener: (cb) => { offscreenMsgHandler = cb; }
           }
@@ -5422,7 +5423,7 @@ async function runTests() {
     const res5 = await new Promise(r => offscreenMsgHandler({
       action: 'FETCH_PROTECTED_BLOB',
       url: 'https://oimages.anime-pictures.net/816/test.jpg'
-    }, {}, r));
+    }, { id: 'offscreen-test' }, r));
 
     assert(
       res5.success === false &&
@@ -5472,7 +5473,7 @@ async function runTests() {
     const res6 = await new Promise(r => offscreenMsgHandler({
       action: 'FETCH_PROTECTED_BLOB',
       url: resolvedOrigUrl
-    }, {}, r));
+    }, { id: 'offscreen-test' }, r));
 
     mockChrome.runtime._msgHandler = async (msg) => {
       if (msg.action === 'FETCH_PROTECTED_BLOB') return res6;
@@ -5512,7 +5513,7 @@ async function runTests() {
     await new Promise(r => offscreenMsgHandler({
       action: 'FETCH_PROTECTED_BLOB',
       url: 'https://oimages.anime-pictures.net/816/options_test.jpg'
-    }, {}, r));
+    }, { id: 'offscreen-test' }, r));
 
     assert(
       capturedOptions.length === 2 &&
@@ -5544,7 +5545,7 @@ async function runTests() {
       const res = await new Promise(r => offscreenMsgHandler({
         action: 'FETCH_PROTECTED_BLOB',
         url: 'https://oimages.anime-pictures.net/pic.jpg'
-      }, {}, r));
+      }, { id: 'offscreen-test' }, r));
 
       assert(
         callCount === 1 && res.success === false,
@@ -5578,7 +5579,7 @@ async function runTests() {
     const gelRes = await new Promise(r => offscreenMsgHandler({
       action: 'FETCH_GELBOORU_BLOB',
       url: 'https://img3.gelbooru.com/images/ab/cd/abcd.jpg'
-    }, {}, r));
+    }, { id: 'offscreen-test' }, r));
 
     assert(
       gelRes.success === true &&
@@ -5627,7 +5628,7 @@ async function runTests() {
     let offscreenMsgHandler196 = null;
     const testOffscreenSandbox196 = {
       chrome: {
-        runtime: {
+        runtime: { id: 'offscreen-test', getURL: p => 'chrome-extension://offscreen-test/' + p,
           onMessage: {
             addListener: (cb) => { offscreenMsgHandler196 = cb; }
           }
@@ -5922,7 +5923,7 @@ async function runTests() {
 
     mockChrome.runtime._msgHandler = async (msg) => {
       if (msg.action === 'FETCH_PROTECTED_BLOB') {
-        return new Promise(r => offscreenMsgHandler196(msg, {}, r));
+        return new Promise(r => offscreenMsgHandler196(msg, { id: 'offscreen-test' }, r));
       }
       return null;
     };
@@ -5982,7 +5983,7 @@ async function runTests() {
 
     mockChrome.runtime._msgHandler = async (msg) => {
       if (msg.action === 'FETCH_PROTECTED_BLOB') {
-        return new Promise(r => offscreenMsgHandler196(msg, {}, r));
+        return new Promise(r => offscreenMsgHandler196(msg, { id: 'offscreen-test' }, r));
       }
       return null;
     };
@@ -14037,7 +14038,7 @@ async function runTests() {
 
     let offscreenMsgHandler = null;
     const offscreenMockChrome = {
-      runtime: {
+      runtime: { id: 'offscreen-test', getURL: p => 'chrome-extension://offscreen-test/' + p,
         onMessage: {
           addListener: (cb) => { offscreenMsgHandler = cb; }
         },
@@ -20692,7 +20693,7 @@ async function runTests() {
       sandbox.fetch = async (url, opts) => {
         const u = typeof url === 'string' ? url : (url?.url || '');
         if (u === 'https://www.zerochan.net/4728645?json') {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => ({
@@ -20706,7 +20707,7 @@ async function runTests() {
               height: 4412,
               size: 8263680
             })
-          };
+          });
         }
         if (u === realPngUrl) {
           return {
@@ -20772,7 +20773,7 @@ async function runTests() {
       sandbox.fetch = async (url, opts) => {
         const u = typeof url === 'string' ? url : (url?.url || '');
         if (u === 'https://www.zerochan.net/4727794?json') {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => ({
@@ -20782,7 +20783,7 @@ async function runTests() {
               height: 1800,
               size: 1610752
             })
-          };
+          });
         }
         if (u === realJpgUrl) {
           return {
@@ -20828,7 +20829,7 @@ async function runTests() {
       sandbox.fetch = async (url, opts) => {
         const u = typeof url === 'string' ? url : (url?.url || '');
         if (u === 'https://www.zerochan.net/4728126?json') {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => ({
@@ -20838,7 +20839,7 @@ async function runTests() {
               height: 1498,
               size: 431104
             })
-          };
+          });
         }
         if (u === fullJpgUrl) {
           return {
@@ -20886,7 +20887,7 @@ async function runTests() {
       sandbox.fetch = async (url, opts) => {
         const u = typeof url === 'string' ? url : (url?.url || '');
         if (u === 'https://www.zerochan.net/4728645?json') {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => ({
@@ -20896,7 +20897,7 @@ async function runTests() {
               height: 4412,
               size: 8263680
             })
-          };
+          });
         }
         if (u === realPngUrl) {
           return {
@@ -20949,7 +20950,7 @@ async function runTests() {
       sandbox.fetch = async (url, opts) => {
         const u = typeof url === 'string' ? url : (url?.url || '');
         if (u === 'https://www.zerochan.net/4728645?json') {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => ({
@@ -20959,7 +20960,7 @@ async function runTests() {
               height: 4412,
               size: 8263680
             })
-          };
+          });
         }
         if (u === 'https://static.zerochan.net/Sandrone.full.4728645.png') {
           return {
@@ -21079,14 +21080,14 @@ async function runTests() {
       sandbox.fetch = async (url, opts) => {
         const u = typeof url === 'string' ? url : (url?.url || '');
         if (u.includes('?json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => ({
               id: 9999001,
               full: 'https://static.zerochan.net/Blocked.full.9999001.jpg'
             })
-          };
+          });
         }
         if (u.includes('9999001')) {
           return { ok: false, status: 429, headers: new Map() };
@@ -21110,14 +21111,14 @@ async function runTests() {
       sandbox.fetch = async (url, opts) => {
         const u = typeof url === 'string' ? url : (url?.url || '');
         if (u.includes('?json')) {
-          return {
+          return streamedMetadata({
             ok: true,
             status: 200,
             json: async () => ({
               id: 9999002,
               full: 'https://static.zerochan.net/Forbidden.full.9999002.jpg'
             })
-          };
+          });
         }
         if (u.includes('9999002')) {
           return { ok: false, status: 403, headers: new Map() };
@@ -21503,7 +21504,8 @@ async function runTests() {
             return {
               ok: true,
               status: 200,
-              json: () => new Promise((resolve, reject) => {
+              headers: new Map(),
+              body: { getReader: () => ({ cancel: async () => {}, read: () => new Promise((resolve, reject) => {
                 timerActiveDuringJson = activeTimers.size > 0;
                 if (signal) {
                   if (signal.aborted) {
@@ -21519,14 +21521,14 @@ async function runTests() {
                 for (const [tid, fn] of Array.from(timerCallbacks.entries())) {
                   fn();
                 }
-              })
+              }) }) }
             };
           }
           return { ok: false, status: 404, headers: new Map() };
         };
 
         const groupsAbort = await zerochanEngine.resolveGroups(targetImageObj, 'https://www.zerochan.net/Sandrone', 'https://www.zerochan.net/4728645');
-        assert(timerActiveDuringJson === true, '233.14a: Таймер дедлайна API остается активным во время ожидания res.json()');
+        assert(timerActiveDuringJson === true, '233.14a: Таймер дедлайна API остается активным во время ожидания reader.read()');
         assert(abortFired === true, '233.14b: Срабатывание дедлайна вызывает controller.abort() и прерывает чтение JSON');
         assert(groupsAbort && groupsAbort.length === 1 && groupsAbort[0].provider === 'zerochan', '233.14c: При прерывании по таймауту ZerochanEngine безопасно переходит к детерминированным вариантам');
         assert(activeTimers.size === 0, '233.14d: Таймер дедлайна корректно очищен в finally после прерывания');
@@ -21537,10 +21539,8 @@ async function runTests() {
         assert(activeTimers.size === 0, '233.14e: Таймер дедлайна очищен в finally при сетевой ошибке fetch');
 
         // 233.14f: Timer cleanup on malformed JSON rejection
-        sandbox.fetch = async () => ({
-          ok: true,
-          status: 200,
-          json: async () => { throw new SyntaxError('Unexpected token < in JSON at position 0'); }
+        sandbox.fetch = async () => streamedMetadata({
+          ok: true, status: 200, text: async () => '<malformed JSON>'
         });
         await zerochanEngine.resolveGroups(targetImageObj, 'https://www.zerochan.net/Sandrone', 'https://www.zerochan.net/4728645');
         assert(activeTimers.size === 0, '233.14f: Таймер дедлайна очищен в finally при ошибке парсинга JSON');
@@ -21558,7 +21558,7 @@ async function runTests() {
         sandbox.fetch = async (url) => {
           const u = typeof url === 'string' ? url : (url?.url || '');
           if (u.includes('?json')) {
-            return {
+            return streamedMetadata({
               ok: true,
               status: 200,
               json: async () => ({
@@ -21566,7 +21566,7 @@ async function runTests() {
                 name: 'Sandrone',
                 full: 'https://static.zerochan.net/Sandrone.full.4728645.png'
               })
-            };
+            });
           }
           return { ok: false, status: 404, headers: new Map() };
         };
@@ -21595,7 +21595,7 @@ async function runTests() {
         const range = Boolean(opts && opts.headers && (opts.headers.Range || opts.headers.range));
         log.push(method + (range ? '+range' : '') + ' ' + u);
         if (u === 'https://www.zerochan.net/' + t.id + '?json') {
-          return { ok: true, status: 200, json: async () => ({ id: t.id, full: t.full, width: 1000, height: 2000, size: t.size }) };
+          return streamedMetadata({ ok: true, status: 200, json: async () => ({ id: t.id, full: t.full, width: 1000, height: 2000, size: t.size }) });
         }
         if (!/zerochan\.net/.test(u)) return { ok: false, status: 404, headers: new Map() };
         if (method === 'HEAD') return { ok: false, status: 503, headers: new Map([['content-type', 'text/html'], ['content-length', '592']]) };
@@ -21669,7 +21669,7 @@ async function runTests() {
         sandbox.fetch = async (url, opts) => {
           const u = typeof url === 'string' ? url : (url?.url || '');
           if (u === 'https://www.zerochan.net/' + t.id + '?json') {
-            return { ok: true, status: 200, json: async () => ({ id: 9999999, full: foreign, width: 1, height: 1, size: 1 }) };
+            return streamedMetadata({ ok: true, status: 200, json: async () => ({ id: 9999999, full: foreign, width: 1, height: 1, size: 1 }) });
           }
           return base(url, opts);
         };
@@ -28431,7 +28431,7 @@ async function runTests() {
     let offListener = null;
     let offFetch = async () => {};
     const off = vm.createContext({
-      chrome: { runtime: { onMessage: { addListener: (cb) => { offListener = cb; } } } },
+      chrome: { runtime: { id: 'offscreen-test', getURL: p => 'chrome-extension://offscreen-test/' + p, onMessage: { addListener: (cb) => { offListener = cb; } } } },
       fetch: (u, o) => offFetch(u, o), AbortController, setTimeout, clearTimeout,
       URL: Object.assign(class extends URL {}, { createObjectURL: () => 'blob:chrome-extension://mock/1', revokeObjectURL: () => {} }),
       Blob, console
@@ -28472,7 +28472,7 @@ async function runTests() {
       },
       blob: async () => new Blob([avifBytes], { type: 'image/avif' })
     });
-    const prot = await new Promise((res) => offListener({ action: 'FETCH_PROTECTED_BLOB', url: 'https://oimages.anime-pictures.net/real.avif' }, {}, res));
+    const prot = await new Promise((res) => offListener({ action: 'FETCH_PROTECTED_BLOB', url: 'https://oimages.anime-pictures.net/real.avif' }, { id: 'offscreen-test' }, res));
     assert(prot.success === true && prot.contentType === 'image/avif', '242.8: защищённая загрузка настоящего AVIF возвращает image/avif (раньше video/mp4)');
     // an AVIF is not an MP4 for the video-only checks
     assert(sandbox.sniffMediaMagicBytes(head(avifBytes)) !== 'video/mp4', '242.9: AVIF не проходит проверку «контейнер MP4» для видео-путей');

@@ -4,6 +4,7 @@
 // evidence); other ids/names are synthetic. Mocks prove code paths, not live CDN behavior.
 'use strict';
 const assert = require('node:assert/strict'), vm = require('node:vm'), fs = require('node:fs'), path = require('node:path');
+require('../lib/media_sources.js');
 require('../lib/staging.js');
 require('../lib/download_manager.js');
 require('../lib/folder_path.js');

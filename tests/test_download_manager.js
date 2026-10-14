@@ -1,6 +1,6 @@
 // Queue and production disk-transfer regressions; native byte/export evidence is recorded separately.
 const assert=require('node:assert/strict');
-require('../lib/download_manager.js');require('../lib/staging.js');require('../lib/feedback.js');require('../lib/feedback_tracker.js');require('../lib/statistics.js');
+require('../lib/media_sources.js');require('../lib/download_manager.js');require('../lib/staging.js');require('../lib/feedback.js');require('../lib/feedback_tracker.js');require('../lib/statistics.js');
 const {sniffMediaMagicBytes,isMalformedMediaContainer}=require('../offscreen.js');
 const {createManager}=MediaLatchDownloads,{createStaging}=MediaLatchStaging;
 const wait=()=>new Promise(r=>setTimeout(r,5));
@@ -307,8 +307,8 @@ function env(stored={jobs:[],paused:false}) {
       offscreen: { createDocument: async () => {}, closeDocument: async () => {} }
     };
     const sandbox = {
-      chrome, indexedDB: {}, crypto: { randomUUID: () => 'uuid' }, console: { log() {}, warn() {}, error() {} },
-      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_format|download_paths|candidates|site_resolvers|booru_resolvers|page_selection|x_recovery|toolbar_badge|worker\/(offscreen|providers|pipeline|animation))\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
+      chrome, URL, indexedDB: {}, crypto: { randomUUID: () => 'uuid' }, console: { log() {}, warn() {}, error() {} },
+      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_sources|media_format|download_paths|candidates|site_resolvers|booru_resolvers|page_selection|x_recovery|toolbar_badge|worker\/(offscreen|providers|pipeline|animation))\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
       ImageSaverFeedback: globalThis.ImageSaverFeedback,
       ImageSaverFeedbackTracker: globalThis.ImageSaverFeedbackTracker,
       MediaLatchDownloads: {
@@ -320,6 +320,14 @@ function env(stored={jobs:[],paused:false}) {
     vm.runInContext(bgCode, sandbox);
     assert(capturedAdapter && typeof capturedAdapter.newAttempt === 'function');
     assert(capturedAdapter && typeof capturedAdapter.recoverAttempt === 'function');
+    // Native admission context reaches delayed staging as an origin, never a full page address.
+    const admitted=[];sandbox.captureEnqueue=(options,meta)=>{admitted.push({options,meta});return 123;};
+    vm.runInContext('downloadManager.enqueue=async(options,meta)=>globalThis.captureEnqueue(options,meta)',sandbox);
+    await sandbox.managedDownload({url:'http://192.168.1.2/selected.png',filename:'selected.png'},null,'image/png',0,'http://192.168.1.2/gallery?private=path');
+    assert.equal(admitted[0].meta.selectedPage,'http://192.168.1.2');
+    await assert.rejects(sandbox.managedDownload({url:'http://127.0.0.1/private.png',filename:'private.png'},null,'',0,'https://public.example/post'),/^Error: INVALID_SOURCE$/);
+    assert.equal(admitted.length,1,'public page cannot enqueue literal local-network transfer');
+
 
     // The media-plan acknowledgment belongs to this export, never another queued transfer.
     let drainCalls=0;

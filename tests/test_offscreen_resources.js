@@ -49,6 +49,7 @@ function createTestSandbox(overrides = {}) {
   const mockChrome = {
     runtime: {
       id: 'image-saver-test-extension-id',
+      getURL: (p) => `chrome-extension://image-saver-test-extension-id/${p}`,
       onMessage: {
         addListener: (cb) => { messageListener = cb; }
       }
@@ -993,9 +994,7 @@ async function runAllSuites() {
     const f2 = new Uint8Array(400);
     f2[0] = 255; // Distinguishable frame
 
-    const res = await dispatchMessage({
-      action: 'CONVERT_X_TWEET_VIDEO_TO_GIF',
-      url: 'https://video.twimg.com/tweet_video/test.mp4',
+    const res = await sandbox.convertXTweetVideoToGif('https://video.twimg.com/tweet_video/test.mp4', {
       frames: [f1, f2],
       width: 10,
       height: 10,
@@ -1014,9 +1013,7 @@ async function runAllSuites() {
     const f2 = new Uint8Array(400);
     f2[1] = 255;
 
-    const res = await dispatchMessage({
-      action: 'CONVERT_REDDIT_VIDEO_TO_GIF',
-      url: 'https://v.redd.it/test.mp4',
+    const res = await sandbox.convertRedditVideoToGif('https://v.redd.it/test.mp4', {
       frames: [f1, f2],
       width: 10,
       height: 10,
@@ -1344,6 +1341,32 @@ async function runAllSuites() {
     );
     assert.strictEqual(res.success, false);
     assert.strictEqual(res.error, 'UNAUTHORIZED_SENDER');
+  });
+
+  await test('offscreen IPC: content/page/missing senders cannot start any privileged command', async () => {
+    let calls = 0;
+    const { dispatchMessage, createdBlobs, revokedBlobs, createdVideos, createdCanvases } = createTestSandbox({ fetch: async () => { calls++; throw Error('unexpected fetch'); }, __REDDIT_HLS_LOADER: async () => { calls++; throw Error('unexpected loader'); } });
+    const own = 'image-saver-test-extension-id';
+    const senders = [{}, { id: 'foreign' }, { id: own, tab: { id: 7 }, url: 'https://example.org/' }, { id: own, url: `chrome-extension://${own}/popup/popup.html` }, { id: own, url: `chrome-extension://${own}/offscreen.html` }];
+    const commands = ['FETCH_GELBOORU_BLOB', 'FETCH_PROTECTED_BLOB', 'REVOKE_BLOB_URL', 'CONVERT_X_TWEET_VIDEO_TO_GIF', 'CONVERT_REDDIT_VIDEO_TO_GIF', 'ASSEMBLE_REDDIT_HLS', 'STAGING_PREPARE', 'STAGING_URL', 'STAGING_REMOVE', 'STAGING_DIRECTORY_EXPORT'];
+    for (const sender of senders) for (const action of commands) {
+      const reply = await dispatchMessage({ action, url: 'https://oimages.anime-pictures.net/test.jpg', blobUrl: 'blob:chrome-extension://owned/1', frames: [{ rgba: { buffer: [0, 0], constructor: { name: 'Uint8Array' } } }] }, sender);
+      assert.strictEqual(reply?.error, 'UNAUTHORIZED_SENDER', action);
+    }
+    assert.strictEqual(calls, 0); assert.strictEqual(createdBlobs.size, 0); assert.strictEqual(revokedBlobs.size, 0); assert.strictEqual(createdVideos.length, 0); assert.strictEqual(createdCanvases.length, 0);
+  });
+
+  await test('offscreen IPC: even a worker cannot submit synthetic conversion fields', async () => {
+    let fetches = 0;
+    const { dispatchMessage, createdBlobs, createdVideos, createdCanvases } = createTestSandbox({ fetch: async () => { fetches++; throw Error('unexpected fetch'); } });
+    for (const action of ['CONVERT_X_TWEET_VIDEO_TO_GIF', 'CONVERT_REDDIT_VIDEO_TO_GIF']) for (const key of ['frames', 'duration', 'width', 'height']) {
+      const reply = await dispatchMessage({ action, url: 'https://video.twimg.com/tweet_video/test.mp4', [key]: key === 'frames' ? [{ rgba: { buffer: [0], constructor: { name: 'Uint8Array' } } }] : 999999 });
+      assert.strictEqual(reply?.error, 'INVALID_CONVERSION_OPTIONS');
+    }
+    assert.strictEqual(fetches, 0); assert.strictEqual(createdBlobs.size, 0); assert.strictEqual(createdVideos.length, 0); assert.strictEqual(createdCanvases.length, 0);
+    for (const sender of [{ id: 'image-saver-test-extension-id' }, { id: 'image-saver-test-extension-id', url: 'chrome-extension://image-saver-test-extension-id/background.js' }]) {
+      assert.strictEqual((await dispatchMessage({ action: 'REVOKE_BLOB_URL', blobUrl: 'blob:owned' }, sender)).success, true);
+    }
   });
 
   // REDDIT-HLS-01: the offscreen action hands the master to the assembly module; only a complete result gets a Blob URL

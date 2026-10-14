@@ -10,6 +10,12 @@ Current JavaScript, UI and media-processing libraries are bundled locally. Relea
 
 Before store submission, inspect the **built runtime ZIP**, including transitive dependencies, for remote scripts, dynamic imports, fetched executable code/WASM, `eval` and `new Function`. Keep updates in the intended distribution channel. Consider an explicit stricter CSP after checking compatibility; do not relax it to permit remote execution. See Chrome's [RHC guidance](https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code) and [extension CSP reference](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy).
 
+## First store candidate 2.5.2
+
+Privileged offscreen actions require the extension worker sender; synthetic frame/dimension converter fields are refused in runtime messages. Image/video admission and final staging reject URL credentials, unsupported network schemes and literal local/private destinations from public selected pages. Deliberately selected local pages retain local media access; the worker carries only the native admitting origin into its private durable queue. Probes, metadata and acquisition refuse unchecked redirects, so some media links that require server redirects may be unavailable. This predicate does not resolve DNS and does not claim DNS-rebinding protection. Zerochan JSON now uses the shared 2 MiB streaming ceiling with a full three-second deadline and cancellation.
+
+These are scoped corrections, not security certification or store approval; acceptance evidence remains separate from this description.
+
 ## Existing safeguards
 
 - Save paths use selected-media and frame/document ownership checks; ambiguous or stale targets are refused in the supported guarded paths.
