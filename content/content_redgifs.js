@@ -1460,8 +1460,8 @@
     if (icon) btn.appendChild(icon);
     else isLabel(btn, 'textContent', 'inline.save', 'Save');
     for (const [k, v] of [['all', 'initial'], ['box-sizing', 'border-box'], ['display', 'flex'], ['align-items', 'center'], ['justify-content', 'center'],
-      ['width', `${INLINE.SIZE}px`], ['height', `${INLINE.SIZE}px`], ['border-radius', '9999px'], ['border', '1px solid rgba(255,255,255,0.55)'],
-      ['background', 'rgba(15,20,25,0.78)'], ['color', '#fff'], ['cursor', 'pointer'], ['padding', '0'],
+      ['width', `${INLINE.SIZE}px`], ['height', `${INLINE.SIZE}px`], ['border-radius', '9999px'], ['border', '1px solid rgba(237,224,252,0.6)'],
+      ['background', 'rgba(24,17,31,0.82)'], ['color', '#fff'], ['cursor', 'pointer'], ['padding', '0'],
       ['font', '600 12px/1 system-ui, -apple-system, Segoe UI, sans-serif']]) btn.style.setProperty(k, v);
     for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick', 'touchstart', 'touchend']) {
       btn.addEventListener(type, (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); });

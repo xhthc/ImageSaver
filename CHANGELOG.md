@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.1 — redesigned interface and violet gradient branding
+
+- Redesign the manager, popup, settings, statistics and diagnostics with grouped navigation and consistent panels across Violet, Blue, Dark and Light themes. Preserve English/Russian localization and existing preferences.
+- Make link-preview settings a responsive two-column grid with help for each platform; preserve explicit Save settings and all existing preview hosts.
+- Align notification/Debug switches with their panels; retain popup wheel/keyboard scrolling and the global finished-record clear action.
+- Refresh the recognizable M/download icon with a violet three-stop gradient and subtle edge; synchronize UI, toolbar theme variants and notification assets.
+- Replace EN/RU README screenshots with actual isolated-browser captures; update current privacy details and prepare neutral Chrome Web Store screenshots and promotional art.
+
+This remains a pre-release. Download providers, privileged boundaries, storage keys, permissions and dependencies are unchanged. Existing provider smoke evidence is retained; independent source review, UI verification and exact-package browser/export checks are recorded for this preview. No store approval, exhaustive live-provider/audio or performance/leak result is claimed.
+
 ## 2.5.0 — version update
 
 - Repackage the accepted 2.0.0.33 runtime as version 2.5.0; extension behavior, permissions, dependencies and stored data are unchanged.

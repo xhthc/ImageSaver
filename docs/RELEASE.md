@@ -35,7 +35,7 @@ Privacy URL: https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md
 
 Support URL: https://github.com/xhthc/MediaLatch/issues
 
-The v2.5.0 preview keeps the Explorer companion, folder-location controls and native messaging permission removed. It includes the reviewed refactor, first-install welcome, theme icons, author folders for x.com/Reddit/Pixiv and selected-media scroll continuity. Saving to a selected directory remains browser-only. Validate the exact committed runtime ZIP, including imported worker modules; no companion archive is produced. Limited user Helium checks and isolated startup/UI/statistics migration checks passed; exhaustive crash/restart, quota, codecs/audio and store approval remain separate gates.
+The v2.5.1 preview keeps the Explorer companion, folder-location controls and native messaging permission removed. It includes the redesigned four-theme interface, compact Embed grid, violet gradient branding, reviewed refactor, first-install welcome, theme icons, author folders for x.com/Reddit/Pixiv and selected-media scroll continuity. Saving to a selected directory remains browser-only. Validate the exact committed runtime ZIP, including imported worker modules; no companion archive is produced. Limited user Helium checks and isolated startup/UI/statistics migration checks passed; exhaustive crash/restart, quota, codecs/audio and store approval remain separate gates.
 
 ## Permission and privacy disclosures
 
@@ -51,7 +51,7 @@ All executed JavaScript and binary-processing libraries are bundled locally. Git
 - Verify representative X, Reddit, RedGIFs, Pawchive and Sankaku image/video/GIF cases, including video audio where declared, reload/restart, missing files and rate-limit behavior. Existing ordinary acceptance does not establish every layout or browser.
 - Test at least Chrome plus the main Helium environment; broader Chromium/Firefox acceptance remains separate.
 - Capture real product screenshots using neutral, permitted media. Do not reuse private logs, account details or mature source-site previews in store imagery.
-- Supply a small promotional image and screenshots. Current [image requirements](https://developer.chrome.com/docs/webstore/images): 128×128 PNG icon; 440×280 small promo; at least one 1280×800 or 640×400 full-bleed screenshot. Runtime icons are provided; listing promo/screenshots still need preparation.
+- Supply a small promotional image and screenshots. Current [image requirements](https://developer.chrome.com/docs/webstore/images): 128×128 PNG icon; 440×280 small promo; at least one 1280×800 or 640×400 full-bleed screenshot. Current v2.5.1 cards, both promos and icon are attached separately to the GitHub preview as a store-materials ZIP; select five screenshots from one language.
 - Complete current dashboard privacy declarations and publisher/contact requirements, then review listing and package before a separately authorized submission.
 
 See the official [preparation guide](https://developer.chrome.com/docs/webstore/prepare). The extension currently checks releases without self-installing them. Store updates will use the store's distribution channel after publication, with their own review/release process.

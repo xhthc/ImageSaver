@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { Bell, Bug, ChartColumn, FolderCog, Download, Link2, PackageCheck } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { BrandMark } from "@/components/app/brand"
@@ -33,6 +31,24 @@ import { getEnv } from "@/lib/env"
 const NO_GUIDE_STATE = { open: false, ready: false }
 const NO_GUIDE = { getState: () => NO_GUIDE_STATE, subscribe: () => () => {} }
 const TAB_ICONS: Record<string, typeof Download> = { history: ChartColumn, downloads: Download, saving: FolderCog, notifications: Bell, embed: Link2, updates: PackageCheck, debug: Bug }
+// The first section of each navigation group (work, preferences, maintenance) is set apart in the vertical list.
+const GROUP_START = new Set(["saving", "updates"])
+const WIDE = "(min-width: 768px)"
+
+/** Whether the page is wide enough for the vertical navigation; without matchMedia the horizontal row is used. */
+function useWide() {
+  const query = getEnv().window?.matchMedia?.(WIDE)
+  const [wide, setWide] = useState(() => !!query?.matches)
+  useEffect(() => {
+    if (!query) return
+    const update = () => setWide(query.matches)
+    query.addEventListener?.("change", update)
+    return () => query.removeEventListener?.("change", update)
+    // the media query is fixed for the page lifetime
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return wide
+}
 
 /**
  * The full extension page. Deep links: popup.html#<section>, popup.html?section=<section>,
@@ -49,6 +65,7 @@ export function FullApp({ settings }: { settings: SettingsController }) {
   const focusId = focusIdFromLocation(env.location)
   const onboarding = useOnboarding()
   const [closed, setClosed] = useState(0)
+  const wide = useWide()
 
   const select = useCallback((name: string) => {
     const next = (SECTIONS as readonly string[]).includes(name) ? name : DEFAULT_SECTION
@@ -89,96 +106,93 @@ export function FullApp({ settings }: { settings: SettingsController }) {
 
   return (
     <TooltipProvider>
-      <div className="mx-auto flex min-h-screen w-full max-w-[880px] flex-col gap-4 px-4 py-5 sm:px-6" data-popup="full">
-        <header className="flex flex-wrap items-center gap-3 border-b pb-4">
-          <BrandMark className="size-11" />
-          <div className="min-w-0 flex-1">
-            <h1 className="text-lg font-bold tracking-tight">MediaLatch</h1>
-            <p className="text-xs text-muted-foreground">{t("app.subtitle")}</p>
-          </div>
-          <div className="flex flex-wrap items-start justify-end gap-3">
-            {theme ? <ThemeSelect theme={theme} /> : null}
-            <LanguageSelect />
+      <div className="flex min-h-screen flex-col" data-popup="full">
+        <header className="border-b bg-card">
+          <div className="mx-auto flex w-full max-w-[1120px] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
+            <BrandMark className="size-9" />
+            <div className="min-w-0 flex-1">
+              <h1 className="text-base leading-[22px] font-semibold tracking-[-0.01em]">MediaLatch</h1>
+              <p className="truncate text-xs text-muted-foreground">{t("app.subtitle")}</p>
+            </div>
+            <div className="flex flex-wrap items-start justify-end gap-x-3 gap-y-2">
+              {theme ? <ThemeSelect theme={theme} /> : null}
+              <LanguageSelect />
+            </div>
           </div>
         </header>
 
-        {onboarding ? (
-          <WelcomeScreen
-            onboarding={onboarding}
-            onClosed={() => setClosed((n) => n + 1)}
-          />
-        ) : null}
-        {welcome && !guide.ready ? <p role="status" className="text-sm text-muted-foreground" data-slot="welcome-loading">{t("onboarding.loading")}</p> : null}
+        <div className="mx-auto flex w-full max-w-[1120px] flex-1 flex-col px-4 py-5 sm:px-6 md:py-7">
+          {onboarding ? (
+            <WelcomeScreen
+              onboarding={onboarding}
+              onClosed={() => setClosed((n) => n + 1)}
+            />
+          ) : null}
+          {welcome && !guide.ready ? <p role="status" className="text-sm text-muted-foreground" data-slot="welcome-loading">{t("onboarding.loading")}</p> : null}
 
-        <div hidden={welcome} className="flex flex-1 flex-col gap-4" data-slot="main">
-        <Tabs value={section} onValueChange={select} className="flex-1 gap-4">
-          <TabsList aria-label={t("app.sections")} className="w-full min-w-0 flex-nowrap justify-start gap-1.5 overflow-x-auto bg-transparent p-1 group-data-[orientation=horizontal]/tabs:h-auto">
-            {SECTIONS.map((name) => {
-              const Icon = TAB_ICONS[name]
-              return (
-                <TabsTrigger
-                  key={name}
-                  value={name}
-                  data-section={name}
-                  onFocus={(event) => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}
-                  className="h-10 flex-none px-2"
-                >
-                  <Icon aria-hidden="true" />
-                  {t(`tab.${name}`)}
-                </TabsTrigger>
-              )
-            })}
-          </TabsList>
+          <div hidden={welcome} className="flex flex-1 flex-col" data-slot="main">
+            <Tabs value={section} onValueChange={select} orientation={wide ? "vertical" : "horizontal"} className="flex-1 gap-5 md:gap-8">
+              <TabsList aria-label={t("app.sections")} className="-m-1 p-1 md:sticky md:top-6 md:m-0 md:w-52 md:shrink-0 md:self-start md:p-0">
+                {SECTIONS.map((name) => {
+                  const Icon = TAB_ICONS[name]
+                  return (
+                    <TabsTrigger
+                      key={name}
+                      value={name}
+                      data-section={name}
+                      onFocus={(event) => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}
+                      className={GROUP_START.has(name) ? "md:mt-4" : undefined}
+                    >
+                      <Icon aria-hidden="true" />
+                      {t(`tab.${name}`)}
+                    </TabsTrigger>
+                  )
+                })}
+              </TabsList>
 
-          <TabsContent value="history" forceMount hidden={section !== "history"} className="space-y-4 data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">{t("tab.history")}</h2>
-            <StatisticsPanel />
-          </TabsContent>
-          <TabsContent value="downloads" forceMount hidden={section !== "downloads"} className="space-y-4 data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">{t("tab.downloads")}</h2>
-            <Card data-slot="recent">
-              <CardContent className="px-3 sm:px-6">
-                <DownloadsPanel full focusId={focusId} visible={section === "downloads" && !welcome} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-          <TabsContent value="saving" forceMount hidden={section !== "saving"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">{t("tab.saving")}</h2>
-            <SavingPanel settings={settings} />
-          </TabsContent>
-          <TabsContent value="notifications" forceMount hidden={section !== "notifications"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">{t("tab.notifications")}</h2>
-            <NotificationsPanel settings={settings} />
-          </TabsContent>
-          <TabsContent value="embed" forceMount hidden={section !== "embed"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">{t("tab.embed")}</h2>
-            <EmbedPanel settings={settings} />
-          </TabsContent>
-          <TabsContent value="updates" forceMount hidden={section !== "updates"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">{t("tab.updates")}</h2>
-            <UpdatesPanel active={section === "updates"} />
-          </TabsContent>
-          <TabsContent value="debug" forceMount hidden={section !== "debug"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-            <h2 className="sr-only">{t("tab.debug")}</h2>
-            <DebugPanel />
-          </TabsContent>
-        </Tabs>
+              <div className="flex min-w-0 flex-1 flex-col gap-6">
+                <TabsContent value="history" forceMount hidden={section !== "history"} className="data-[state=inactive]:hidden" tabIndex={-1}>
+                  <StatisticsPanel />
+                </TabsContent>
+                <TabsContent value="downloads" forceMount hidden={section !== "downloads"} className="data-[state=inactive]:hidden" tabIndex={-1}>
+                  <div data-slot="recent">
+                    <DownloadsPanel full focusId={focusId} visible={section === "downloads" && !welcome} />
+                  </div>
+                </TabsContent>
+                <TabsContent value="saving" forceMount hidden={section !== "saving"} className="data-[state=inactive]:hidden" tabIndex={-1}>
+                  <SavingPanel settings={settings} />
+                </TabsContent>
+                <TabsContent value="notifications" forceMount hidden={section !== "notifications"} className="data-[state=inactive]:hidden" tabIndex={-1}>
+                  <NotificationsPanel settings={settings} />
+                </TabsContent>
+                <TabsContent value="embed" forceMount hidden={section !== "embed"} className="data-[state=inactive]:hidden" tabIndex={-1}>
+                  <EmbedPanel settings={settings} />
+                </TabsContent>
+                <TabsContent value="updates" forceMount hidden={section !== "updates"} className="data-[state=inactive]:hidden" tabIndex={-1}>
+                  <UpdatesPanel active={section === "updates"} />
+                </TabsContent>
+                <TabsContent value="debug" forceMount hidden={section !== "debug"} className="data-[state=inactive]:hidden" tabIndex={-1}>
+                  <DebugPanel />
+                </TabsContent>
 
-        {showSave ? <SaveBar settings={settings} /> : null}
+                {showSave ? <SaveBar settings={settings} /> : null}
 
-        <footer className="space-y-1 border-t pt-3 text-xs text-muted-foreground">
-          <p>
-            <strong className="font-semibold text-foreground">{t("app.howto.label")}</strong> {t("app.howto.text")}{" "}
-            <em>{t("app.howto.menu", { title: I18n.MENU_TITLE })}</em>.
-          </p>
-          <p data-slot="credits">
-            {t("app.credits.label")} <span>shadcn/ui</span>, <span>Radix UI</span> {t("app.credits.and")} <span>Lucide</span>. {t("app.credits.licenses")}{" "}
-            <a href="./THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener noreferrer" className="text-ring underline underline-offset-2 hover:text-foreground">
-              THIRD_PARTY_NOTICES.txt
-            </a>
-            .
-          </p>
-        </footer>
+                <footer className="mt-auto space-y-1 border-t pt-4 text-xs leading-[18px] text-muted-foreground">
+                  <p>
+                    <strong className="font-semibold text-foreground">{t("app.howto.label")}</strong> {t("app.howto.text")}{" "}
+                    <em className="text-foreground not-italic">{t("app.howto.menu", { title: I18n.MENU_TITLE })}</em>.
+                  </p>
+                  <p data-slot="credits">
+                    {t("app.credits.label")} <span>shadcn/ui</span>, <span>Radix UI</span> {t("app.credits.and")} <span>Lucide</span>. {t("app.credits.licenses")}{" "}
+                    <a href="./THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener noreferrer" className="text-ring underline underline-offset-2 hover:text-foreground">
+                      THIRD_PARTY_NOTICES.txt
+                    </a>
+                    .
+                  </p>
+                </footer>
+              </div>
+            </Tabs>
+          </div>
         </div>
       </div>
     </TooltipProvider>

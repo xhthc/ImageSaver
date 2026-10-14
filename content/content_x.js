@@ -1679,7 +1679,7 @@
     const s = btn.style;
     const width = tier === 'wide' ? XI.MULTI_W : (tier === 'compact' && isAll ? XI.COMPACT_W - XI.SIZE - 4 : XI.SIZE);
     const height = tier === 'wide' ? 28 : XI.SIZE;
-    for (const [k, v] of [['all', 'initial'], ['box-sizing', 'border-box'], ['display', 'flex'], ['align-items', 'center'], ['justify-content', 'center'], ['gap', tier === 'wide' ? '6px' : '2px'], ['width', `${width}px`], ['height', `${height}px`], ['border-radius', '9999px'], ['border', '1px solid rgba(255,255,255,0.55)'], ['background', 'rgba(15,20,25,0.78)'], ['color', '#fff'], ['cursor', 'pointer'], ['padding', tier === 'wide' ? '0 10px' : (tier === 'compact' && isAll ? '0 4px' : '0')], ['font', '600 12px/1 system-ui, -apple-system, Segoe UI, sans-serif'], ['white-space', 'nowrap']]) s.setProperty(k, v);
+    for (const [k, v] of [['all', 'initial'], ['box-sizing', 'border-box'], ['display', 'flex'], ['align-items', 'center'], ['justify-content', 'center'], ['gap', tier === 'wide' ? '6px' : '2px'], ['width', `${width}px`], ['height', `${height}px`], ['border-radius', '9999px'], ['border', '1px solid rgba(237,224,252,0.6)'], ['background', 'rgba(24,17,31,0.82)'], ['color', '#fff'], ['cursor', 'pointer'], ['padding', tier === 'wide' ? '0 10px' : (tier === 'compact' && isAll ? '0 4px' : '0')], ['font', '600 12px/1 system-ui, -apple-system, Segoe UI, sans-serif'], ['white-space', 'nowrap']]) s.setProperty(k, v);
   }
 
   function xiMakeButton(onClick, which) {

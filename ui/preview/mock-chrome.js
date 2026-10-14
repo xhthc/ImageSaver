@@ -1,7 +1,7 @@
 // Page-preview mock of the extension APIs the UI uses. NOT part of the extension and never shipped: ui/scripts/preview-server.mjs
 // injects it into popup/quick.html and popup/popup.html for ordinary-page previews (screenshots, layout checks). A page
 // preview is not an extension-popup test: there is no background worker, no real storage and no real notifications.
-// Scenario: ?scenario=mixed|empty|invite|dismissed|error|long|failures|history-off  (default: mixed)
+// Scenario: ?scenario=mixed|active|empty|invite|dismissed|error|long|failures|history-off  (default: mixed)
 (function () {
   var params = new URLSearchParams(location.search);
   var scenario = params.get('scenario') || 'mixed';
@@ -40,6 +40,29 @@
       rec({ state: 'saving', filename: 'in-progress.jpg', filenameKind: 'intended', output: { type: 'unknown' } })
     ];
   }
+  // Every manager state at once (fixture values, not measured transfers): byte progress with and without a total, the preparation
+  // and post-transfer stages, a retained local file, an uncertain export and the terminal states.
+  var activeJobs = null;
+  if (scenario === 'active') {
+    records = [
+      rec({ state: 'complete', filename: 'harbour-at-night-4k.jpg', site: 'pixiv.net' }),
+      rec({ state: 'failed', filename: 'rate-limited-clip.mp4', site: 'reddit.com', output: { type: 'video', ext: '.mp4', evidence: 'filename_hint' }, failure: failure('download', 'http_error', { status: 403, code: 'HTTP_403' }) })
+    ];
+    activeJobs = [
+      { id: 'job-receiving', filename: 'mountain-timelapse-2160p.mp4', state: 'receiving', received: 41943040, total: 104857600, speed: 3145728, error: '' },
+      { id: 'job-unknown', filename: 'live-capture.webm', state: 'receiving', received: 5242880, total: null, speed: 1048576, error: '' },
+      { id: 'job-resolving', op: 'job-resolving', managed: false, filename: '', state: 'resolving', received: 0, total: null, speed: 0, error: '' },
+      { id: 'job-converting', op: 'job-converting', managed: false, filename: 'reddit-hls-video.mp4', state: 'converting', received: 0, total: null, speed: 0, error: '' },
+      { id: 'job-validating', filename: 'artwork-original.png', state: 'validating', received: 3355443, total: 3355443, speed: 0, error: '' },
+      { id: 'job-exporting', filename: 'gallery-07.webp', state: 'exporting', received: 1153434, total: 1153434, speed: 0, error: '' },
+      { id: 'job-queued', filename: 'queued-after-the-others.gif', state: 'queued', received: 0, total: null, speed: 0, error: 'RATE_LIMIT' },
+      { id: records[0].id, filename: records[0].filename, state: 'complete', received: 2621440, total: 2621440, speed: 0, error: '' },
+      { id: records[1].id, filename: records[1].filename, state: 'failed', received: 0, total: null, speed: 0, error: 'HTTP_403' },
+      { id: 'job-retained', filename: 'prepared-but-not-exported.jpg', state: 'failed', received: 2097152, total: 2097152, speed: 0, ready: true, error: 'EXPORT_FAILED' },
+      { id: 'job-uncertain', filename: 'could-not-confirm.mp4', state: 'failed', received: 7340032, total: 7340032, speed: 0, ready: true, error: 'EXPORT_UNCERTAIN' },
+      { id: 'job-cancelled', filename: 'cancelled-by-user.png', state: 'cancelled', received: 0, total: null, speed: 0, error: 'CANCELLED' }
+    ];
+  }
   records.reverse();
   if (scenario === 'long') records.unshift(rec({ filename: 'this-is-an-extremely-long-file-name-that-keeps-going-and-going-for-the-sake-of-the-layout-test-0123456789-0123456789-0123456789.jpg', site: 'a-very-long-subdomain.example-gallery-site.com' }));
 
@@ -50,6 +73,7 @@
   var stats = null;
   function reply(action) {
     if (scenario === 'error') throw new Error('MESSAGING_DOWN');
+    if (activeJobs && (action === 'DOWNLOADS_LIST' || action === 'DOWNLOADS_COMMAND')) return { success: true, paused: false, jobs: activeJobs };
     if (action === 'DOWNLOADS_LIST' || action === 'DOWNLOADS_COMMAND') return {success:true,paused:false,jobs:records.map(function(r){return {id:r.id,filename:r.filename || 'media',state:r.state==='saving'?'receiving':r.state==='interrupted'?'failed':r.state,received:r.output.sizeBytes || 0,total:r.state==='saving'?null:r.output.sizeBytes || null,speed:0,error:r.failure?.code || '',ready:false};})};
     if (action === 'FEEDBACK_LIST' || action === 'FEEDBACK_MARK_SEEN' || action === 'FEEDBACK_CLEAR') {
       if (action === 'FEEDBACK_MARK_SEEN') records.forEach(function (r) { r.seen = true; });

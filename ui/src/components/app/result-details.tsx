@@ -56,7 +56,7 @@ function ReportBox({ record, env }: { record: any; env: DetailsEnv }) {
 
   return (
     <div className="space-y-2" data-slot="report">
-      <Alert data-slot="retry-hint">
+      <Alert data-slot="retry-hint" className="bg-card">
         <AlertDescription className="text-xs">{t("report.retryHint")}</AlertDescription>
       </Alert>
       <p className="text-xs text-muted-foreground">{t("report.privacy")}</p>
@@ -67,7 +67,7 @@ function ReportBox({ record, env }: { record: any; env: DetailsEnv }) {
         rows={2}
         aria-label={t("report.notes")}
         placeholder={t("report.notes")}
-        className="min-h-0 text-xs"
+        className="min-h-0 bg-card text-xs"
         onChange={(e) => setNotes(e.target.value)}
       />
       <Textarea
@@ -76,7 +76,7 @@ function ReportBox({ record, env }: { record: any; env: DetailsEnv }) {
         rows={8}
         value={text}
         aria-label={t("report.preview")}
-        className="min-h-0 font-mono text-[11px] leading-snug"
+        className="min-h-0 bg-card font-mono text-[11px] leading-snug"
       />
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" size="sm" variant="secondary" onClick={copy}>
@@ -156,7 +156,7 @@ export function ResultDetails({
   const summary = summarize(env.FB, record, lang)
   const nameLine = filenameLine(record, lang)
   return (
-    <div className="space-y-3 rounded-lg border bg-background/50 p-3 text-xs" data-slot="result-details">
+    <div className="space-y-3 rounded-lg bg-muted/60 p-3 text-xs leading-[18px]" data-slot="result-details">
       <div className="space-y-1">
         <p className="text-sm font-semibold" data-slot="title">
           {summary.title}
@@ -176,7 +176,7 @@ export function ResultDetails({
         ))}
       </ul>
       {summary.nextStep ? (
-        <p className="rounded-md bg-accent/60 px-2 py-1.5" data-slot="next-step">
+        <p className="border-l-2 border-ring py-0.5 pl-2.5" data-slot="next-step">
           {summary.nextStep}
         </p>
       ) : null}

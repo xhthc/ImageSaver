@@ -70,7 +70,7 @@ const visibility=value=>{hidden=value;w.document.dispatchEvent(new w.Event('visi
   show(n('op-000052'));assert.equal(cards().length,0,'Late successful manager reply preserves an explicit close while opening');
   advance(10000);page.focus();show({...n('op-000010','error'),successEnabled:false});show({...n('op-000011','error'),successEnabled:false});advance(500);
   assert.equal(cards()[0].querySelector('.message').textContent,'Failed: 2','Disabled successes do not imply zero successful saves');
-  storage[0]({uiTheme:{newValue:'light'}},'local');assert.equal(root().host.style.getPropertyValue('--ml-bg'),'#f8fafc');
+  storage[0]({uiTheme:{newValue:'light'}},'local');assert.equal(root().host.style.getPropertyValue('--ml-bg'),'#ffffff');
   cards()[0].querySelector('.close').focus();cards()[0].querySelector('.close').click();assert.equal(w.document.activeElement,page);advance(10000);
   const ru=id=>({...n(id),summaryTitle:'Результаты загрузок',savedLabel:'Сохранено',failedLabel:'Ошибок',actionLabel:'Открыть менеджер',dismissLabel:'Закрыть'});
   show(ru('op-000030'));show(ru('op-000031'));advance(500);assert.equal(cards()[0].querySelector('.title').textContent,'Результаты загрузок');assert.equal(cards()[0].querySelector('.message').textContent,'Сохранено: 2 · Ошибок: 0');cards()[0].querySelector('.close').click();advance(10000);

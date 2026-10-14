@@ -3,14 +3,14 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.0"><img src="https://img.shields.io/badge/pre--release-v2.5.0-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.0"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.1"><img src="https://img.shields.io/badge/pre--release-v2.5.1-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.1"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.0"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.1"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
     <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Chrome Web Store distribution planned; not yet available">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
@@ -19,9 +19,9 @@
 
 MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**, track parallel downloads and choose where files go — including **author folders for x.com, Reddit and Pixiv**.
 
-> **Current pre-release: [v2.5.0](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.0).** First-install welcome, author folders for x.com/Reddit/Pixiv, theme-colored icons and a compact download popup. Pixiv preview saves and selected-media continuity during scrolling are improved. Saving requires no companion software.
+> **Current pre-release: [v2.5.1](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.1).** A redesigned interface with grouped navigation, compact link-preview settings and a refreshed violet gradient icon. Blue, Dark and Light themes and English/Russian localization remain supported. Saving requires no companion software.
 
-The runtime ZIP includes the reviewed worker refactor and current interface. Ordinary downloads and the interface passed the latest user smoke check in Helium; exhaustive media/audio, crash/restart and quota testing remain separate checks.
+The runtime ZIP includes the redesigned interface and previously reviewed download engine. UI checks and isolated Chromium save/settings checks cover this build. Earlier user-reported Helium provider smoke checks apply to the unchanged engine; they do not establish exhaustive new-UI, audio, crash/restart or quota coverage.
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
@@ -32,15 +32,15 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 <table>
   <tr>
     <td width="50%"><img src="docs/assets/welcome.png" alt="Violet welcome screen: three short steps and one Continue button"><br><strong>Start in three steps</strong><br>A fresh install opens a short welcome screen once; Continue opens the Saving settings.</td>
-    <td width="50%"><img src="docs/assets/downloads.png" alt="Download manager on a fresh install, showing its empty state"><br><strong>Follow every download</strong><br>Progress, cancel, retry and plain-language failure explanations with the technical code.</td>
+    <td width="50%"><img src="docs/assets/downloads.png" alt="Redesigned download manager showing three completed public PNG saves"><br><strong>Follow every download</strong><br>Progress, cancel, retry and plain-language failure explanations with the technical code.</td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/assets/settings-saving.png" alt="Violet Saving settings: destination, organization and example path"><br><strong>Choose where files go</strong><br>Destination, optional subfolder, author folders and a live path example.</td>
-    <td width="50%"><img src="docs/assets/settings-links.png" alt="Link previews: one domain selector per platform"><br><strong>Choose how links are shared</strong><br>One selector per platform; service details stay expandable.</td>
+    <td width="50%"><img src="docs/assets/settings-links.png" alt="Link previews: one domain selector per platform"><br><strong>Choose how links are shared</strong><br>A compact grid of four selectors, with help beside each platform.</td>
   </tr>
 </table>
 
-Screenshots from an isolated fresh install of the v2.0.0.33 build (the interface is unchanged in v2.5.0; default settings, no downloads). Violet by default, English/Russian localization and short transitions that respect reduced motion.
+Actual v2.5.1 interface captured in an isolated Chromium profile. Three neutral public PNG files from this repository were saved and their exported bytes verified; folder settings were configured for the demonstration. Violet by default, with English/Russian localization and transitions that respect reduced motion.
 
 ---
 
@@ -57,7 +57,7 @@ A fresh install opens a separate welcome screen with three short steps. **Contin
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.0-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.1-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -76,7 +76,7 @@ The committed `popup/` pages are ready to use. Node/npm are needed only for deve
 
 ## Features
 
-The v2.5.0 runtime ZIP includes the features below. Manual Helium checks cover Pixiv, Zerochan, X, Reddit and embedded RedGIFs, standalone RedGIFs and tested booru boards, plus folders, themes, language and popup scrolling. These checks cover the reported scenarios, not every layout or media format.
+The v2.5.1 runtime ZIP includes the features below. Previous manual Helium checks cover the reported Pixiv, Zerochan, X, Reddit/RedGIFs and booru scenarios. The redesign has separate automated and isolated browser checks; broader everyday testing remains ongoing.
 
 ### Save the selected media
 
@@ -168,8 +168,8 @@ Statuses distinguish implemented features from future work. They describe direct
 | Kemono | Declared same-post originals and scoped feed behavior | Deferred until the site is usable |
 | Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
 | Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Planned; security/privacy gates first |
-| Settings and documentation | Compact settings groups, visual quick start and EN/RU README | Included; reported manual interface checks passed |
-| First-run setup | One-time three-step welcome screen with Continue to Saving; settings save states; readable download failures and list retry | Included; isolated fresh-install and reported manual checks passed |
+| Settings and documentation | Compact settings groups, visual quick start and EN/RU README | Included; earlier manual interface check passed; redesigned UI checked separately in an isolated browser |
+| First-run setup | One-time three-step welcome screen with Continue to Saving; settings save states; readable download failures and list retry | Included; isolated fresh-install checks passed; user smoke evidence concerns the earlier interface |
 
 The Telegram/VK roadmap concerns **publishing**.
 

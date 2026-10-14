@@ -6,111 +6,131 @@
 /* The saved theme sets the dark class; the operating-system preference does not override it. */
 @custom-variant dark (&:is(.dark *));
 
-/* Blue retains the slate identity (#0f172a surface, blue accent). The shadcn tokens below are the standard
-   semantic variables; contrast of the pairs used for text is >= 4.5:1 (checked by test_ux_ui.js, section 30). */
+/* Design tokens (UI-REDESIGN-01). Each theme fills the same roles of a 12-step scale (Radix Colors logic, own values):
+   background 1, card 2, muted/secondary 3 (control fill), accent 4 (hover), selected 5, border 6, input 7 (control edge,
+   >= 3:1), ring 8 (focus, links, progress), primary 9 (solid action), muted-foreground 11, foreground 12. The block below is
+   Blue (slate with a blue accent); text pairs are >= 7:1 / 4.5:1 (checked by test_ux_ui.js, section 30). */
 :root {
   color-scheme: dark;
   --motion-fast: 120ms;
   --motion-normal: 180ms;
   --motion-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-exit: cubic-bezier(0.4, 0, 1, 1);
-  --radius: 0.625rem;
-  --background: #0f172a;
+  --radius: 0.5rem;
+  --background: #0d1424;
   --foreground: #f1f5f9;
-  --card: #131c31;
+  --card: #121b2e;
   --card-foreground: #f1f5f9;
-  --popover: #1b2740;
+  --popover: #19243a;
   --popover-foreground: #f1f5f9;
   --primary: #2563eb;
   --primary-foreground: #ffffff;
-  --secondary: #1e293b;
+  --secondary: #1b2638;
   --secondary-foreground: #e2e8f0;
-  --muted: #1e293b;
-  --muted-foreground: #94a3b8;
-  --accent: #243349;
+  --muted: #1b2638;
+  --muted-foreground: #9eabbf;
+  --accent: #223047;
   --accent-foreground: #f1f5f9;
+  --selected: #283a59;
   --destructive: #dc2626;
   --danger: #f87171;
   --success: #34d399;
   --warning: #fbbf24;
-  --border: #334155;
-  --input: #334155;
+  --border: #2f3d55;
+  --input: #66768e;
   --ring: #60a5fa;
-  --brand-start: #a855f7;
-  --brand-end: #7e22ce;
+  --float-shadow: 0 12px 32px rgb(0 0 0 / 0.45), 0 2px 6px rgb(0 0 0 / 0.3);
+  --brand-start: #aa4be6;
+  --brand-mid: #793ad6;
+  --brand-end: #462196;
   --brand-foreground: #ffffff;
 }
 
 :root[data-theme="blue"] {
   --brand-start: #3b82f6;
+  --brand-mid: #2d64df;
   --brand-end: #1d4ed8;
 }
 
+/* Graphite: neutral surfaces and inverse (light) primary buttons; focus and links stay a calm blue. */
 :root[data-theme="dark"] {
   --brand-start: #52525b;
+  --brand-mid: #3b3b44;
   --brand-end: #27272a;
-  --background: #111113;
+  --background: #101012;
   --foreground: #f4f4f5;
-  --card: #1b1b1f;
+  --card: #18181b;
   --card-foreground: #f4f4f5;
-  --popover: #25252b;
+  --popover: #222226;
   --popover-foreground: #f4f4f5;
-  --secondary: #27272a;
+  --primary: #ececef;
+  --primary-foreground: #18181b;
+  --secondary: #232327;
   --secondary-foreground: #e4e4e7;
-  --muted: #27272a;
-  --muted-foreground: #a1a1aa;
-  --accent: #303036;
+  --muted: #232327;
+  --muted-foreground: #a6a6b0;
+  --accent: #2c2c31;
   --accent-foreground: #f4f4f5;
-  --border: #414149;
-  --input: #414149;
+  --selected: #37373d;
+  --success: #4ade80;
+  --warning: #facc15;
+  --border: #38383e;
+  --input: #74747d;
   --ring: #93c5fd;
 }
 
+/* Paper and ink: a light grey page, white panels and dark ink buttons; blue marks focus and links. */
 :root[data-theme="light"] {
   --brand-start: #e2e8f0;
+  --brand-mid: #d6deea;
   --brand-end: #cbd5e1;
   --brand-foreground: #172033;
   color-scheme: light;
-  --background: #ffffff;
-  --foreground: #172033;
-  --card: #f8fafc;
-  --card-foreground: #172033;
+  --background: #f4f5f7;
+  --foreground: #141a26;
+  --card: #ffffff;
+  --card-foreground: #141a26;
   --popover: #ffffff;
-  --popover-foreground: #172033;
-  --primary: #1d4ed8;
-  --secondary: #e8edf3;
-  --secondary-foreground: #172033;
-  --muted: #e8edf3;
-  --muted-foreground: #475569;
-  --accent: #e1e8f0;
-  --accent-foreground: #172033;
-  --danger: #b91c1c;
-  --success: #047857;
-  --warning: #854d0e;
-  --border: #b1bac7;
-  --input: #b1bac7;
-  --ring: #1d4ed8;
+  --popover-foreground: #141a26;
+  --primary: #1f2a3d;
+  --secondary: #eceef2;
+  --secondary-foreground: #141a26;
+  --muted: #eceef2;
+  --muted-foreground: #4e5869;
+  --accent: #e5e8ee;
+  --accent-foreground: #141a26;
+  --selected: #dbe1ea;
+  --danger: #b42318;
+  --success: #067647;
+  --warning: #8a5300;
+  --border: #cfd5de;
+  --input: #848ea0;
+  --ring: #2954cc;
+  --float-shadow: 0 12px 32px rgb(20 26 38 / 0.14), 0 2px 6px rgb(20 26 38 / 0.08);
 }
 
-/* WebShift-inspired palette; semantic colors remain readable rather than copying translucent site text. */
+/* MediaLatch Violet (default): plum near-black surfaces, one restrained purple for actions, lilac focus and progress. */
 :root[data-theme="violet"] {
-  --background: #141019;
-  --foreground: #faf7ff;
-  --card: #19131f;
-  --card-foreground: #faf7ff;
-  --popover: #251c30;
-  --popover-foreground: #faf7ff;
-  --primary: #faf7ff;
-  --primary-foreground: #141019;
-  --secondary: #2a2035;
-  --secondary-foreground: #eee5f7;
-  --muted: #2a2035;
-  --muted-foreground: #bfb1cf;
-  --accent: #342342;
-  --accent-foreground: #faf7ff;
-  --border: #44334f;
-  --input: #867194;
-  --ring: #c084fc;
+  --background: #130e18;
+  --foreground: #f7f2fc;
+  --card: #1a1320;
+  --card-foreground: #f7f2fc;
+  --popover: #231a2b;
+  --popover-foreground: #f7f2fc;
+  --primary: #8b3fd9;
+  --primary-foreground: #ffffff;
+  --secondary: #281d31;
+  --secondary-foreground: #ece3f5;
+  --muted: #281d31;
+  --muted-foreground: #bcaccb;
+  --accent: #31233c;
+  --accent-foreground: #f7f2fc;
+  --selected: #3c2a4a;
+  --danger: #fb7185;
+  --success: #4ade80;
+  --border: #3e2e4b;
+  --input: #7d6790;
+  --ring: #c58cfc;
 }
 
 @theme inline {
@@ -128,6 +148,7 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-selected: var(--selected);
   --color-destructive: var(--destructive);
   --color-danger: var(--danger);
   --color-success: var(--success);
@@ -135,14 +156,17 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --shadow-float: var(--float-shadow);
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* Type ramp (Fluent 2 sizes, Geist label/copy split): 12/16 caption, 13/18 compact rows, 14/20 body, 16/22 section title,
+   20/26 page title. Numbers that change (bytes, speed, times, counts) are tabular; paths and codes are mono. */
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -154,6 +178,9 @@
     @apply bg-background font-sans text-sm text-foreground antialiased;
     margin: 0;
   }
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
   button,
   [role="tab"] {
     cursor: pointer;
@@ -161,65 +188,70 @@
   button:disabled {
     cursor: default;
   }
-  /* Keyboard focus is always visible; the ring colour is the accent. */
+  /* Keyboard focus is always visible; the ring colour is the theme's focus step. */
   :focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
+  ::selection {
+    background: color-mix(in srgb, var(--ring) 35%, transparent);
+  }
 }
 
-/* A compact application interpretation of the reference: framed tabs, calm cards and a soft header glow. */
-[data-popup] > header {
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: radial-gradient(ellipse at 15% 0%, color-mix(in srgb, var(--ring) 12%, transparent), transparent 70%), var(--card);
-}
-[data-popup="full"] [data-slot="tabs-trigger"] {
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  background: var(--card);
-  box-shadow: none;
-}
-[data-popup="full"] [data-slot="tabs-trigger"][data-state="active"] {
-  background: var(--primary);
-  color: var(--primary-foreground);
-  border-color: var(--primary);
-}
-[data-popup="full"] [data-slot="tabs-trigger"]::after {
-  display: none;
-}
-[data-slot="card"], [data-slot="recent"], [data-slot="saving"], [data-slot="stats"], [data-slot="debug"] {
-  border-radius: 20px;
-  box-shadow: none;
-}
-/* Keep native wheel/keyboard scrolling without reserving space for a visible rail in the compact popup. */
-#quickMain {
+/* Hidden rails, native wheel and keyboard scrolling: the compact popup list and the horizontal section row. */
+#quickMain, [data-slot="tabs-list"] {
   scrollbar-width: none;
 }
-#quickMain::-webkit-scrollbar {
+#quickMain::-webkit-scrollbar, [data-slot="tabs-list"]::-webkit-scrollbar {
   display: none;
 }
-[data-popup="quick"] > header {
-  padding: 12px;
-  border-radius: 16px;
+
+/* Byte progress. Determinate only while bytes are received with a known total (the value attribute); every other active stage
+   is indeterminate, so a full bar never stands for a confirmed save. */
+progress {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  height: 6px;
+  border: 0;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: var(--muted);
+  color: var(--ring);
 }
-[data-popup] > header h1 {
-  letter-spacing: -0.03em;
+progress::-webkit-progress-bar {
+  background: var(--muted);
+  border-radius: 9999px;
 }
-[data-slot="card-title"] {
-  line-height: 1.4;
+progress::-webkit-progress-value {
+  background: var(--ring);
+  border-radius: 9999px;
+  transition: width var(--motion-normal) var(--motion-enter);
 }
-[data-slot="select-trigger"], [data-slot="button"] {
-  border-radius: 10px;
+progress::-moz-progress-bar {
+  background: var(--ring);
+  border-radius: 9999px;
 }
-:root[data-theme="violet"] progress {
-  accent-color: var(--ring);
+progress:indeterminate {
+  background: linear-gradient(90deg, transparent, var(--ring), transparent) var(--muted) no-repeat;
+  background-size: 40% 100%;
+  animation: medialatch-indeterminate 1.4s linear infinite;
+}
+progress:indeterminate::-webkit-progress-bar {
+  background: transparent;
+}
+progress:indeterminate::-moz-progress-bar {
+  background: transparent;
+}
+@keyframes medialatch-indeterminate {
+  from { background-position: -70% 0; }
+  to { background-position: 170% 0; }
 }
 
 /* Animate presentation only: no delayed actions, hidden controls or ownership tied to a view. */
 @keyframes medialatch-enter {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes medialatch-expand {
@@ -272,12 +304,8 @@
 [data-slot="button"]:active:not(:disabled) {
   transform: translateY(1px);
 }
-body, [data-popup] > header, [data-slot="card"], [data-slot="saving"], [data-slot="recent"], [data-slot="embed"], [data-slot="stats"], [data-slot="debug"] {
+body, [data-slot="panel"], [data-slot="card"], [data-slot="result-item"] {
   transition: background-color var(--motion-normal), color var(--motion-normal), border-color var(--motion-normal);
-}
-[data-popup="full"] [data-slot="tabs-trigger"]:hover:not([data-state="active"]) {
-  background: var(--accent);
-  color: var(--foreground);
 }
 
 /* Reduced motion: no animation or transition survives the user's preference. */
@@ -294,5 +322,9 @@ body, [data-popup] > header, [data-slot="card"], [data-slot="saving"], [data-slo
   }
   [data-slot="button"]:active:not(:disabled) {
     transform: none;
+  }
+  /* A still indeterminate bar: even stripes over the whole track, never a block that could read as partial progress. */
+  progress:indeterminate {
+    background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--ring) 55%, transparent) 0 6px, transparent 6px 12px) var(--muted);
   }
 }

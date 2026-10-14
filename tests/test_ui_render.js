@@ -236,6 +236,12 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const preparation=await page('quick',{session:[],history:[],local:{},jobs:[{id:'op-preparation',managed:false,filename:'',state:'converting',received:0,total:null}]});
     assert(preparation.text().includes('Обработка медиа') && preparation.text().includes('Выбранное медиа') && preparation.text().includes('после подготовки'),'manager-render-8: processing is visible without invented byte progress or controls');
     assert(!preparation.q('button[aria-label="Отменить загрузку"]') && !preparation.q('progress').hasAttribute('value'),'manager-render-9: preparation does not promise transport cancellation');await preparation.unmount();
+    {
+      const stages=await page('quick',{session:[],history:[],local:{},jobs:[{id:'job-check',filename:'a.png',state:'validating',received:2048,total:2048},{id:'job-export',filename:'b.png',state:'exporting',received:2048,total:2048},{id:'job-wait',filename:'c.png',state:'queued',received:0,total:null},{id:'job-done',filename:'d.png',state:'complete',received:2048,total:2048}]});
+      const bar=(id)=>stages.q(`[data-job="${id}"] progress`);
+      assert(bar('job-check') && !bar('job-check').hasAttribute('value') && bar('job-export') && !bar('job-export').hasAttribute('value') && !bar('job-wait') && !bar('job-done'),'manager-render-9b: received bytes never draw a full bar before the save is confirmed; queued and finished jobs have no bar');
+      await stages.unmount();
+    }
     for(const lang of ['en','ru'])for(const kind of ['quick','full']) {
       const jobs=[{id:'browser-saved',filename:'photo.png',state:'complete',location:'browser'},{id:'directory-saved',filename:'clip.mp4',state:'complete',location:'directory'}];
       const state={session:[],history:[],jobs,local:{uiLanguage:lang,saveDirectoryId:'directory-saved'}};
@@ -481,12 +487,15 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const ids = ['xShareHostSelect', 'igShareHostSelect', 'ttShareHostSelect', 'youtubeShareHostSelect'];
     assert(ids.every((id) => { const t = p.q(`#${id}`); return t && t.getAttribute('role') === 'combobox' && p.q(`label[for="${id}"]`); }), 'R7q: the four share-host selects are labelled comboboxes');
     assert(ids.map((id) => p.q(`#${id}`).textContent).join('|') === 'fixupx.com|oginstagram.com|tnktok.com|koutube.com', 'R7r: missing preferences select the four preview defaults');
-    const help = p.q('[data-slot="embed"] [data-slot="collapsible-trigger"]');
-    assert(/Копировать ссылку/.test(p.q('[data-slot="embed"]').textContent) && help.getAttribute('aria-expanded') === 'false' && !/сторонние сервисы/.test(p.q('[data-slot="embed"]').textContent) && p.q('#settingsSaveBar'), 'R7s: concise description and explicit save remain; provider details start collapsed');
-    await p.click(help);
-    assert(help.getAttribute('aria-expanded') === 'true' && /сторонние сервисы/.test(p.q('[data-slot="embed"]').textContent) && /не скачивание MP4/.test(p.q('[data-slot="embed"]').textContent), 'R7s1: disclosure retains third-party and direct-embed explanations');
-    await p.click(help);
-    assert(help.getAttribute('aria-expanded') === 'false', 'R7s2: provider details can be collapsed again');
+    const helps = p.qa('[data-slot="embed"] [data-slot="collapsible-trigger"]');
+    assert(helps.length === 4 && helps.every((h, i) => h.getAttribute('aria-expanded') === 'false' && h.getAttribute('aria-label').includes(p.q('label[for="' + ids[i] + '"]').textContent)) && /Копировать ссылку/.test(p.q('[data-slot="embed"]').textContent) && /сторонние сервисы/.test(p.q('[data-slot="embed"]').textContent) && p.q('#settingsSaveBar'), 'R7s: each platform has labelled collapsed help; third-party/scope note and explicit save remain visible');
+    await p.click(helps[0]);
+    assert(helps[0].getAttribute('aria-expanded') === 'true' && p.q('#xShareHostSelectHint').textContent.includes('cunnyx.com') && !p.q('#ttShareHostSelectHint') && p.q('#xShareHostSelect').getAttribute('aria-describedby') === 'xShareHostSelectHint', 'R7s1: X help explains only its services and describes the associated select');
+    await p.click(helps[2]);
+    assert(helps[0].getAttribute('aria-expanded') === 'false' && helps[2].getAttribute('aria-expanded') === 'true' && !p.q('#xShareHostSelectHint') && /не скачивание MP4/.test(p.q('#ttShareHostSelectHint').textContent), 'R7s2: opening TikTok closes other help and retains its direct-embed explanation');
+    await p.click(helps[2]);
+    assert(helps.every(h => h.getAttribute('aria-expanded') === 'false') && !p.q('#ttShareHostSelectHint') && !p.q('#xShareHostSelect').hasAttribute('aria-describedby'), 'R7s3: per-platform details close cleanly without a dangling description');
+    const beforeEmbedChange = p.calls.localSets.length;
     await p.key(p.q('#xShareHostSelect'), 'Enter');
     await p.settle(6);
     const options = p.qa('[role="option"]');
@@ -494,6 +503,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p.key(options[1], 'Enter');
     await p.settle(6);
     assert(p.q('#xShareHostSelect').textContent === 'x.com', 'R7u: the original is an explicit selectable option');
+    assert(p.calls.localSets.length === beforeEmbedChange && p.q('#settingsSaveBar').getAttribute('data-state') === 'dirty', 'R7u1: selecting a service stays a draft until explicit Save');
     state.failSet = false;
     await p.click(p.q('#saveButton'));
     assert(p.calls.localSets[p.calls.localSets.length - 1].xShareHost === 'x.com' && p.calls.localSets[p.calls.localSets.length - 1].igShareHost === 'oginstagram.com', 'R7v: original choice saves without changing other preview defaults');

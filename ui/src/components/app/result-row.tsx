@@ -21,7 +21,7 @@ import { ResultDetails, type DetailsEnv } from "@/components/app/result-details"
 
 /** The state of a result as an icon: colour is never the only signal (the label is in the row text and aria-label). */
 export function StateIcon({ state, className }: { state: string; className?: string }) {
-  const common = cn("size-[18px] shrink-0", className)
+  const common = cn("size-4 shrink-0", className)
   if (state === "complete") return <CheckCircle2 className={cn(common, "text-success")} aria-hidden="true" />
   if (state === "failed") return <XCircle className={cn(common, "text-danger")} aria-hidden="true" />
   if (state === "interrupted") return <TriangleAlert className={cn(common, "text-warning")} aria-hidden="true" />
@@ -82,26 +82,27 @@ export function ResultRow({
       data-state-kind={record.state}
       data-unread={unread ? "true" : "false"}
       className={cn(
-        "overflow-hidden rounded-lg border bg-card transition-colors",
-        unread && "border-l-4 border-l-destructive",
+        "overflow-hidden rounded-xl border bg-card transition-colors",
+        record.state === "failed" && "border-danger/35",
+        unread && "border-l-[3px] border-l-danger",
       )}
     >
       <Collapsible open={open} onOpenChange={setOpen}>
-        <div className="flex items-center">
+        <div className="flex items-center gap-1 pr-2">
         <Tooltip>
           <TooltipTrigger asChild>
             <CollapsibleTrigger
-              className="group flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-3 py-2 text-left focus-visible:-outline-offset-2"
+              className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl py-3 pl-3 text-left hover:bg-accent/50 focus-visible:-outline-offset-2"
               aria-label={`${summary.title}: ${full}`}
             >
-              <StateIcon state={record.state} />
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted" aria-hidden="true"><StateIcon state={record.state} /></span>
               <span className="min-w-0 flex-1">
                 {parts.name ? (
                   <>
-                    <span className="block truncate text-[13px] font-medium" data-slot="name">
+                    <span className="block truncate text-[13px] leading-[18px] font-medium" data-slot="name">
                       {parts.name}
                     </span>
-                    <span className="line-clamp-2 text-xs leading-snug text-muted-foreground" data-slot="meta">
+                    <span className="line-clamp-2 text-xs leading-4 text-muted-foreground" data-slot="meta">
                       {parts.meta}
                     </span>
                   </>
@@ -112,11 +113,11 @@ export function ResultRow({
                 )}
               </span>
               {unread ? (
-                <Badge variant="destructive" className="shrink-0 px-1.5 py-0 text-[10px]">
+                <Badge variant="outline" className="shrink-0 border-danger/50 bg-danger/10 px-1.5 py-0 text-[11px] text-danger">
                   {t("row.new")}
                 </Badge>
               ) : null}
-              <span className="shrink-0 text-xs tabular-nums text-muted-foreground" data-slot="time">
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-slot="time">
                 {time}
               </span>
               <ChevronDown
@@ -133,7 +134,7 @@ export function ResultRow({
         </div>
         {children}
         <CollapsibleContent>
-          <div className="px-3 pb-3"><ResultDetails record={record} env={env} showPost={showPost} onOpenFull={onOpenFull} /></div>
+          <div className="px-3 pb-3 sm:pl-14"><ResultDetails record={record} env={env} showPost={showPost} onOpenFull={onOpenFull} /></div>
         </CollapsibleContent>
       </Collapsible>
     </li>

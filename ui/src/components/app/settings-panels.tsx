@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react"
-import { CheckCircle2, ChevronDown, CircleDot, FolderOpen, LoaderCircle, RotateCcw, Save, TriangleAlert } from "lucide-react"
+import { ArrowUpCircle, CheckCircle2, ChevronDown, CircleDot, CircleHelp, ExternalLink, Folder, FolderOpen, LoaderCircle, PackageCheck, RotateCcw, Save, TriangleAlert } from "lucide-react"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
@@ -11,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { Panel, SectionHeader, SettingRow } from "@/components/app/section"
 import { createSettings } from "@/core/settings.js"
 import { createUpdates, isNewer, RELEASES_URL } from "@/core/updates.js"
 import { useI18n } from "@/hooks/use-i18n"
@@ -23,7 +23,7 @@ export type SettingsController = ReturnType<typeof createSettings>
 
 function Hint({ children, secondary = false, id }: { children: React.ReactNode; secondary?: boolean; id?: string }) {
   return (
-    <p id={id} className={cn("text-xs leading-relaxed", secondary ? "text-muted-foreground/90" : "text-muted-foreground")}>
+    <p id={id} className={cn("text-xs leading-[18px] text-muted-foreground", secondary && "max-w-[72ch]")}>
       {children}
     </p>
   )
@@ -60,54 +60,56 @@ function LoadState({ settings, s }: { settings: SettingsController; s: any }) {
   return <p role="status" className="text-sm text-muted-foreground" data-slot="settings-loading">{t("settings.loading")}</p>
 }
 
-/** "Saving": subfolder and folder organization. Edited here, written by the explicit save action. */
+/** "Saving": destination, subfolder and folder organization. Edited here, written by the explicit save action. */
 export function SavingPanel({ settings }: { settings: SettingsController }) {
   const s: any = useStore(settings.store)
   const { t, msg, lang } = useI18n()
   const preview = settings.preview(lang)
+  const destination = s.saveDirectoryId ? s.directoryName || t('saving.selectedFolder') : t('saving.browserFolder')
   return (
-    <Card data-slot="saving">
-      <CardHeader>
-        <CardTitle className="text-base">
-          {t("tab.saving")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <LoadState settings={settings} s={s} />
-        <section aria-labelledby="destinationLabel" className="space-y-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0 flex-1 basis-48 space-y-1.5">
-              <Label id="destinationLabel">{t('saving.baseFolder')}</Label>
-              <p className="text-sm text-muted-foreground wrap-anywhere">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t('saving.browserFolder')}</p>
+    <section data-slot="saving" className="space-y-4">
+      <SectionHeader title={t("tab.saving")} description={t("section.saving")} />
+      <LoadState settings={settings} s={s} />
+      <Panel>
+        <section aria-labelledby="destinationLabel" className="space-y-3 px-4 py-4 sm:px-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-1 basis-56 items-center gap-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-ring" aria-hidden="true"><Folder className="size-4" /></span>
+              <div className="min-w-0 space-y-0.5">
+                <Label id="destinationLabel" className="text-xs font-normal text-muted-foreground">{t('saving.baseFolder')}</Label>
+                <p className="text-sm font-medium wrap-anywhere">{destination}</p>
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" disabled={!s.loaded || s.saving || s.picking} onClick={()=>void settings.pickDirectory()}><FolderOpen/>{t('saving.chooseFolder')}</Button>
               {s.saveDirectoryId?<Button type="button" variant="ghost" disabled={s.saving || s.picking} onClick={()=>settings.resetDirectory()}>{t('saving.useBrowserFolder')}</Button>:null}
+              <Button type="button" variant="outline" disabled={!s.loaded || s.saving || s.picking} onClick={()=>void settings.pickDirectory()}><FolderOpen/>{t('saving.chooseFolder')}</Button>
             </div>
           </div>
           <Hint>{t('saving.baseFolderHint')}</Hint>
           {s.directoryError?<Alert variant="destructive"><AlertDescription>{msg(s.directoryError)}</AlertDescription></Alert>:null}
-          <div className="space-y-1.5">
-            <Label htmlFor="subfolderInput">{t("saving.folderLabel")}</Label>
-            <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background/40 shadow-xs focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40">
-              <span className="flex max-w-[40%] items-center border-r bg-muted px-2.5 text-xs text-muted-foreground"><span className="truncate">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t("saving.downloads")}</span> /</span>
-              <Input
-                id="subfolderInput"
-                type="text"
-                value={s.subfolder}
-                placeholder="SavedImages"
-                spellCheck={false}
-                disabled={!s.loaded}
-                aria-describedby="folderPreviewHint"
-                className="min-w-0 flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
-                onChange={(e) => settings.setField("subfolder", e.target.value)}
-              />
-            </div>
-            <Hint>{t("saving.folderHint")}</Hint>
-          </div>
         </section>
+        <div className="space-y-2 px-4 py-4 sm:px-5">
+          <Label htmlFor="subfolderInput">{t("saving.folderLabel")}</Label>
+          <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-input focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40 hover:border-ring/60">
+            <span className="flex max-w-[45%] items-center gap-1 border-r bg-muted px-2.5 text-xs text-muted-foreground"><span className="truncate">{s.saveDirectoryId?s.directoryName || t('saving.selectedFolder'):t("saving.downloads")}</span>/</span>
+            <Input
+              id="subfolderInput"
+              type="text"
+              value={s.subfolder}
+              placeholder="SavedImages"
+              spellCheck={false}
+              disabled={!s.loaded}
+              aria-describedby="folderPreviewHint"
+              className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+              onChange={(e) => settings.setField("subfolder", e.target.value)}
+            />
+          </div>
+          <Hint>{t("saving.folderHint")}</Hint>
+        </div>
+      </Panel>
 
-        <section aria-labelledby="folderModeLabel" className="space-y-3 border-t pt-5">
+      <Panel>
+        <section aria-labelledby="folderModeLabel" className="space-y-3 px-4 py-4 sm:px-5">
           <Label id="folderModeLabel">{t("saving.modeLabel")}</Label>
           <RadioGroup
             aria-labelledby="folderModeLabel"
@@ -116,35 +118,33 @@ export function SavingPanel({ settings }: { settings: SettingsController }) {
             disabled={!s.loaded}
             className="grid gap-2 sm:grid-cols-2"
           >
-            <div className="flex items-center gap-2.5 rounded-lg border bg-background/40 px-3 has-[[data-state=checked]]:border-ring">
+            <div className="flex items-center gap-3 rounded-lg border px-3 hover:bg-accent has-[[data-state=checked]]:border-ring has-[[data-state=checked]]:bg-selected">
               <RadioGroupItem value="single" id="folderModeSingle" />
               <Label htmlFor="folderModeSingle" className="min-h-11 flex-1 cursor-pointer py-2 font-normal">{t("saving.modeSingle")}</Label>
             </div>
-            <div className="flex items-center gap-2.5 rounded-lg border bg-background/40 px-3 has-[[data-state=checked]]:border-ring">
+            <div className="flex items-center gap-3 rounded-lg border px-3 hover:bg-accent has-[[data-state=checked]]:border-ring has-[[data-state=checked]]:bg-selected">
               <RadioGroupItem value="by_site_and_type" id="folderModeBySiteType" />
               <Label htmlFor="folderModeBySiteType" className="min-h-11 flex-1 cursor-pointer py-2 font-normal">{t("saving.modeBySite")}</Label>
             </div>
           </RadioGroup>
           <Hint secondary>{t("saving.modeHint")}</Hint>
-
-          <AuthorFolders settings={settings} s={s} />
         </section>
+        <AuthorFolders settings={settings} s={s} />
+      </Panel>
 
-        <div className="rounded-lg border bg-muted/40 p-3">
-          <Hint id="folderPreviewHint">
-            {t("saving.example")}{" "}
-            <span
-              id="folderPreviewPath"
-              data-error={preview.error ? "true" : "false"}
-              className={cn("mt-1.5 block font-mono text-xs break-all", preview.error ? "text-danger" : "text-foreground")}
-            >
-              {preview.text}
-            </span>
-          </Hint>
-        </div>
-
-      </CardContent>
-    </Card>
+      <div className="rounded-xl border border-dashed bg-muted/50 px-4 py-3 sm:px-5">
+        <Hint id="folderPreviewHint">
+          {t("saving.example")}{" "}
+          <span
+            id="folderPreviewPath"
+            data-error={preview.error ? "true" : "false"}
+            className={cn("mt-1 block font-mono text-[13px] leading-5 break-all", preview.error ? "text-danger" : "text-foreground")}
+          >
+            {preview.text}
+          </span>
+        </Hint>
+      </div>
+    </section>
   )
 }
 
@@ -159,7 +159,7 @@ function AuthorFolders({ settings, s }: { settings: SettingsController; s: any }
   const { t } = useI18n()
   const chosen = AUTHOR_SERVICES.filter(([key]) => s[key] === true).map(([, name]) => name)
   return (
-    <div className="grid items-center gap-2 border-t pt-3 sm:grid-cols-[1fr_18rem]">
+    <div className="grid items-center gap-x-6 gap-y-2 px-4 py-4 sm:px-5 md:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)]">
       <div className="space-y-1.5">
         <Label id="authorFoldersLabel" htmlFor="authorFoldersTrigger">{t("saving.authorFolders")}</Label>
         <Hint id="authorFoldersHint">{t("saving.authorFoldersHint")}</Hint>
@@ -171,7 +171,7 @@ function AuthorFolders({ settings, s }: { settings: SettingsController; s: any }
             type="button"
             aria-labelledby="authorFoldersLabel authorFoldersSummary"
             aria-describedby="authorFoldersHint"
-            className="flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30 dark:hover:bg-input/50"
+            className="flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm transition-[color,box-shadow] outline-none hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span id="authorFoldersSummary" className={cn("truncate", !chosen.length && "text-muted-foreground")}>{chosen.length ? chosen.join(", ") : t("saving.authorFoldersNone")}</span>
             <ChevronDown className="size-4 shrink-0 opacity-50" aria-hidden="true" />
@@ -201,31 +201,31 @@ export function NotificationsPanel({ settings }: { settings: SettingsController 
   const s: any = useStore(settings.store)
   const { t, msg } = useI18n()
   return (
-    <Card data-slot="notifications">
-      <CardHeader>
-        <CardTitle className="text-base">{t("tab.notifications")}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex items-start gap-3 rounded-lg border bg-background/40 p-3">
+    <section data-slot="notifications" className="space-y-4">
+      <SectionHeader title={t("tab.notifications")} description={t("section.notifications")} />
+      <Panel>
+        <SettingRow
+          label={<Label htmlFor="notifySuccessSectionSwitch" className="cursor-pointer leading-5">{t("notify.switch")}</Label>}
+          hint={<Hint>{t("notify.hint")}</Hint>}
+          className="md:grid-cols-[minmax(0,1fr)_auto]"
+        >
           <Switch
             id="notifySuccessSectionSwitch"
             checked={s.notify.checked}
             onCheckedChange={(v) => { void settings.setNotifySuccess(v) }}
-            className="mt-0.5"
           />
-          <Label htmlFor="notifySuccessSectionSwitch" className="cursor-pointer text-sm leading-snug font-normal">
-            {t("notify.switch")}
-          </Label>
+        </SettingRow>
+        <div className="flex gap-3 px-4 py-3.5 sm:px-5">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
+          <Hint secondary>{t("notify.hintErrors")}</Hint>
         </div>
-        <Hint>{t("notify.hint")}</Hint>
-        <Hint secondary>{t("notify.hintErrors")}</Hint>
-        {s.notify.error ? (
-          <Alert variant="destructive" role="alert">
-            <AlertDescription>{msg(s.notify.error)}</AlertDescription>
-          </Alert>
-        ) : null}
-      </CardContent>
-    </Card>
+      </Panel>
+      {s.notify.error ? (
+        <Alert variant="destructive" role="alert">
+          <AlertDescription>{msg(s.notify.error)}</AlertDescription>
+        </Alert>
+      ) : null}
+    </section>
   )
 }
 
@@ -237,15 +237,36 @@ export function UpdatesPanel({ active }: { active: boolean }) {
   useEffect(() => { if (active) void updates.check() }, [active, updates])
   useEffect(() => () => updates.dispose(), [updates])
   const newer = s.release && isNewer(s.release.version, s.currentVersion)
+  const StatusIcon = s.checking ? LoaderCircle : s.error ? TriangleAlert : newer ? ArrowUpCircle : PackageCheck
   return (
-    <Card data-slot="updates">
-      <CardHeader>
-        <CardTitle className="text-base">{t("tab.updates")}</CardTitle>
-        <CardDescription>{t("updates.installed", { version: s.currentVersion })}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-1.5">
-          <Label htmlFor="releaseChannelSelect">{t("updates.channel")}</Label>
+    <section data-slot="updates" className="space-y-4">
+      <SectionHeader title={t("tab.updates")} description={t("section.updates")} />
+      <Panel>
+        <div className="flex flex-wrap items-start gap-4 px-4 py-4 sm:px-5">
+          <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted", s.error ? "text-danger" : newer ? "text-ring" : "text-muted-foreground")} aria-hidden="true">
+            <StatusIcon className={cn("size-5", s.checking && "motion-safe:animate-spin")} />
+          </span>
+          <div className="min-w-0 flex-1 basis-60 space-y-1">
+            <p className="text-xs text-muted-foreground tabular-nums">{t("updates.installed", { version: s.currentVersion })}</p>
+            <div role="status" aria-live="polite" data-slot="update-status" className={cn("text-sm font-medium", s.error && "text-danger")}>
+              {s.checking ? t("updates.checking") : s.error ? msg(s.error) : !s.checkedAt ? t("updates.notChecked") : newer
+                ? t(s.release.prerelease ? "updates.availableBeta" : "updates.available", { version: s.release.version })
+                : s.release ? t("updates.none") : t("updates.noReleases")}
+            </div>
+            {s.checkedAt ? <Hint>{t("updates.lastCheck", { time: new Date(s.checkedAt).toLocaleString(locale) })}</Hint> : null}
+            {s.notice ? <p role="alert" className="text-xs text-danger">{msg(s.notice)}</p> : null}
+          </div>
+          <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
+            <Button id="checkUpdatesButton" disabled={!s.loaded || s.checking} onClick={() => { void updates.check(true) }}>{t("updates.checkNow")}</Button>
+          </div>
+        </div>
+        <div className="px-4 py-3 sm:px-5">
+          <a href={s.release?.url || RELEASES_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-ring underline underline-offset-2 hover:text-foreground">
+            {newer ? t("updates.openRelease") : t("updates.openReleases")}
+            <ExternalLink className="size-3.5" aria-hidden="true" />
+          </a>
+        </div>
+        <SettingRow label={<Label htmlFor="releaseChannelSelect">{t("updates.channel")}</Label>} hint={<Hint>{t("updates.betaHint")}</Hint>}>
           <Select value={s.channel} disabled={!s.loaded || s.checking} onValueChange={(v) => { void updates.setChannel(v) }}>
             <SelectTrigger id="releaseChannelSelect" className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -253,31 +274,24 @@ export function UpdatesPanel({ active }: { active: boolean }) {
               <SelectItem value="beta">{t("updates.beta")}</SelectItem>
             </SelectContent>
           </Select>
-          <Hint>{t("updates.betaHint")}</Hint>
-        </div>
-        <div role="status" aria-live="polite" data-slot="update-status">
-          {s.checking ? t("updates.checking") : s.error ? msg(s.error) : !s.checkedAt ? t("updates.notChecked") : newer
-            ? t(s.release.prerelease ? "updates.availableBeta" : "updates.available", { version: s.release.version })
-            : s.release ? t("updates.none") : t("updates.noReleases")}
-        </div>
-        {s.checkedAt ? <Hint>{t("updates.lastCheck", { time: new Date(s.checkedAt).toLocaleString(locale) })}</Hint> : null}
-        {s.notice ? <p role="alert" className="text-xs text-danger">{msg(s.notice)}</p> : null}
-        <div className="flex flex-wrap items-center gap-3">
-          <Button id="checkUpdatesButton" disabled={!s.loaded || s.checking} onClick={() => { void updates.check(true) }}>{t("updates.checkNow")}</Button>
-          <a href={s.release?.url || RELEASES_URL} target="_blank" rel="noopener noreferrer" className="text-sm text-ring underline underline-offset-2">{newer ? t("updates.openRelease") : t("updates.openReleases")}</a>
-        </div>
-        <Hint>{t("updates.cadence")}</Hint>
-        <div className="space-y-2 text-sm">
-          <p className="font-medium">{t("updates.howTo")}</p>
-          <ol className="list-decimal space-y-1 pl-5">
-            <li>{t("updates.step1")}</li>
-            <li>{t("updates.step2")}</li>
-            <li>{t("updates.step3")}</li>
+        </SettingRow>
+      </Panel>
+      <Panel>
+        <div className="space-y-3 px-4 py-4 sm:px-5">
+          <p className="text-sm font-semibold">{t("updates.howTo")}</p>
+          <ol className="space-y-2 text-sm">
+            {["updates.step1", "updates.step2", "updates.step3"].map((key, i) => (
+              <li key={key} className="flex gap-3">
+                <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground tabular-nums">{i + 1}</span>
+                <span className="min-w-0 flex-1 leading-5">{t(key)}</span>
+              </li>
+            ))}
           </ol>
           <Hint>{t("updates.noAuto")}</Hint>
+          <Hint>{t("updates.cadence")}</Hint>
         </div>
-      </CardContent>
-    </Card>
+      </Panel>
+    </section>
   )
 }
 
@@ -333,56 +347,46 @@ const EMBED_FIELDS = [
 export function EmbedPanel({ settings }: { settings: SettingsController }) {
   const s: any = useStore(settings.store)
   const { t } = useI18n()
+  const [help, setHelp] = useState<string | null>(null)
   // a catalogue key is translated with its host; a fixed service name is shown as it is
   const optionText = (host: string, text: string) => (text.startsWith("embed.") ? t(text, { host }) : text)
   return (
-    <Card data-slot="embed">
-      <CardHeader>
-        <CardTitle className="text-base">{t("embed.title")}</CardTitle>
-        <CardDescription className="text-xs leading-relaxed">{t("embed.desc")}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="mb-3 empty:hidden"><LoadState settings={settings} s={s} /></div>
-        <div className="divide-y">
-        {EMBED_FIELDS.map((f) => (
-          <div key={f.key} className="grid items-center gap-2 py-3 first:pt-0 sm:grid-cols-[1fr_18rem]">
-            <Label htmlFor={f.id}>{t(f.label)}</Label>
-            <Select value={s[f.key]} onValueChange={(v) => settings.setField(f.key, v)} disabled={!s.loaded}>
-              <SelectTrigger id={f.id} className="w-full">
-                <SelectValue>{s[f.key]}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {f.options.map(([value, text]) => (
-                  <SelectItem key={value} value={value}>
-                    {optionText(value, text)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        ))}
+    <section data-slot="embed" className="@container space-y-4">
+      <SectionHeader title={t("embed.title")} description={t("embed.desc")} />
+      <div className="empty:hidden"><LoadState settings={settings} s={s} /></div>
+      <Panel>
+        <div className="grid grid-cols-1 gap-x-6 gap-y-4 p-4 sm:p-5 @min-[36rem]:grid-cols-2">
+          {EMBED_FIELDS.map((f) => (
+            <Collapsible key={f.key} className="min-w-0" open={help === f.key} onOpenChange={(open) => setHelp(open ? f.key : null)}>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <Label htmlFor={f.id}>{t(f.label)}</Label>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" aria-label={t("embed.help") + ": " + t(f.label)} className="data-[state=open]:text-ring pointer-coarse:size-11">
+                    <CircleHelp aria-hidden="true" />
+                  </Button>
+                </CollapsibleTrigger>
+              </div>
+              <Select value={s[f.key]} onValueChange={(v) => settings.setField(f.key, v)} disabled={!s.loaded}>
+                <SelectTrigger id={f.id} className="w-full" aria-describedby={help === f.key ? f.id + "Hint" : undefined}>
+                  <SelectValue>{s[f.key]}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {f.options.map(([value, text]) => (
+                    <SelectItem key={value} value={value}>
+                      {optionText(value, text)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <CollapsibleContent className="pt-2">
+                <Hint id={f.id + "Hint"}>{t(f.hint)}</Hint>
+              </CollapsibleContent>
+            </Collapsible>
+          ))}
         </div>
-        <Collapsible className="mt-2 border-t pt-3">
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="sm" className="group -ml-2 text-muted-foreground">
-              {t("embed.help")}
-              <ChevronDown className="size-4 transition-transform group-data-[state=open]:rotate-180" aria-hidden="true" />
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="space-y-3 pt-3">
-              <Hint>{t("embed.services")}</Hint>
-              {EMBED_FIELDS.map((f) => (
-                <div key={f.key} className="space-y-1">
-                  <p className="text-xs font-medium">{t(f.label)}</p>
-                  <Hint>{t(f.hint)}</Hint>
-                </div>
-              ))}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-      </CardContent>
-    </Card>
+      </Panel>
+      <Hint secondary>{t("embed.services")}</Hint>
+    </section>
   )
 }
 
@@ -398,9 +402,13 @@ export function SaveBar({ settings }: { settings: SettingsController }) {
   return (
     <div
       id="settingsSaveBar"
-      className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center gap-3 border-t bg-background/95 px-1 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+      data-state={state}
+      className={cn(
+        "sticky bottom-3 z-10 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border bg-card/95 px-4 py-3 shadow-float backdrop-blur supports-[backdrop-filter]:bg-card/85 sm:px-5",
+        state === "dirty" && "border-ring/60",
+      )}
     >
-      <p className="min-w-0 flex-1 basis-56 text-xs text-muted-foreground">{t("savebar.hint")}</p>
+      <p className="min-w-0 flex-1 basis-56 text-xs leading-[18px] text-muted-foreground">{t("savebar.hint")}</p>
       <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
         <div
           id="statusMessage"
@@ -410,7 +418,7 @@ export function SaveBar({ settings }: { settings: SettingsController }) {
         >
           {state === "success" ? <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" /> : null}
           {state === "error" ? <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" /> : null}
-          {state === "dirty" ? <CircleDot className="size-3.5 shrink-0 text-primary" aria-hidden="true" /> : null}
+          {state === "dirty" ? <CircleDot className="size-3.5 shrink-0 text-ring" aria-hidden="true" /> : null}
           {state === "saving" || state === "loading" ? <LoaderCircle className="size-3.5 shrink-0 motion-safe:animate-spin" aria-hidden="true" /> : null}
           {text}
         </div>

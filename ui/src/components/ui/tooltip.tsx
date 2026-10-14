@@ -16,7 +16,7 @@ export function TooltipContent({ children, className, sideOffset = 6, ...props }
       <RadixTooltip.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
-        className={cn("z-50 max-w-xs break-words rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md", className)}
+        className={cn("z-50 max-w-xs break-words rounded-md border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-float", className)}
         {...props}
       >
         {children}
