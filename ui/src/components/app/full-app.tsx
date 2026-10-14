@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { Bell, Bug, ChartColumn, FolderCog, Download, Link2, PackageCheck } from "lucide-react"
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -31,7 +31,8 @@ import { getEnv } from "@/lib/env"
 const NO_GUIDE_STATE = { open: false, ready: false }
 const NO_GUIDE = { getState: () => NO_GUIDE_STATE, subscribe: () => () => {} }
 const TAB_ICONS: Record<string, typeof Download> = { history: ChartColumn, downloads: Download, saving: FolderCog, notifications: Bell, embed: Link2, updates: PackageCheck, debug: Bug }
-const GROUP_LABELS: Record<string, string> = { downloads: "nav.media", saving: "nav.settings", updates: "nav.tools" }
+// The first section of each navigation group (work, preferences, maintenance) is set apart in the vertical list.
+const GROUP_START = new Set(["saving", "updates"])
 const WIDE = "(min-width: 768px)"
 
 /** Whether the page is wide enough for the vertical navigation; without matchMedia the horizontal row is used. */
@@ -141,25 +142,16 @@ export function FullApp({ settings }: { settings: SettingsController }) {
                 {SECTIONS.map((name) => {
                   const Icon = TAB_ICONS[name]
                   return (
-                    <Fragment key={name}>
-                      {GROUP_LABELS[name] ? (
-                        <span
-                          role="presentation"
-                          data-slot="nav-group"
-                          className={`hidden pr-3 pb-1.5 pl-[2.375rem] text-xs font-semibold leading-4 tracking-[0.06em] text-muted-foreground uppercase md:block ${name === "downloads" ? "" : "md:mt-4"}`}
-                        >
-                          {t(GROUP_LABELS[name])}
-                        </span>
-                      ) : null}
-                      <TabsTrigger
-                        value={name}
-                        data-section={name}
-                        onFocus={(event) => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}
-                      >
-                        <Icon aria-hidden="true" />
-                        {t(`tab.${name}`)}
-                      </TabsTrigger>
-                    </Fragment>
+                    <TabsTrigger
+                      key={name}
+                      value={name}
+                      data-section={name}
+                      onFocus={(event) => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}
+                      className={GROUP_START.has(name) ? "md:mt-4" : undefined}
+                    >
+                      <Icon aria-hidden="true" />
+                      {t(`tab.${name}`)}
+                    </TabsTrigger>
                   )
                 })}
               </TabsList>
