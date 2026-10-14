@@ -3,14 +3,14 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.33"><img src="https://img.shields.io/badge/pre--release-v2.0.0.33-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.0.0.33"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.0"><img src="https://img.shields.io/badge/pre--release-v2.5.0-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.0"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.33"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.0"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
     <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Chrome Web Store distribution planned; not yet available">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
@@ -19,7 +19,7 @@
 
 MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**, track parallel downloads and choose where files go — including **author folders for x.com, Reddit and Pixiv**.
 
-> **Current pre-release: [v2.0.0.33](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.33).** First-install welcome, author folders for x.com/Reddit/Pixiv, theme-colored icons and a compact download popup. Pixiv preview saves and selected-media continuity during scrolling are improved. Saving requires no companion software.
+> **Current pre-release: [v2.5.0](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.0).** First-install welcome, author folders for x.com/Reddit/Pixiv, theme-colored icons and a compact download popup. Pixiv preview saves and selected-media continuity during scrolling are improved. Saving requires no companion software.
 
 The runtime ZIP includes the reviewed worker refactor and current interface. Ordinary downloads and the interface passed the latest user smoke check in Helium; exhaustive media/audio, crash/restart and quota testing remain separate checks.
 
@@ -40,7 +40,7 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
   </tr>
 </table>
 
-Screenshots from an isolated fresh install of the v2.0.0.33 build (default settings, no downloads). Violet by default, English/Russian localization and short transitions that respect reduced motion.
+Screenshots from an isolated fresh install of the v2.0.0.33 build (the interface is unchanged in v2.5.0; default settings, no downloads). Violet by default, English/Russian localization and short transitions that respect reduced motion.
 
 ---
 
@@ -57,7 +57,7 @@ A fresh install opens a separate welcome screen with three short steps. **Contin
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.33-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.0-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -76,7 +76,7 @@ The committed `popup/` pages are ready to use. Node/npm are needed only for deve
 
 ## Features
 
-The v2.0.0.33 runtime ZIP includes the features below. Manual Helium checks cover Pixiv, Zerochan, X, Reddit and embedded RedGIFs, standalone RedGIFs and tested booru boards, plus folders, themes, language and popup scrolling. These checks cover the reported scenarios, not every layout or media format.
+The v2.5.0 runtime ZIP includes the features below. Manual Helium checks cover Pixiv, Zerochan, X, Reddit and embedded RedGIFs, standalone RedGIFs and tested booru boards, plus folders, themes, language and popup scrolling. These checks cover the reported scenarios, not every layout or media format.
 
 ### Save the selected media
 

@@ -3,14 +3,14 @@
   <h1>MediaLatch</h1>
   <p><i>«Сохраняйте доступные оригиналы прямо из браузера — изображения, видео и GIF, разложенные по вашим папкам.»</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.33"><img src="https://img.shields.io/badge/pre--release-v2.0.0.33-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.0.0.33"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.0"><img src="https://img.shields.io/badge/pre--release-v2.5.0-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.0"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Платформа: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Расширение: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="Интерфейс: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="Лицензия: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.33"><img src="docs/assets/download-github.svg" height="44" alt="Скачать превью с GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.0"><img src="docs/assets/download-github.svg" height="44" alt="Скачать превью с GitHub"></a>
     <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Выпуск в Chrome Web Store запланирован; пока недоступен">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Поддержка и выпуск для Firefox запланированы; пока недоступны">
   </p>
@@ -19,7 +19,7 @@
 
 MediaLatch (ранее Image Saver) — расширение Chromium для сохранения доступных оригинальных изображений, видео и GIF. Нажмите ПКМ по медиа и выберите **Save media**, следите за параллельными загрузками и выбирайте, куда сохранять файлы — в том числе **в папки авторов x.com, Reddit и Pixiv**.
 
-> **Текущий pre-release: [v2.0.0.33](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.33).** Отдельное приветствие после первой установки, папки авторов x.com/Reddit/Pixiv, иконки под цвет темы и компактное меню загрузок. Улучшены скачивание из превью Pixiv и сохранение выбранного медиа при скролле. Дополнительный софт для сохранения не нужен.
+> **Текущий pre-release: [v2.5.0](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.0).** Отдельное приветствие после первой установки, папки авторов x.com/Reddit/Pixiv, иконки под цвет темы и компактное меню загрузок. Улучшены скачивание из превью Pixiv и сохранение выбранного медиа при скролле. Дополнительный софт для сохранения не нужен.
 
 Готовый ZIP включает проверенный рефакторинг worker и текущий интерфейс. Последняя ручная проверка пользователя в Helium подтвердила обычные сохранения и интерфейс; полные проверки аудио/байтов, аварийного перезапуска и квоты остаются отдельными задачами.
 
@@ -40,7 +40,7 @@ MediaLatch (ранее Image Saver) — расширение Chromium для с�
   </tr>
 </table>
 
-Скриншоты изолированной новой установки сборки v2.0.0.33 (настройки по умолчанию, без загрузок); интерфейс на английском. Фиолетовая тема по умолчанию, русский/английский языки и короткие анимации с учётом уменьшения движения.
+Скриншоты изолированной новой установки сборки v2.0.0.33 (интерфейс в v2.5.0 не изменился; настройки по умолчанию, без загрузок); интерфейс на английском. Фиолетовая тема по умолчанию, русский/английский языки и короткие анимации с учётом уменьшения движения.
 
 ---
 
@@ -57,7 +57,7 @@ MediaLatch (ранее Image Saver) — расширение Chromium для с�
 
 ## Установка
 
-1. Скачайте **готовый архив расширения** из [Releases](https://github.com/xhthc/MediaLatch/releases) и распакуйте. Выберите `MediaLatch-2.0.0.33-*.zip` из текущего превью; в имени архива указан исходный коммит. Автоматический Source code ZIP GitHub содержит весь репозиторий для разработки.
+1. Скачайте **готовый архив расширения** из [Releases](https://github.com/xhthc/MediaLatch/releases) и распакуйте. Выберите `MediaLatch-2.5.0-*.zip` из текущего превью; в имени архива указан исходный коммит. Автоматический Source code ZIP GitHub содержит весь репозиторий для разработки.
 2. Откройте `chrome://extensions`, включите **Режим разработчика**, нажмите **Загрузить распакованное расширение** и выберите папку с `manifest.json`.
 3. После замены сборки перезагрузите расширение **и обновите вкладки сайтов**.
 
@@ -76,7 +76,7 @@ git clone https://github.com/xhthc/MediaLatch.git
 
 ## Возможности
 
-Архив v2.0.0.33 включает функции ниже. Ручные проверки в Helium охватывают Pixiv, Zerochan, X, Reddit и встроенный RedGIFs, отдельный RedGIFs и изученные booru-доски, папки, темы, язык и прокрутку popup. Это проверенные сценарии, а не гарантия для любой разметки и формата.
+Архив v2.5.0 включает функции ниже. Ручные проверки в Helium охватывают Pixiv, Zerochan, X, Reddit и встроенный RedGIFs, отдельный RedGIFs и изученные booru-доски, папки, темы, язык и прокрутку popup. Это проверенные сценарии, а не гарантия для любой разметки и формата.
 
 ### Сохранение выбранного медиа
 

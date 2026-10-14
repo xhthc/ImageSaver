@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.0 — version update
+
+- Repackage the accepted 2.0.0.33 runtime as version 2.5.0; extension behavior, permissions, dependencies and stored data are unchanged.
+- Update current release links and installation archive names in the EN/RU README.
+
+This remains a pre-release. Prior source and browser validation applies to the unchanged runtime; packaging and version/update checks are repeated for the new archive.
+
 ## 2.0.0.33 — author folders, selected-media continuity and refactor
 
 - Add a separate first-install welcome with one Continue action to Saving; keep it dismissed after updates and restarts.

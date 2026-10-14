@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the v2.0.0.33 preview. The Explorer companion integration and file-location controls were removed. Custom save directories, author folders and the manager-return notification fix remain. The user reported working ordinary saves and interface smoke checks; exhaustive audio/bytes, crash/restart and quota checks remain separate. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
+This document describes the v2.5.0 preview. The Explorer companion integration and file-location controls were removed. Custom save directories, author folders and the manager-return notification fix remain. The user reported working ordinary saves and interface smoke checks; exhaustive audio/bytes, crash/restart and quota checks remain separate. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
 
 ## Runtime layout
 
