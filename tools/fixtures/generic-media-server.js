@@ -3,9 +3,9 @@
 // CSS: CSS backgrounds and simple overlays that have no <img>/<video> menu context).
 // Standalone, zero dependencies, loopback only; not loaded by the extension.
 //
-//   start : node tools/gen01-frame-acceptance-server.js [port]        (default 8765; Ctrl+C stops it)
-//   stop  : node tools/gen01-frame-acceptance-server.js --stop [port]  (or Ctrl+C in the server window)
-//   check : node tools/gen01-frame-acceptance-server.js --self-check [--fault=wrong-mime|bad-body]
+//   start : node tools/fixtures/generic-media-server.js [port]        (default 8765; Ctrl+C stops it)
+//   stop  : node tools/fixtures/generic-media-server.js --stop [port]  (or Ctrl+C in the server window)
+//   check : node tools/fixtures/generic-media-server.js --self-check [--fault=wrong-mime|bad-body]
 //           validates every asset body, routes and the case traps; non-zero exit on any failure (hard 30 s limit)
 //
 // Open http://localhost:<port>/ in the Chrome profile that has the extension loaded.
@@ -24,7 +24,7 @@ const positional = args.filter((a) => !a.startsWith('--'));
 let PORT = Number(positional[0] || process.env.PORT || (SELF_CHECK ? 0 : 8765));
 let ORIGIN = `http://localhost:${PORT}`;
 let CROSS = `http://127.0.0.1:${PORT}`;
-const FIXTURES = path.join(__dirname, 'gen01-fixtures');
+const FIXTURES = path.resolve(__dirname, '../../tests/fixtures/generic-media');
 
 // ---- tiny 5x7 bitmap font (letters, digits and space) ----
 const FONT = {
@@ -165,7 +165,7 @@ addPng('/rel/frame-original.png', 'REL TOP WRONG', RED);
 addPng('/b/base-preview.png', 'BASE PREVIEW', GRAY, 240, 160);
 addPng('/b/base/orig.png', 'BASE OK', GREEN);
 addPng('/b/orig.png', 'BASE WRONG', RED);
-// C: direct video (real MediaRecorder output; see tools/gen01-fixtures)
+// C: direct video (real MediaRecorder output; see tests/fixtures/generic-media)
 addFile('/v/video-a.mp4', 'video-a.mp4', 'video/mp4', 'mp4');
 addFile('/v/video-b.webm', 'video-b.webm', 'video/webm', 'webm');
 addFile('/v/silent-loop.mp4', 'silent-loop.mp4', 'video/mp4', 'mp4');
@@ -186,7 +186,7 @@ addPng('/css/amb-1.png', 'AMBIGUOUS 1', YELLOW);
 addPng('/css/amb-2.png', 'AMBIGUOUS 2', NAVY);
 addPng('/css/span-left.png', 'LEFT IMAGE', ORANGE, 400, 300);
 addPng('/css/span-right.png', 'RIGHT IMAGE', TEAL, 400, 300);
-// AVIF: real AV1 still pictures (see tools/gen01-fixtures/avif/README.md for origin, licence and SHA-256); previews are PNG
+// AVIF: real AV1 still pictures (see tests/fixtures/generic-media/avif/README.md for origin, licence and SHA-256); previews are PNG
 for (const n of ['direct', 'pic-small', 'pic-large', 'card-one', 'card-two', 'lazy', 'link']) addFile(`/avif/avif-${n}.avif`, `avif/avif-${n}.avif`, 'image/avif', 'avif');
 addFile('/avif/rel/avif-frame-rel.avif', 'avif/avif-frame-rel.avif', 'image/avif', 'avif'); // the frame document's own relative target
 addFile('/rel/avif-frame-rel.avif', 'avif/avif-wrong-rel.avif', 'image/avif', 'avif'); // what the TOP page's base would resolve to (wrong)
@@ -908,7 +908,7 @@ async function main() {
     return;
   }
   console.log(`GEN-01 acceptance fixture: ${ORIGIN}/   (cross-origin frames via ${CROSS}; loopback only)`);
-  console.log(`stop: Ctrl+C, or: node tools/gen01-frame-acceptance-server.js --stop ${PORT}`);
+  console.log(`stop: Ctrl+C, or: node tools/fixtures/generic-media-server.js --stop ${PORT}`);
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { console.log('\nstopping'); shutdown(0); });
 }
 main().catch((e) => { console.error(e.message); process.exit(1); });

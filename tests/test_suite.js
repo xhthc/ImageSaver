@@ -23018,7 +23018,7 @@ async function runTests() {
 
         // ── Тест 242 (GEN-01 AVIF, этап 1): настоящие AVIF-байты через настоящий обработчик (кадр, захват жеста, конвейер) ──
         {
-          const FXA = path.join(REPO_ROOT, 'tools', 'gen01-fixtures', 'avif');
+          const FXA = path.join(REPO_ROOT, 'tests', 'fixtures', 'generic-media', 'avif');
           const AP = 'https://cdn.example.test/avif/';
           const PG = 'https://gallery.example.test/avif';
           const served = {};
@@ -28403,7 +28403,7 @@ async function runTests() {
   // ── Тест 242 (GEN-01 AVIF, этап 1): настоящий AVIF не принимается за MP4 ──
   {
     console.log('\n--- Тест 242: настоящий AVIF — сигнатура контейнера ---');
-    const fxDir = path.join(REPO_ROOT, 'tools', 'gen01-fixtures');
+    const fxDir = path.join(REPO_ROOT, 'tests', 'fixtures', 'generic-media');
     const avifBytes = fs.readFileSync(path.join(fxDir, 'avif', 'avif-direct.avif'));
     const mp4Bytes = fs.readFileSync(path.join(fxDir, 'video-a.mp4'));
     const head = (b) => new Uint8Array(b.subarray(0, 64));
@@ -28536,7 +28536,7 @@ async function runTests() {
     const { spawn } = require('child_process');
     const origFetch = sandbox.fetch;
     const origExec = mockChrome.scripting.executeScript;
-    const child = spawn(process.execPath, [path.join(REPO_ROOT, 'tools', 'gen01-frame-acceptance-server.js'), '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [path.join(REPO_ROOT, 'tools', 'fixtures', 'generic-media-server.js'), '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
     try {
       const port = await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('fixture did not start')), 10000);

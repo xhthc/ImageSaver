@@ -19,11 +19,11 @@ if (typeof importScripts === 'function') {
   importScripts('lib/booru_resolvers.js');   // booru engine families
   importScripts('lib/page_selection.js');    // functions injected into the clicked frame: owner admission, context target, DOM metadata
   importScripts('lib/x_recovery.js');        // X selected-player recovery from the owning post
-  importScripts('lib/worker_providers.js');  // selected-media resolution and the original-media plan
+  importScripts('lib/worker/providers.js');  // selected-media resolution and the original-media plan
   importScripts('lib/toolbar_badge.js');     // the serialized toolbar badge and theme icon
-  importScripts('lib/worker_pipeline.js');   // plan execution, verification and export
-  importScripts('lib/worker_offscreen.js');  // the offscreen document lifetime
-  importScripts('lib/worker_animation.js');  // GIF conversion policy and Reddit HLS assembly
+  importScripts('lib/worker/pipeline.js');   // plan execution, verification and export
+  importScripts('lib/worker/offscreen.js');  // the offscreen document lifetime
+  importScripts('lib/worker/animation.js');  // GIF conversion policy and Reddit HLS assembly
 }
 const FolderPath = globalThis.ImageSaverFolderPath;
 const FeedbackLib = globalThis.ImageSaverFeedback;

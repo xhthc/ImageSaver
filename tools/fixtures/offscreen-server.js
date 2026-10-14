@@ -1,4 +1,4 @@
-// tools/offscreen_fixture_server.js - Finite deterministic HTTP fixture server for offscreen media testing
+// tools/fixtures/offscreen-server.js - Finite deterministic HTTP fixture server for offscreen media testing
 const http = require('http');
 
 // Canonical binary signatures for media fixtures

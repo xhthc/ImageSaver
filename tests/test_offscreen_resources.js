@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const assert = require('assert');
-const { createOffscreenTestServer, FIXTURE_BYTES } = require('../tools/offscreen_fixture_server.js');
+const { createOffscreenTestServer, FIXTURE_BYTES } = require('../tools/fixtures/offscreen-server.js');
 
 let passCount = 0;
 let failCount = 0;

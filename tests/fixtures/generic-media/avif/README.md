@@ -1,6 +1,6 @@
 # AVIF fixtures (GEN-01 acceptance server)
 
-Real AVIF still pictures for `tools/gen01-frame-acceptance-server.js` (`/avif.html`). They are test data, not part of the
+Real AVIF still pictures for `tools/fixtures/generic-media-server.js` (`/avif.html`). They are test data, not part of the
 extension runtime, and no dependency was added.
 
 ## Origin and licence
@@ -8,8 +8,8 @@ extension runtime, and no dependency was added.
 - **Content:** synthetic, created for this repository: a flat colour with a white band and a text label (for example
   `AVIF DIRECT`). No third-party picture, photo or font data is included.
 - **Encoder:** the browser's own AV1 encoder, `VideoEncoder('av01.0.04M.08')` in Chromium (libaom, BSD-2-Clause with the AOMedia
-  patent licence), one key frame per picture. The page that drives it is `tools/gen01-avif-encode.html`.
-- **Container:** written by hand by `tools/gen01-avif-wrap.js` (`ftyp avif`, one `av01` item with `ispe`, `pixi`, `av1C`,
+  patent licence), one key frame per picture. The page that drives it is `tools/fixtures/avif-encode.html`.
+- **Container:** written by hand by `tools/fixtures/avif-wrap.js` (`ftyp avif`, one `av01` item with `ispe`, `pixi`, `av1C`,
   `colr`; the temporal delimiter is dropped and `still_picture` is set in the sequence header, the frame OBU is the encoder's).
 - **Licence:** the files are produced by this project and distributed with it under the repository's terms; there is no
   separate third-party licence.
@@ -36,8 +36,8 @@ This is a decode check of the fixture, not an extension acceptance.
 
 ## Regenerating
 
-1. Serve the repository over `http://localhost` and open `tools/gen01-avif-encode.html` in Chromium, press the button, keep the
+1. Serve the repository over `http://localhost` and open `tools/fixtures/avif-encode.html` in Chromium, press the button, keep the
    nine `<name>.av1tu` downloads.
-2. `node tools/gen01-avif-wrap.js <name>.av1tu tools/gen01-fixtures/avif/<name>.avif <width> <height>` for each.
+2. `node tools/fixtures/avif-wrap.js <name>.av1tu tests/fixtures/generic-media/avif/<name>.avif <width> <height>` for each.
 3. Update `SHA256SUMS` and the table above. The bytes differ between encoder versions; the tests do not depend on them except
    through `--self-check` (distinct files, valid container and OBUs) and `SHA256SUMS`.

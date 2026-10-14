@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-require('../lib/worker_offscreen.js');
+require('../lib/worker/offscreen.js');
 
 function fixture({unreadable = false, records = {}} = {}) {
   const calls = {created:0, closed:0, revoked:[], tracked:[]};

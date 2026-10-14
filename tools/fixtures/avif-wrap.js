@@ -1,7 +1,7 @@
 'use strict';
 // Fixture tooling only (never loaded by the extension). Wraps one AV1 temporal unit, as produced by a WebCodecs
-// VideoEncoder('av01.0.04M.08') key frame (see tools/gen01-fixtures/avif/README.md), into a still-image AVIF file:
-//   node tools/gen01-avif-wrap.js <in.av1tu> <out.avif> <width> <height>
+// VideoEncoder('av01.0.04M.08') key frame (see tests/fixtures/generic-media/avif/README.md), into a still-image AVIF file:
+//   node tools/fixtures/avif-wrap.js <in.av1tu> <out.avif> <width> <height>
 // The container is written by hand (ftyp 'avif', meta{hdlr,pitm,iloc,iinf,iprp{ispe,pixi,av1C,colr,ipma}}, mdat); the AV1
 // payload is the encoder's own output (temporal delimiter dropped, still_picture set in the sequence header).
 const fs = require('fs');
@@ -96,7 +96,7 @@ module.exports = { wrap, parseObus };
 
 if (require.main === module) {
   const [, , input, output, w, h] = process.argv;
-  if (!input || !output || !w || !h) throw new Error('usage: node tools/gen01-avif-wrap.js <in.av1tu> <out.avif> <width> <height>');
+  if (!input || !output || !w || !h) throw new Error('usage: node tools/fixtures/avif-wrap.js <in.av1tu> <out.avif> <width> <height>');
   fs.writeFileSync(output, wrap(fs.readFileSync(input), Number(w), Number(h)));
   console.log('wrote', output);
 }

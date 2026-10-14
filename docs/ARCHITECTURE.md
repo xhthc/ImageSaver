@@ -1,5 +1,7 @@
 # Architecture
 
+The directory map follows the current source checkout. Existing published archives keep their original committed layout.
+
 This document describes the v2.5.1 preview. The Explorer companion integration and file-location controls were removed. Custom save directories, author folders and the manager-return notification fix remain. The user reported working ordinary saves and smoke checks of the earlier interface; the redesigned UI has separate isolated browser checks; exhaustive audio/bytes, crash/restart and quota checks remain separate. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
 
 ## Runtime layout
@@ -12,8 +14,8 @@ This document describes the v2.5.1 preview. The Explorer companion integration a
 | `lib/candidates.js` | Candidate addresses and groups (resolution plans), thumbnail detection, scoring, the image probe and generic CDN/CMS derivatives |
 | `lib/site_resolvers.js`, `lib/booru_resolvers.js` | Dedicated site adapters (X, Pixiv, Reddit, Zerochan, Anime-Pictures, Sankaku, Pawchive, ...) and booru engine families |
 | `lib/page_selection.js`, `lib/x_recovery.js` | Functions injected into the clicked frame (owner admission, context target, DOM metadata) and X selected-player recovery from the owning post |
-| `lib/worker_providers.js`, `lib/worker_pipeline.js` | Selected-media resolution and the original-media plan; plan execution, final MIME verification and export |
-| `lib/worker_offscreen.js`, `lib/worker_animation.js`, `lib/toolbar_badge.js` | Offscreen lifetime controller, GIF/HLS conversion policy and the serialized toolbar badge |
+| `lib/worker/providers.js`, `lib/worker/pipeline.js` | Selected-media resolution and the original-media plan; plan execution, final MIME verification and export |
+| `lib/worker/offscreen.js`, `lib/worker/animation.js`, `lib/toolbar_badge.js` | Offscreen lifetime controller, GIF/HLS conversion policy and the serialized toolbar badge |
 | `content/content_context_target.js` | Capture the pressed media/CSS/overlay target; re-prove ownership at save time |
 | `content/content_notifications.js` | Top-frame bounded page notices in closed Shadow DOM; original-origin delivery, dismiss/manager actions and paused timers |
 | `content/content_x.js`, `content/content_reddit.js`, `content/content_redgifs.js` | Provider evidence, selected-player recovery and inline controls |
@@ -100,7 +102,7 @@ GitHub checks use the fixed `xhthc/MediaLatch` releases endpoint. The old reposi
 
 The worker modules listed in the runtime layout are classic scripts that `background.js` imports in one ordered block before any of its own code runs; no module reads a `background.js` binding while it loads. Their declarations share the worker global scope, so a module's function may call another module's or the entry point's at run time. Selected-owner proofs, signed addresses, MIME validation and transport policy are unchanged by this organization.
 
-`lib/worker_offscreen.js` creates a controller with explicit browser, messaging, download maps, tracking and manager-busy dependencies. Its ownership, creation/close single-flight and recovery state belong to that controller. A worker bridge preserves existing call order and interfaces. Unknown persisted ownership and unavailable download lookups still block destructive cleanup.
+`lib/worker/offscreen.js` creates a controller with explicit browser, messaging, download maps, tracking and manager-busy dependencies. Its ownership, creation/close single-flight and recovery state belong to that controller. A worker bridge preserves existing call order and interfaces. Unknown persisted ownership and unavailable download lookups still block destructive cleanup.
 
 `lib/download_contracts.d.ts` describes the existing download snapshot, commands and UI state. The downloads controller is checked with `@ts-check`; its React view infers the store type. Worker sender checks and runtime validation remain mandatory: the declarations do not validate message contents. Compile-only negative cases check misspelled commands/states and numeric job IDs. The original MIME/resource integration cases now run from `tests/cases/media_lifecycle.cjs` in their original order with the same shared fixtures; `tests/test_worker_offscreen.js` also checks the controller directly.
 
@@ -118,4 +120,4 @@ Zerochan feed metadata is read in the pinned selected page session, with a bound
 
 ## Source organization
 
-Site content scripts live in `content/`; their manifest matching, injection order and frame scope are unchanged. Each runs in its own isolated world, so a helper shared with the worker or another content script is a separate copy unless a `lib/` file is listed in both (as `lib/debug_journal.js` and `lib/i18n.js` are). The offscreen document keeps its own copies of the URL-log sanitizer and protected-host check for the same reason. Offline checks live in `tests/` and resolve fixtures from the repository root. The worker's modules are listed in one block at the top of `background.js`; declarations are not duplicated in the entry point. Keep serialized `executeScript` functions self-contained. UI source and generated popup continue to use the existing React/Vite build.
+Site content scripts live in `content/`; their manifest matching, injection order and frame scope are unchanged. Each runs in its own isolated world, so a helper shared with the worker or another content script is a separate copy unless a `lib/` file is listed in both (as `lib/debug_journal.js` and `lib/i18n.js` are). The offscreen document keeps its own copies of the URL-log sanitizer and protected-host check for the same reason. Offline checks live in `tests/`; binary media and captured Reddit structures are grouped under `tests/fixtures/generic-media/` and `tests/fixtures/reddit/`. Local media servers and AVIF generation tools live in `tools/fixtures/` and resolve fixture paths from their own location. The worker's modules live under `lib/worker/` and are listed in one block at the top of `background.js`; declarations are not duplicated in the entry point. Keep serialized `executeScript` functions self-contained. UI source and generated popup continue to use the existing React/Vite build.

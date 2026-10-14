@@ -185,7 +185,33 @@ See [Security](docs/SECURITY.md), [Privacy](docs/PRIVACY.md) and [Release prepar
 
 ## Development
 
-Project layout: `content/` holds site scripts; `lib/` shared and worker modules; `ui/` interface source; `popup/` its committed build; `tests/` offline checks; `tools/` verification and packaging. `background.js` loads worker modules in one ordered block. `candidates.js` handles media candidates, `booru_resolvers.js` engine rules, `page_selection.js` frame/owner reads and `x_recovery.js` X video recovery. Add behavior to the responsible module.
+```text
+MediaLatch/
+├─ manifest.json
+├─ background.js
+├─ offscreen.html / offscreen.js
+├─ content/                 Site scripts
+├─ lib/
+│  ├─ worker/              Background worker modules
+│  └─ vendor/              Bundled libraries and licences
+├─ ui/                     Editable UI source
+├─ popup/                  Generated UI build
+├─ tests/
+│  ├─ fixtures/
+│  │  ├─ generic-media/    Test images and videos
+│  │  └─ reddit/           Reddit structure snapshots
+│  ├─ cases/
+│  └─ helpers/
+├─ tools/
+│  └─ fixtures/            Fixture servers and generators
+├─ docs/
+│  └─ assets/              README screenshots and badges
+└─ icons/                  Logo and theme variants
+```
+
+The unpacked extension stays at the repository root. `background.js` loads `lib/worker/` modules in one ordered block. Shared media policy and helpers stay in `lib/`; provider scripts in `content/`. Edit `ui/` and generate `popup/`. Test data and fixture servers are development-only and excluded from runtime packages.
+
+For local media fixtures: `node tools/fixtures/generic-media-server.js --self-check` or start the server without the flag. See [fixture provenance](tests/fixtures/generic-media/avif/README.md).
 
 
 Use a Node.js runtime compatible with the UI lockfile. Current checks also run on Node.js 24.19.

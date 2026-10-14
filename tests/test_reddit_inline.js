@@ -3743,7 +3743,7 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
   console.log('\n--- Suite 10: Observed Native Reddit Fixture Regressions ---');
 
   function loadNativeFixture(name) {
-    const p = path.join(REPO_ROOT, 'tools', 'reddit-native-fixtures', name);
+    const p = path.join(REPO_ROOT, 'tests', 'fixtures', 'reddit', name);
     return JSON.parse(fs.readFileSync(p, 'utf8'));
   }
 

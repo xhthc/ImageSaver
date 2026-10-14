@@ -29,6 +29,8 @@ const syntaxFiles = new Set([
   ...manifest.content_scripts.flatMap(entry => entry.js),
   'offscreen.js',
   ...fs.readdirSync(path.join(root, 'lib')).filter(file => file.endsWith('.js') || file.endsWith('.mjs')).map(file => `lib/${file}`),
+  ...fs.readdirSync(path.join(root, 'lib', 'worker')).filter(file => file.endsWith('.js')).map(file => `lib/worker/${file}`),
+  ...fs.readdirSync(path.join(root, 'tools', 'fixtures')).filter(file => file.endsWith('.js')).map(file => `tools/fixtures/${file}`),
   'tools/verify.mjs',
   'tools/package.mjs',
 ]);

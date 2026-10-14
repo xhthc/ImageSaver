@@ -4,8 +4,8 @@
 <!-- Fixture tooling only, never loaded by the extension. Open from http://localhost in Chromium (WebCodecs needs a secure
      context), press the button: each synthetic picture is encoded as ONE AV1 key frame with the browser's own
      VideoEncoder('av01.0.04M.08') and downloaded as <name>.av1tu. Wrap each file into an AVIF container with
-     node tools/gen01-avif-wrap.js <name>.av1tu tools/gen01-fixtures/avif/<name>.avif <width> <height>
-     (sizes and labels below). See tools/gen01-fixtures/avif/README.md. -->
+     node tools/fixtures/avif-wrap.js <name>.av1tu tests/fixtures/generic-media/avif/<name>.avif <width> <height>
+     (sizes and labels below). See tests/fixtures/generic-media/avif/README.md. -->
 <button id="go">Encode and download</button> <pre id="log"></pre>
 <script>
 const SPECS = [
