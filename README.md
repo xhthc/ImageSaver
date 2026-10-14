@@ -215,7 +215,7 @@ The Telegram/VK roadmap concerns **publishing**.
 
 Before submission: packaged-code/CSP checks, sender/action/frame validation, URL/redirect and private-network boundaries, minimum permissions, dependency/release integrity, malformed-media and resource-exhaustion checks. Broad HTTP/HTTPS access needs particular review. This is **a readiness plan, not a completed security audit or store approval**. Executable code is bundled locally; release checks read metadata and never install code.
 
-See [Security](docs/SECURITY.md), [Privacy](docs/PRIVACY.md) and [Release preparation](docs/RELEASE.md).
+See [Privacy](docs/PRIVACY.md) and [Release preparation](docs/RELEASE.md).
 
 ---
 
