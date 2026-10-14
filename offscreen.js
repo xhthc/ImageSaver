@@ -1440,27 +1440,11 @@ async function assembleRedditHlsBlob(url) {
 
 // Exports for tests / modules
 if (typeof globalThis !== 'undefined') {
-  globalThis.assembleRedditHlsBlob = assembleRedditHlsBlob;
-  globalThis.fetchProtectedBlob = fetchProtectedBlob;
-  globalThis.fetchGelbooruBlob = fetchGelbooruBlob;
-  globalThis.sniffMediaMagicBytes = sniffMediaMagicBytes;
-  globalThis.isNonMediaOrErrorPayload = isNonMediaOrErrorPayload;
-  globalThis.isSvgPayload = isSvgPayload;
-  globalThis.isMalformedMediaContainer = isMalformedMediaContainer;
-  globalThis.closeResponseBody = closeResponseBody;
-  globalThis.isAnimatedGif = isAnimatedGif;
-  globalThis.sanitizeUrlForLog = sanitizeUrlForLog;
-  globalThis.getProtectedHostInfo = getProtectedHostInfo;
-  globalThis.parseRetryAfterMs = parseRetryAfterMs;
   globalThis.HEADER_TIMEOUT_MS = HEADER_TIMEOUT_MS;
   globalThis.INACTIVITY_TIMEOUT_MS = INACTIVITY_TIMEOUT_MS;
   globalThis.TOTAL_BODY_TIMEOUT_MS = TOTAL_BODY_TIMEOUT_MS;
   globalThis.DEFAULT_MAX_PROTECTED_BODY_BYTES = DEFAULT_MAX_PROTECTED_BODY_BYTES;
   globalThis.MAX_ALLOWED_PROTECTED_BODY_BYTES = MAX_ALLOWED_PROTECTED_BODY_BYTES;
-  globalThis.convertMp4VideoToGif = convertMp4VideoToGif;
-  globalThis.convertXTweetVideoToGif = convertXTweetVideoToGif;
-  globalThis.convertRedditVideoToGif = convertRedditVideoToGif;
-  globalThis.calculateGifFrameDelays = calculateGifFrameDelays;
   globalThis.GIF_CONVERSION_LIMITS = GIF_CONVERSION_LIMITS;
 }
 if (typeof module !== 'undefined' && module.exports) {

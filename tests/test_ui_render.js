@@ -92,10 +92,6 @@ function makeChrome(state) {
           if (msg.action === 'STATISTICS_CLEAR') { if (state.failClear) return { success: false }; state.history = []; }
           return { success: true, stats: FB.computeStats(state.history), imported: 0 };
         }
-        if (msg.action === 'HISTORY_LIST' || msg.action === 'HISTORY_CLEAR') {
-          if (msg.action === 'HISTORY_CLEAR') { if (state.failClear) return { success: false }; state.history = []; }
-          return { success: true, records: state.history.slice().reverse() };
-        }
         return undefined;
       },
       onMessage: {

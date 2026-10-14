@@ -69,24 +69,6 @@
   }
 
   /**
-   * Sanitizes URLs for safe diagnostic reporting without exposing signatures/tokens.
-   */
-  function sanitizeUrl(urlStr) {
-    if (!urlStr || typeof urlStr !== 'string') return '';
-    try {
-      const parsed = new URL(urlStr);
-      for (const key of Array.from(parsed.searchParams.keys())) {
-        if (/token|auth|key|sig|secret|signature/i.test(key)) {
-          parsed.searchParams.set(key, '[REDACTED]');
-        }
-      }
-      return parsed.toString();
-    } catch (_) {
-      return urlStr.replace(/([?&](?:token|auth|key|sig|signature)=)[^&]*/gi, '$1[REDACTED]');
-    }
-  }
-
-  /**
    * Safely decodes JSON-escaped slashes and unicode characters.
    */
   function safeDecodeJsonEscapes(str) {
@@ -1051,6 +1033,18 @@
     }
     const rankedCandidates = rankCandidates(uniqueCandidates, candidateAudio).slice(0, MAX_COLLECTED_CANDIDATES);
 
+    const diagnostics = (validCandidateCount, reasons) => ({
+      frameId: options.frameId ?? null,
+      safeFrameUrl: getSafeFrameUrl(),
+      targetFound: true,
+      videoCount: allVideos.length,
+      videoId: videoId || null,
+      videoIdSource: videoIdSource || 'none',
+      inspectedSources: Array.from(new Set(inspectedCategories)),
+      candidateCount: cappedRawCandidates.length,
+      validCandidateCount,
+      rejectionReasons: reasons
+    });
     if (rankedCandidates.length === 0) {
       if (rejectionReasons.length === 0) {
         rejectionReasons.push('NO_DIRECT_MEDIA_FOUND');
@@ -1059,18 +1053,7 @@
         success: false,
         error: 'UNRESOLVED_BLOB_MEDIA',
         targetUrl: null,
-        diagnostics: {
-          frameId: options.frameId ?? null,
-          safeFrameUrl: getSafeFrameUrl(),
-          targetFound: true,
-          videoCount: allVideos.length,
-          videoId: videoId || null,
-          videoIdSource: videoIdSource || 'none',
-          inspectedSources: Array.from(new Set(inspectedCategories)),
-          candidateCount: cappedRawCandidates.length,
-          validCandidateCount: 0,
-          rejectionReasons: Array.from(new Set(rejectionReasons)).slice(0, 10)
-        }
+        diagnostics: diagnostics(0, Array.from(new Set(rejectionReasons)).slice(0, 10))
       };
     }
 
@@ -1082,18 +1065,7 @@
       candidates: rankedCandidates,
       // Page-declared audio evidence per candidate of this clip ('present' | 'absent'); a missing entry means unknown.
       candidateAudio,
-      diagnostics: {
-        frameId: options.frameId ?? null,
-        safeFrameUrl: getSafeFrameUrl(),
-        targetFound: true,
-        videoCount: allVideos.length,
-        videoId: videoId || null,
-        videoIdSource: videoIdSource || 'none',
-        inspectedSources: Array.from(new Set(inspectedCategories)),
-        candidateCount: cappedRawCandidates.length,
-        validCandidateCount: rankedCandidates.length,
-        rejectionReasons: []
-      }
+      diagnostics: diagnostics(rankedCandidates.length, [])
     };
   }
 

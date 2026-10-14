@@ -87,9 +87,6 @@ const visibility=value=>{hidden=value;w.document.dispatchEvent(new w.Event('visi
   const raw={id:'op-000009',createdAt:clock,state:'complete',noticeTarget:{tabId:7,origin:'https://example.com'}};
   assert.deepEqual(JSON.parse(JSON.stringify(sb.ImageSaverFeedback.sanitizeRecord(raw).noticeTarget)),raw.noticeTarget);
   for(const target of [{tabId:-1,origin:'https://example.com'},{tabId:7,origin:'https://example.com/?secret=1'},{tabId:7,origin:'javascript:alert(1)'},{tabId:7,origin:'https://name:pass@example.com'}])assert(!sb.ImageSaverFeedback.sanitizeRecord({...raw,noticeTarget:target}).noticeTarget,'Unsafe route stripped');
-  vm.runInContext(fs.readFileSync('lib/feedback_history.js','utf8'),sb);let saved;
-  const history=sb.ImageSaverFeedbackHistory.createHistory({now:()=>clock,isEnabled:async()=>true,storage:{get:async()=>saved,set:async(k,v)=>saved=v}});
-  await history.record(raw);assert(!saved.entries[0].noticeTarget,'History never stores a tab routing target');
   assert(!sb.ImageSaverFeedback.buildReport(raw).includes('noticeTarget'),'Report does not include routing metadata');
   console.log('PASS grouped notices: trusted routing/text, stable burst card, counts/coalescing/dedup/suppression, opt-out, locale/focus/timers/motion and session-only targets');
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>dom.window.close());

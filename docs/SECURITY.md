@@ -14,7 +14,7 @@ Before store submission, inspect the **built runtime ZIP**, including transitive
 
 - Save paths use selected-media and frame/document ownership checks; ambiguous or stale targets are refused in the supported guarded paths.
 - Processing paths have size/time bounds. This release also keeps the generic MD5 metadata deadline active through streaming/parsing, with a 1 MiB byte ceiling and cancellation. Sankaku post HTML has a 20-second deadline and 1 MiB ceiling.
-- UI uses React rendering; history, feedback and Debug exports sanitize diagnostic fields. Debug excludes full URLs, tokens, page text and local paths. History and Debug recording are opt-in.
+- UI uses React rendering; feedback and Debug exports sanitize diagnostic fields. Debug excludes full URLs, tokens, page text and local paths. Statistics and Debug recording are opt-in.
 - Buffered media validates expected format/container evidence within the supported processing paths. These checks are not a complete decoder sandbox or full-file validation of every direct browser download.
 - Packaging uses an accepted commit, an allowlist of runtime files, per-file hashes, licence/provenance checks and an archive hash. Local logs, agent materials and credentials are excluded.
 

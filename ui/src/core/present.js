@@ -1,4 +1,4 @@
-// Presentation helpers shared by the popup list and the history: texts, row parts, statistics wording and clipboard
+// Presentation helpers shared by the popup and the full page: texts, row parts, statistics wording and clipboard
 // access. Pure functions of an allow-listed record (ImageSaverFeedback.sanitizeRecord); no DOM, no chrome.
 // UI-LOCALIZATION-01: every text function takes the interface language ('en' | 'ru', Russian by default for older callers) and
 // translates through the shared catalogue (lib/i18n.js); records keep no text, so old records follow the selected language.
@@ -7,10 +7,9 @@ import { translator } from './i18n.js';
 /** Short states shown as an icon in the row. */
 export const PENDING_STATES = Object.freeze(['resolving', 'converting', 'saving']);
 
-// Russian texts kept as constants for existing callers; the pages translate the keys 'report.retryHint', 'report.privacy' and 'stats.scope'.
+// Russian texts kept as constants for the regression tests; the pages translate the keys 'report.retryHint' and 'report.privacy'.
 export const RETRY_HINT = translator('ru').t('report.retryHint');
 export const REPORT_PRIVACY = translator('ru').t('report.privacy');
-export const STATS_SCOPE_NOTE = translator('ru').t('stats.scope');
 
 // Failure texts (UI-COMPLETION-01). The shared taxonomy in lib/feedback.js (classifyFailure/categoryText) explains every category;
 // these few manager/resolver codes have no category of their own there, so they get their own catalogue texts here.
@@ -120,24 +119,24 @@ export function postUrlOf(FB, record) {
 }
 
 /**
- * Statistics view over the retained history. state: 'loading' | 'error' | 'ok'. Unknown or estimated metadata is shown
- * as such: types are "verified" only with verified evidence, sizes are summed only from measured values and the
- * coverage is stated. Texts are in `lang`.
+ * The all-time statistics view. `stats` are the aggregate counters (or records to count); state: 'loading' | 'error' | 'ok';
+ * `enabled` is the recording preference. Unknown or estimated metadata is shown as such: types are "verified" only with verified
+ * evidence, sizes are summed only from measured values and the coverage is stated. Texts are in `lang`.
  */
 export function statsView(FB, records, state, enabled, lang = 'ru') {
   const { t } = translator(lang);
-  const view = { note: t('stats.scope'), disabledNote: '', state: 'ok', message: '', tiles: [], types: [], sizeText: '' };
-  if (!enabled) view.disabledNote = t('stats.disabled');
+  const view = { note: t('statistics.scope'), disabledNote: '', state: 'ok', message: '', tiles: [], types: [], sizeText: '' };
+  if (!enabled) view.disabledNote = t('statistics.disabled');
   if (state === 'loading') { view.state = 'loading'; view.message = t('stats.loading'); return view; }
-  if (state === 'error' || !records) { view.state = 'error'; view.message = t('stats.error'); return view; }
+  if (state === 'error' || !records) { view.state = 'error'; view.message = t('statistics.loadFailed'); return view; }
   const s = Array.isArray(records) ? FB.computeStats(records) : records;
   if (!s.total) {
     view.state = 'empty';
-    view.message = t(enabled ? 'stats.emptyOn' : 'stats.emptyOff');
+    view.message = t('statistics.empty');
     return view;
   }
   view.tiles = [
-    { key: 'total', label: t('stats.total'), value: s.total },
+    { key: 'total', label: t('statistics.total'), value: s.total },
     { key: 'success', label: t('stats.success'), value: s.success },
     { key: 'failed', label: t('stats.failed'), value: s.failed },
     { key: 'cancelled', label: t('stats.cancelled'), value: s.cancelled },

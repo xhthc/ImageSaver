@@ -26,7 +26,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 // ---------------------------------------------------------------------------------------------------
 // Environment: production background.js + mocked Chrome
 // ---------------------------------------------------------------------------------------------------
-function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications = false, legacySink = false, captureManager = false, indexedDB = idbDouble() } = {}) {
+function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications = false, captureManager = false, indexedDB = idbDouble() } = {}) {
   const env = {
     downloadCalls: [],
     searchCalls: [],
@@ -165,9 +165,6 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
   vm.runInContext(bgCode, sandbox);
   const originalClick=env.contextMenuHandler;
   env.contextMenuHandler=async(info,tab)=>{if(tab?.id)env.tabUrls.set(tab.id,tab.url);return originalClick(info,tab);};
-  // Archived history/controller regressions inject their legacy sink explicitly;
-  // section17 exercises the production statistics sink without this override.
-  if (legacySink) sandbox.statistics = { record: record => sandbox.feedbackHistory.record(record) };
   env.sandbox = sandbox;
   env.x = sandbox.__exports;
   const originalBegin=env.x.fbBegin;
@@ -199,7 +196,6 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   const ru = (m) => I18n.message('ru', m);
   const coreMod = (name) => import(pathToFileURL(path.resolve(ROOT, 'ui/src/core', name)).href);
   const { createFeedbackList } = await coreMod('feedbackList.js');
-  const { createHistory } = await coreMod('history.js');
   const { createSettings } = await coreMod('settings.js');
   const present = await coreMod('present.js');
 
@@ -739,7 +735,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     assert(/<script src="\.\.\/lib\/feedback\.js"><\/script>/.test(popupHtml) && /id="root"/.test(popupHtml) && /type="module"/.test(popupHtml), '14d: the compact popup loads the shared feedback library and its bundle and has its mount point');
     assert(/id="root"/.test(detailsHtml) && /<DownloadsPanel full/.test(read('ui/src/components/app/full-app.tsx')) && !/<script[^>]+src="https?:/.test(popupHtml + detailsHtml) && !/\son\w+=/.test(popupHtml + detailsHtml), '14e: the full page exists; no remote scripts or inline handlers (MV3 CSP)');
     assert(fs.existsSync(path.resolve(ROOT, 'icons/notification.png')) && fs.readFileSync(path.resolve(ROOT, 'icons/notification.png')).slice(1, 4).toString() === 'PNG', '14f: notification icon is packaged');
-    const fbSources = read('lib/feedback.js') + read('lib/feedback_tracker.js') + read('ui/src/core/feedbackList.js') + read('ui/src/core/history.js');
+    const fbSources = read('lib/feedback.js') + read('lib/feedback_tracker.js') + read('ui/src/core/feedbackList.js') + read('ui/src/core/statistics.js');
     assert(!/\binnerHTML\b|\beval\(|new Function|document\.write|\bfetch\(|XMLHttpRequest|sendBeacon|\.createIssue|api\.github\.com/.test(fbSources.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')), '14g: feedback code has no innerHTML/eval and no network or issue-creation calls');
   }
 
@@ -884,7 +880,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     assert(/<StatisticsPanel \/>/.test(read('ui/src/components/app/full-app.tsx')) && !/<HistoryPanel \/>/.test(read('ui/src/components/app/full-app.tsx')),'17l: settings mounts clean Statistics');
   }
 
-  console.log('\n--- 19. Identifiable file names in results and history ---');
+  console.log('\n--- 19. Identifiable file names in results ---');
   {
     const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
     const ask = (env, action) => new Promise((resolve) => {
@@ -892,7 +888,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       for (const l of env.messageListeners) { const keep = l({ action }, extSender, (r) => { responded = true; resolve(r); }); if (keep === true || responded) break; }
       if (!responded) setTimeout(() => resolve(undefined), 0);
     });
-    const hEnv = (o = {}) => makeEnv({ ...o, legacySink: true, local: { historyEnabled: true, ...(o.local || {}) } });
+    const hEnv = (o = {}) => makeEnv({ ...o, local: { historyEnabled: true, ...(o.local || {}) } });
     const baseOf = (p) => String(p).split(/[\\/]/).pop();
     const B = FBLib.safeBasename;
 
@@ -987,29 +983,24 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     const rf = await envF.last();
     assert(rf.fallback === true && rf.filename === baseOf(envF.downloadCalls[envF.downloadCalls.length - 1].filename) && /fallback|\.png/.test(rf.filename) && !/primary/.test(rf.filename), '19u: a fallback result uses its own file name, not the primary one');
 
-    // history, reports, notifications, hostile names, rendering
+    // persisted results, reports, notifications, hostile names, rendering
     const envH = hEnv();
     await envH.ready();
     await envH.click(imageClick('hist1'));
     const rh = await envH.last();
     envH.downloadsDb.get(rh.downloadId).filename = `C:\\Users\\Secret Person\\Downloads\\${'長'.repeat(300)}\u202e.jpg`;
     await envH.finish(rh.downloadId);
-    const hres = await ask(envH, 'HISTORY_LIST');
+    const hres = await ask(envH, 'FEEDBACK_LIST');
     const he = hres.records[0];
-    const stored = JSON.stringify(envH.local.imageSaverHistoryV1) + JSON.stringify(envH.session.imageSaverFeedbackV1);
-    assert(he.filename.length <= 120 && he.filename.endsWith('_.jpg') === false && /\.jpg$/.test(he.filename) && !/Secret Person|Users|[\\\\]{2}/.test(stored), '19v: hostile/long names are bounded and persisted history/session hold no directory path');
-    assert(he.filenameKind === 'actual', '19w: the history keeps the filename kind');
+    const stored = JSON.stringify(envH.local) + JSON.stringify(envH.session.imageSaverFeedbackV1);
+    assert(he.filename.length <= 120 && he.filename.endsWith('_.jpg') === false && /\.jpg$/.test(he.filename) && !/Secret Person|Users|[\\\\]{2}/.test(stored), '19v: hostile/long names are bounded and persisted session/local storage hold no directory path');
+    assert(he.filenameKind === 'actual', '19w: the persisted result keeps the filename kind');
     assert(env.notifications.length === 1 && !(env.notifications[0].opts.title + env.notifications[0].opts.message).includes(requested.replace(/\.[a-z]+$/, '')) && !envH.notifications.some((n) => (n.opts.title + n.opts.message).indexOf(he.filename.slice(0, 5)) !== -1), '19x: file names are not placed in desktop notifications');
     const failedRec = { ...he, state: 'failed', failure: { stage: 'download', category: 'download_interrupted', code: '', status: null, downloadError: 'NETWORK_FAILED' } };
     const report = FBLib.buildReport(failedRec, { notes: 'x', env: { version: '2.0.0' } });
     assert(report.indexOf(he.filename) === -1 && report.indexOf(he.filename.slice(0, 8)) === -1 && !/filename/i.test(report), '19y: file names never appear in a copied bug report');
 
-    const chromeApi = { runtime: { getManifest: () => ({ version: '2.0.0' }), sendMessage: (m) => ask(envH, m.action) }, storage: { local: { get: async (d) => ({ ...d, ...envH.local }), set: async () => {} } } };
-    const hctl = createHistory({ chrome: chromeApi, FB: FBLib });
-    await hctl.start();
-    const hrecs = hctl.store.getState().records;
-    assert(hrecs.length === 1 && present.rowParts(FBLib, hrecs[0]).name === he.filename, '19z: the history row shows the basename as the main text');
-    assert(present.filenameLine(hrecs[0]).includes(he.filename), '19aa: expanded details show the complete sanitized name');
+    assert(present.filenameLine(he).includes(he.filename), '19aa: expanded details show the complete sanitized name');
     const rowSrc = read('ui/src/components/app/result-row.tsx');
     const detSrc = read('ui/src/components/app/result-details.tsx');
     assert(/block truncate[^"]*" data-slot="name"/.test(rowSrc) && /min-w-0 flex-1/.test(rowSrc) && /break-all/.test(detSrc) && /break-words/.test(detSrc), '19ab: long names are truncated in rows (ellipsis) and wrap in details, so they cannot widen the popup');
@@ -1030,7 +1021,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       if (!responded) setTimeout(() => resolve(undefined), 0);
     });
     const B = FBLib.safeBasename;
-    const hEnv = (o = {}) => makeEnv({ ...o, legacySink: true, local: { historyEnabled: true, ...(o.local || {}) } });
+    const hEnv = (o = {}) => makeEnv({ ...o, local: { historyEnabled: true, ...(o.local || {}) } });
     const urls = [
       'https://cdn.example.com/image.jpg?token=SECRET#fragment',
       'http://cdn.example.com/a/b/image.jpg?X-Amz-Signature=SIGSECRET',
@@ -1069,8 +1060,8 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     await env.finish(r.downloadId);
     const done = await env.last();
     assert(done.state === 'complete' && done.filename === requested && done.filenameKind === 'intended', '20e: a URL in DownloadItem.filename is ignored; the intended name stays, labelled as such');
-    const storedAll = JSON.stringify(env.session.imageSaverFeedbackV1) + JSON.stringify(env.local.imageSaverHistoryV1);
-    assert(!/SECRET|fragment|cdn\.example\.com\/image/.test(storedAll), '20f: no URL-derived secret is persisted in session feedback or history');
+    const storedAll = JSON.stringify(env.session.imageSaverFeedbackV1) + JSON.stringify(env.local);
+    assert(!/SECRET|fragment|cdn\.example\.com\/image/.test(storedAll), '20f: no URL-derived secret is persisted in session feedback or local storage');
 
     // rejected input at attach time: the unnamed summary is kept
     const env2 = hEnv();
@@ -1084,26 +1075,12 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     const parts = present.rowParts(FBLib, await env2.last());
     assert(parts.name === '' && /example\.com/.test(parts.legacy) && parts.legacy.length > 5, '20h: the rejected-name record keeps the useful unnamed summary (title, site)');
 
-    // persistent history: record() and raw stored entries
-    const envH = hEnv();
-    await envH.ready();
-    const base = { createdAt: Date.now() - 2000, updatedAt: Date.now() - 1000, state: 'complete', filenameKind: 'actual' };
-    await envH.sandbox.feedbackHistory.record({ ...base, id: 'op-histurl1', filename: 'https://cdn.example.com/image.jpg?token=SECRET#fragment' });
-    await envH.sandbox.feedbackHistory.record({ ...base, id: 'op-histurl2', filename: 'blob:https://example.com/private-id' });
-    await envH.sandbox.feedbackHistory.record({ ...base, id: 'op-histok001', filename: 'C:\\Users\\Ivan\\Downloads\\good name.jpg' });
-    const stored = JSON.stringify(envH.local.imageSaverHistoryV1);
-    assert(!/SECRET|private-id|fragment|Users/.test(stored), '20i: history.record() persists no URL-derived name or directory');
-    envH.local.imageSaverHistoryV1.entries.push({ ...base, id: 'op-histraw1', filename: 'https://cdn.example.com/legacy.jpg?token=SECRET' });
-    const listed = await ask(envH, 'HISTORY_LIST');
-    const byId = Object.fromEntries(listed.records.map((e) => [e.id, e]));
-    assert(byId['op-histurl1'].filename === '' && byId['op-histurl2'].filename === '' && byId['op-histraw1'].filename === '' && byId['op-histok001'].filename === 'good name.jpg', '20j: stored/loaded history entries are re-sanitized: URL names empty, genuine paths reduced to the basename');
-    assert(!/SECRET|legacy\.jpg/.test(JSON.stringify(envH.local.imageSaverHistoryV1)), '20k: persistent pruning/rewrite also drops a URL-derived name from previously stored data');
   }
 
   // =================================================================================================
-  console.log('\n--- 21. Legacy controller/tracker compatibility (explicit legacy sink) ---');
+  console.log('\n--- 21. Live results list on an open page ---');
   {
-    const env = makeEnv({ legacySink:true, local: { historyEnabled: true } });
+    const env = makeEnv({ local: { historyEnabled: true } });
     await env.ready();
     // The mock storage areas do not emit change events; chrome.storage.onChanged does in a browser. Emit them from the real writes.
     const listeners = [];
@@ -1137,10 +1114,8 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     };
     const settleUi = async () => { for (let i = 0; i < 12; i++) await new Promise((r) => setTimeout(r, 0)); };
     const list = createFeedbackList({ chrome: uiChrome, FB: FBLib, navigator: {} }, { limit: 5 });
-    const hist = createHistory({ chrome: uiChrome, FB: FBLib });
     await list.start();
-    await hist.start();
-    assert(list.store.getState().records.length === 0 && hist.store.getState().records.length === 0 && listeners.length === 2, '21a: the page starts empty with one subscription per list');
+    assert(list.store.getState().records.length === 0 && listeners.length === 1, '21a: the page starts empty with one subscription');
 
     // a save begins: the open list shows it without reopening
     await env.click(imageClick('live1'));
@@ -1152,7 +1127,6 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     await settleUi();
     const done = list.store.getState().records[0];
     assert(done.id === first.id && done.state === 'complete' && list.store.getState().records.length === 1, '21c: the completion updates the same result in place');
-    assert(hist.store.getState().records.length === 1 && hist.stats().success === 1, '21d: with history on, the finished operation appears in the history and its statistics');
     // failure
     env.fetchImpl = async () => ({ ok: false, status: 403, headers: { get: () => '' } });
     await env.click(imageClick('live2'));
@@ -1168,18 +1142,14 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     await env.finish(pending.downloadId, { state: 'interrupted', error: 'USER_CANCELED' });
     await settleUi();
     assert(list.store.getState().records[0].id === pending.id && list.store.getState().records[0].state === 'cancelled', '21g: a cancellation updates the result');
-    assert(hist.store.getState().records.length === 3 && hist.stats().cancelled === 1 && hist.stats().failed === 1, '21h: the history and its statistics follow the failure and the cancellation');
     // clear
     await list.clear();
     await settleUi();
     assert(list.store.getState().records.length === 0, '21i: clearing the completed results empties the open list');
-    await hist.clear();
-    await settleUi();
-    assert(hist.store.getState().records.length === 0 && ru(hist.store.getState().clearStatus) === 'История очищена.', '21j: clearing the history empties it');
 
     // a hidden list shows a failure but keeps it unacknowledged until it is shown (the visible list of the first part is closed)
-    list.dispose(); hist.dispose();
-    assert(listeners.length === 0, '21ja: closing the visible list and the history removes their subscriptions');
+    list.dispose();
+    assert(listeners.length === 0, '21ja: closing the visible list removes its subscription');
     const hiddenList = createFeedbackList({ chrome: uiChrome, FB: FBLib, navigator: {} }, { limit: 5, visible: false });
     await hiddenList.start();
     env.fetchImpl = async () => ({ ok: false, status: 403, headers: { get: () => '' } });
@@ -1206,7 +1176,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   // =================================================================================================
   console.log('\n--- 22. Durable explanation of the animation duration policy (reason, measured duration, threshold) ---');
   {
-    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js', 'lib/feedback_history.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
     const FB = ctx.ImageSaverFeedback;
     const REASON = 'animation_duration_limit';
     const mem = () => { const store = {}; return { store, area: { get: async (k) => store[k], set: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); } } }; };
@@ -1314,20 +1284,22 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       assert(notes.length === 0 && rec.state === 'complete' && /40 с/.test(policyLine(rec)), '22o: with success notifications disabled there is no toast and the result still explains why MP4 was saved');
     }
 
-    // history: the real store round trip keeps the explanation
+    // the persisted result: a restart keeps the explanation, and a tampered stored reason is dropped on load
     {
       const m = mem();
-      const hist = ctx.ImageSaverFeedbackHistory.createHistory({ storage: m.area, isEnabled: async () => true, now: () => 1700000000000 + 60000, log: () => {} });
-      const rec = FB.sanitizeRecord(baseRec({ id: 'op-hist1abcdef', reason: REASON, durationSec: 35, thresholdSec: 30, output: { type: 'video', ext: '.mp4', evidence: 'verified_mime', mime: 'video/mp4', durationSec: 35, reason: REASON, thresholdSec: 30 } }));
-      assert(await hist.record(rec) === true, '22p: the completed record is accepted by the history store');
-      const stored = m.store[hist.STORAGE_KEY].entries[0];
-      assert(stored.reason === REASON && stored.durationSec === 35 && stored.thresholdSec === 30 && stored.output.reason === REASON, '22q: the stored history entry keeps reason, duration and threshold');
-      const listed = (await hist.list()).entries[0];
-      assert(listed.reason === REASON && /35 с/.test(policyLine(listed)) && JSON.stringify(m.store[hist.STORAGE_KEY].entries[0]) === JSON.stringify(stored), '22r: the listed entry explains the choice and the stored form is stable (not rewritten as dirty)');
-      m.store[hist.STORAGE_KEY].entries[0].reason = 'https://evil.example/?token=SECRET';
-      m.store[hist.STORAGE_KEY].entries[0].output.reason = 'javascript:alert(1)';
-      const tampered = (await hist.list()).entries[0];
-      assert(tampered.reason === '' && !/evil|SECRET/.test(JSON.stringify(m.store[hist.STORAGE_KEY])) && policyLine(tampered) === '', '22s: a tampered stored reason is dropped on load and rewritten clean');
+      const t = mkTracker(m);
+      const id = await t.begin({ site: 'reddit.com' });
+      await t.stage(id, 'saving', policyPatch(35, 30));
+      await t.flush();
+      const key = ctx.ImageSaverFeedbackTracker.STORAGE_KEY;
+      const stored = m.store[key].ops.find((r) => r.id === id);
+      assert(stored.reason === REASON && stored.durationSec === 35 && stored.thresholdSec === 30 && stored.output.reason === REASON, '22q: the stored result keeps reason, duration and threshold');
+      stored.reason = 'https://evil.example/?token=SECRET';
+      stored.output.reason = 'javascript:alert(1)';
+      const reloaded = mkTracker(m);
+      await reloaded.ready();
+      const tampered = await reloaded.get(id);
+      assert(tampered.reason === '' && !/evil|SECRET/.test(JSON.stringify(tampered)) && policyLine(tampered) === '', '22s: a tampered stored reason is dropped on load');
     }
 
     // the notifier decides from the validated policy explanation of the record, never from a raw reason alone
@@ -2146,19 +2118,20 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   }
 
   // =================================================================================================
-  console.log('\n--- 28. F5: recover transient failed delivery to enabled history ---');
+  console.log('\n--- 28. Tracker delivery to statistics: session failure, opt-in and clear boundaries ---');
   {
-    const hEnv = (o = {}) => makeEnv({ ...o, legacySink: true, local: { historyEnabled: true, ...(o.local || {}) } });
+    // Recovery of a failed commit, idempotent repeats and restart are section 17 (17c, 17m, 17n); these are the remaining boundaries.
     const extSender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
-    const ask = (env, action, sender = extSender) => new Promise((resolve) => {
-      let responded = false;
+    // an asynchronous answer (keep === true) is awaited; only a message nobody handles resolves to null
+    const ask = (env, action) => new Promise((resolve) => {
       for (const l of env.messageListeners) {
-        const keep = l({ action }, sender, (r) => { responded = true; resolve(r); });
-        if (keep === true || responded) break;
+        let responded = false;
+        const keep = l({ action }, extSender, (r) => { responded = true; resolve(r); });
+        if (keep === true || responded) return;
       }
-      if (!responded) setTimeout(() => resolve(undefined), 0);
+      resolve(null);
     });
-    const hist = async (env) => (await ask(env, 'HISTORY_LIST')).records;
+    const total = async (env) => (await ask(env, 'STATISTICS_LIST')).stats.total;
     const saveOne = async (env, n) => {
       await env.click(imageClick(n));
       const r = await env.last();
@@ -2166,57 +2139,9 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       return env.last();
     };
 
-    // 28a: Real history writer with injected transient storage failure followed by successful recovery and tracker recreation
-    {
-      const env1 = hEnv();
-      await env1.ready();
-
-      // Inject transient write failure into chrome.storage.local
-      env1.failLocalWrite = true;
-      const op1 = await saveOne(env1, 'recov1');
-      await env1.tracker.flush();
-
-      // Write failed: history store has 0 entries
-      env1.failLocalWrite = false;
-      assert((await hist(env1)).length === 0, '28a1: storage failure prevented immediate history recording');
-
-      // Tracker record in memory and session storage has historyPending === true
-      const memRec = await env1.tracker.get(op1.id);
-      assert(memRec && memRec.historyPending === true, '28a2: in-memory tracker marks historyPending === true');
-      const sessionOps = env1.session[env1.sandbox.ImageSaverFeedbackTracker.STORAGE_KEY]?.ops || [];
-      const sessionRec = sessionOps.find((o) => o.id === op1.id);
-      assert(sessionRec && sessionRec.historyPending === true, '28a3: session storage persists historyPending === true');
-
-      // Simulate service worker restart: recreate tracker with the same session and local stores
-      const env2 = hEnv({ session: env1.session, local: env1.local, downloadsDb: env1.downloadsDb });
-      await env2.ready();
-      await env2.tracker.flush();
-
-      // Recovery occurred: history store now holds the record!
-      const recoveredHist = await hist(env2);
-      assert(recoveredHist.length === 1 && recoveredHist[0].id === op1.id, '28a4: tracker recreation successfully recovered failed history write');
-
-      // historyPending was cleared from tracker and session storage
-      const memRec2 = await env2.tracker.get(op1.id);
-      assert(memRec2 && !memRec2.historyPending, '28a5: historyPending cleared from tracker in memory');
-      const sessionOps2 = env2.session[env2.sandbox.ImageSaverFeedbackTracker.STORAGE_KEY]?.ops || [];
-      const sessionRec2 = sessionOps2.find((o) => o.id === op1.id);
-      assert(sessionRec2 && !sessionRec2.historyPending, '28a6: historyPending cleared from session storage');
-
-      // 28b: Acknowledged writes do not duplicate
-      await env2.tracker.list();
-      await env2.tracker.flush();
-      assert((await hist(env2)).length === 1, '28b1: subsequent list() does not duplicate history entry');
-
-      // 28c: Repeat terminal events remain idempotent
-      await env2.emitDownload({ id: op1.downloadId, state: { current: 'complete' } });
-      await env2.tracker.flush();
-      assert((await hist(env2)).length === 1, '28c1: repeat terminal event remains idempotent (no duplicate entry)');
-    }
-
     // 28d: Session persistence failure does not destructively overwrite stored records
     {
-      const env = hEnv();
+      const env = makeEnv({ local: { historyEnabled: true } });
       await env.ready();
       await saveOne(env, 'persist_ok');
       await env.tracker.flush();
@@ -2234,83 +2159,59 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       assert(opsAfter.length >= countBefore, '28d2: session storage write failure did not destroy stored records');
     }
 
-    // 28e: Disabled history preference never grants recording, and enabling later does not retroactively record
+    // 28e: Disabled recording never counts, and enabling later does not count retroactively
     {
-      const envDis = makeEnv({ local: { historyEnabled: false } });
+      const idb = idbDouble();
+      const envDis = makeEnv({ local: { historyEnabled: false }, indexedDB: idb });
       await envDis.ready();
       const opDis = await saveOne(envDis, 'disabled_save');
       await envDis.tracker.flush();
-
-      // Not recorded
-      assert((await hist(envDis)).length === 0, '28e1: save while history disabled is not in history');
+      assert(await total(envDis) === 0, '28e1: a save while recording is off is not counted');
       const disRec = await envDis.tracker.get(opDis.id);
-      assert(disRec && !disRec.historyPending, '28e2: historyPending is NOT set for save made while history was disabled');
-
-      // Now enable history: does NOT retroactively record previously ineligible save
+      assert(disRec && !disRec.historyPending, '28e2: historyPending is NOT set for a save made while recording was off');
       envDis.local.historyEnabled = true;
-      const envRecreated = hEnv({ session: envDis.session, local: envDis.local, downloadsDb: envDis.downloadsDb });
+      const envRecreated = makeEnv({ session: envDis.session, local: envDis.local, downloadsDb: envDis.downloadsDb, indexedDB: idb });
       await envRecreated.ready();
       await envRecreated.tracker.flush();
-      assert((await hist(envRecreated)).length === 0, '28e3: enabling history later does not record save made while disabled');
+      assert(await total(envRecreated) === 0, '28e3: enabling recording later does not count a save made while it was off');
     }
 
-    // 28f: Unreadable history preference never grants recording
+    // 28f: An unreadable recording preference never counts at that time
     {
-      const envUnread = hEnv();
+      const envUnread = makeEnv({ local: { historyEnabled: true } });
       await envUnread.ready();
+      await total(envUnread);
       envUnread.failLocalGet = true;
       await saveOne(envUnread, 'unread_pref_save');
       await envUnread.tracker.flush();
       envUnread.failLocalGet = false;
-
-      assert((await hist(envUnread)).length === 0, '28f1: unreadable preference never authorizes recording');
+      assert(await total(envUnread) === 0, '28f1: an unreadable preference never authorizes counting');
     }
 
-    // 28g: Clear during pending delivery cannot resurrect entries
+    // 28g: A clear while a delivery is pending cannot resurrect the operation
     {
-      const envClear = hEnv();
+      const idb = idbDouble();
+      const envClear = makeEnv({ local: { historyEnabled: true }, indexedDB: idb });
       await envClear.ready();
-
-      // Transient storage failure
-      envClear.failLocalWrite = true;
-      const opClear = await saveOne(envClear, 'pending_before_clear');
-      await envClear.tracker.flush();
-      envClear.failLocalWrite = false;
-
+      await total(envClear);
+      await envClear.click(imageClick('pending_before_clear'));
+      const opClear = await envClear.last();
+      idb.failAll = true;
+      await envClear.finish(opClear.downloadId);
+      idb.failAll = false;
       const pRec = await envClear.tracker.get(opClear.id);
       assert(pRec && pRec.historyPending === true, '28g1: record has historyPending === true');
-
-      // User clears history while delivery was pending
-      const clrRes = await ask(envClear, 'HISTORY_CLEAR');
-      assert(clrRes.success === true, '28g2: HISTORY_CLEAR succeeded');
-
-      // Recreate tracker and trigger recovery
-      const envClear2 = hEnv({ session: envClear.session, local: envClear.local, downloadsDb: envClear.downloadsDb });
+      const clrRes = await ask(envClear, 'STATISTICS_CLEAR');
+      assert(clrRes.success === true, '28g2: STATISTICS_CLEAR succeeded');
+      const envClear2 = makeEnv({ session: envClear.session, local: envClear.local, downloadsDb: envClear.downloadsDb, indexedDB: idb });
       await envClear2.ready();
       await envClear2.tracker.flush();
-
-      // Entry was created before clearedAt, so it must NOT be resurrected into history
-      assert((await hist(envClear2)).length === 0, '28g3: cleared boundary prevents resurrecting pre-clear entry');
+      assert(await total(envClear2) === 0, '28g3: the clear boundary prevents counting an operation created before it');
       const recAfterClear = await envClear2.tracker.get(opClear.id);
-      assert(recAfterClear && !recAfterClear.historyPending, '28g4: historyPending cleared after rejected pre-clear delivery');
+      assert(recAfterClear && !recAfterClear.historyPending, '28g4: historyPending cleared after the rejected pre-clear delivery');
     }
 
-    // 28h: Entries older than clear / retention boundary stay absent
-    {
-      const envRet = hEnv();
-      await envRet.ready();
-      const DAY = 24 * 60 * 60 * 1000;
-      const oldTime = Date.now() - 8 * DAY;
-      envRet.local.imageSaverHistoryV1 = {
-        v: 1,
-        entries: [FBLib.sanitizeRecord({ id: 'op-hist-ancient', createdAt: oldTime, updatedAt: oldTime, state: 'complete', site: 'example.com' })],
-        clearedAt: 0
-      };
-      const entries = await hist(envRet);
-      assert(!entries.some((e) => e.id === 'op-hist-ancient'), '28h1: history entry older than 7 days retention is excluded');
-    }
-
-    // 28i: History callback bookkeeping write serializes ahead of concurrent begin; both survive restart
+    // 28i: Delivery bookkeeping write serializes ahead of concurrent begin; both survive restart
     {
       const state = {};
       let rejectDelivery, releaseWrite, holdOnce = true, writeStarted;
@@ -2318,15 +2219,16 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       const delivery = new Promise((resolve) => { deliveryStarted = resolve; });
       const started = new Promise((resolve) => { writeStarted = resolve; });
 
-      let history;
       const tCtx = (() => {
         const s = { URL, console, setTimeout, clearTimeout };
         vm.createContext(s);
-        for (const f of ['lib/feedback.js', 'lib/feedback_history.js', 'lib/feedback_tracker.js']) {
+        for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) {
           vm.runInContext(read(f), s);
         }
         return vm.runInContext('globalThis', s);
       })();
+      // the statistics sink's commit, held and then rejected
+      const history = { record: () => new Promise((_, reject) => { rejectDelivery = reject; deliveryStarted(); }) };
 
       let opCount = 0;
       const makeTrack = (storageDeps = {}) => tCtx.ImageSaverFeedbackTracker.createTracker({
@@ -2356,23 +2258,11 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
         }
       });
 
-      history = tCtx.ImageSaverFeedbackHistory.createHistory({
-        now: () => 1800000000000,
-        isEnabled: async () => true,
-        storage: {
-          get: async () => null,
-          set: () => new Promise((_, reject) => {
-            rejectDelivery = reject;
-            deliveryStarted();
-          })
-        }
-      });
-
       const opA = await tracker.begin({ site: 'reddit' });
       await tracker.fail(opA, { code: 'NO_MEDIA' });
       await delivery; // wait for history.record to be invoked
 
-      rejectDelivery(new Error('transient history storage failure'));
+      rejectDelivery(new Error('transient statistics storage failure'));
       await started; // wait for bookkeeping persist to start and pause at barrier
 
       // While bookkeeping write is held, start concurrent operation B
@@ -2443,7 +2333,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       await restarted.ready();await restarted.flush();
       assert(delivered.includes(id),'28i13: pending statistics survives restart and is delivered again');
     }
-    // 28j: clearFinished during in-flight history outcome does not resurrect cleared record
+    // 28j: clearFinished during an in-flight delivery outcome does not resurrect the cleared record
     {
       const state = {};
       let releaseHistory;
@@ -2456,7 +2346,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       const tCtx = (() => {
         const s = { URL, console, setTimeout, clearTimeout };
         vm.createContext(s);
-        for (const f of ['lib/feedback.js', 'lib/feedback_history.js', 'lib/feedback_tracker.js']) {
+        for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) {
           vm.runInContext(read(f), s);
         }
         return vm.runInContext('globalThis', s);

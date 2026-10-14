@@ -16,12 +16,7 @@ import { getEnv } from "@/lib/env"
 function Body({ controller }: { controller: ReturnType<typeof createStatistics> }) {
   const state = useStore(controller.store)
   const { t, lang } = useI18n()
-  const view: any = statsView(getEnv().FB, state.stats, state.status === "loading" ? "loading" : state.status === "error" ? "error" : "ok", true, lang)
-  view.note = t("statistics.scope")
-  for (const tile of view.tiles) if (tile.key === "total") tile.label = t("statistics.total")
-  if (view.state === "error") view.message = t("statistics.loadFailed")
-  if (!state.enabled) view.disabledNote = t("statistics.disabled")
-  if (view.state === "empty") view.message = t("statistics.empty")
+  const view: any = statsView(getEnv().FB, state.stats, state.status === "loading" ? "loading" : state.status === "error" ? "error" : "ok", state.enabled, lang)
   return <div className="space-y-4" data-slot="statistics">
     <StatsCard view={view} />
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">

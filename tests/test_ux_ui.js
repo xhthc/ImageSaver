@@ -71,10 +71,7 @@ function makeChrome(state) {
         }
         if (msg.action === 'FEEDBACK_MARK_SEEN' && state.failMarkSeen) return { success: false };
         if (msg.action === 'FEEDBACK_MARK_SEEN' || msg.action === 'FEEDBACK_CLEAR') return { success: true, records: state.session.slice().reverse() };
-        if (msg.action === 'HISTORY_LIST' || msg.action === 'HISTORY_CLEAR') {
-          if (msg.action === 'HISTORY_CLEAR') { if (state.failClear) return { success: false }; state.history = []; }
-          return { success: true, records: state.history.slice().reverse(), pruneFailed: state.pruneFailed === true };
-        }
+        if (msg.action === 'STATISTICS_LIST') return { success: true, stats: { total: 0 } };
         return undefined;
       }
     },
@@ -166,7 +163,7 @@ function makeChrome(state) {
   const { createStore } = await core('store.js');
   const nav = await core('nav.js');
   const { createFeedbackList, browserLabel } = await core('feedbackList.js');
-  const { createHistory } = await core('history.js');
+  const { createStatistics } = await core('statistics.js');
   const { createQuick } = await core('quick.js');
   const { createSettings, DEFAULTS, ALLOWED_HOSTS, cleanHost, STATUS_MS } = await core('settings.js');
   const present = await core('present.js');
@@ -325,7 +322,7 @@ function makeChrome(state) {
     const retained = mixed.filter((r) => r && r.state);
     const v = present.statsView(FB, retained, 'ok', true);
     const tile = (view, key) => view.tiles.find((t) => t.key === key);
-    assert(/не более 50 операций за последние 7 дней/.test(v.note) && /не итоги за всё время/.test(v.note) && /не обязательно все загрузки/.test(v.note), '25f: the scope note states 50 operations / 7 days and that these are not lifetime totals');
+    assert(/Итоги с начала учёта или последней очистки/.test(v.note) && /Без ограничения по числу записей и сроку/.test(v.note), '25f: the scope note states all-time totals since recording began or the last clear, without an entry or time limit');
     assert(tile(v, 'success').value === 5 && tile(v, 'failed').value === 2 && tile(v, 'cancelled').value === 1 && tile(v, 'unknown').value === 1 && /Результат неизвестен/.test(tile(v, 'unknown').label) && tile(v, 'total').value === 9, '25g: outcome counters are distinct');
     const pic = v.types.find((t) => t.key === 'pic');
     assert(pic.label === 'Изображения' && pic.value === 2 && pic.detail === 'тип подтверждён: 1; определён по расширению файла: 1' && v.types.find((t) => t.key === 'unknown').value === 1, '25h: type counters show the evidence split');
@@ -333,45 +330,17 @@ function makeChrome(state) {
     const none = present.statsView(FB, [rec({ output: { type: 'pic', ext: '.jpg', evidence: 'filename_hint' } })], 'ok', true);
     assert(/Известный суммарный размер: неизвестен/.test(none.sizeText) && /измерен у 0 из 1/.test(none.sizeText), '25j: with no measured size the total is "unknown", never zero');
     const off = present.statsView(FB, [rec()], 'ok', false);
-    assert(/Запись истории выключена: уже сохранённые записи остаются, новые операции не добавляются/.test(off.disabledNote) && tile(off, 'total').value === 1, '25k: with recording disabled the existing entries are still summarised and the behavior is explained');
+    assert(/Учёт выключен. Уже накопленные итоги сохраняются/.test(off.disabledNote) && tile(off, 'total').value === 1, '25k: with recording disabled the existing totals are still shown and the behavior is explained');
     const eOff = present.statsView(FB, [], 'ok', false);
     const eOn = present.statsView(FB, [], 'ok', true);
     const ld = present.statsView(FB, null, 'loading', true);
     const er = present.statsView(FB, null, 'error', true);
-    assert(eOff.state === 'empty' && /Включите запись истории/.test(eOff.message) && /В истории пока нет записей/.test(eOn.message) && ld.state === 'loading' && /Загрузка статистики/.test(ld.message) && er.state === 'error' && /Статистика недоступна/.test(er.message), '25l: empty, disabled, loading and error states are distinct');
+    assert(eOff.state === 'empty' && /Учтённых операций пока нет/.test(eOn.message) && eOff.message === eOn.message && /Учёт выключен/.test(eOff.disabledNote) && !eOn.disabledNote && ld.state === 'loading' && /Загрузка статистики/.test(ld.message) && er.state === 'error' && /Не удалось загрузить статистику/.test(er.message), '25l: empty, disabled, loading and error states are distinct');
 
-    // the history controller: statistics follow the data, the toggle and the clear action
-    const state = { session: [], history: [rec(), rec({ state: 'failed', output: {}, failure: failure('resolve', 'unresolved', { code: 'NO_MEDIA' }) })], local: { historyEnabled: true } };
-    const { chrome } = makeChrome(state);
-    const h = createHistory({ chrome, FB });
-    assert(h.store.getState().status === 'loading' && h.stats() === null, '25m: before the history is loaded there are no statistics');
-    await h.start();
-    const hs = () => h.store.getState();
-    const view = () => present.statsView(FB, hs().records, hs().status === 'error' ? 'error' : 'ok', hs().enabled);
-    assert(hs().status === 'ready' && hs().enabled === true && h.stats().total === 2 && tile(view(), 'success').value === 1 && !view().disabledNote, '25n: the history section shows statistics for the loaded history');
-    await h.setEnabled(false);
-    assert(hs().enabled === false && state.local.historyEnabled === false && /Запись истории выключена/.test(view().disabledNote) && tile(view(), 'total').value === 2, '25o: switching recording off explains the behavior and keeps the statistics of existing entries');
-    await h.clear();
-    assert(hs().records.length === 0 && ru(hs().clearStatus) === 'История очищена.' && view().state === 'empty', '25p: clearing empties the statistics');
-    state.history.push(rec());
-    state.failClear = true;
-    await h.clear();
-    assert(/данные не удалены/.test(ru(hs().error)) && hs().records.length === 0 && hs().clearStatus === '' && hs().clearing === false, '25q: a failed clear is reported truthfully (nothing claimed cleared)');
-    const stateErr = { session: [], history: [], local: {}, failMessages: true };
-    const h2 = createHistory({ chrome: makeChrome(stateErr).chrome, FB });
-    await h2.start();
-    assert(h2.store.getState().status === 'error' && /Не удалось загрузить историю/.test(ru(h2.store.getState().error)) && present.statsView(FB, h2.store.getState().records, 'error', false).state === 'error', '25r: a messaging failure shows loading errors instead of statistics');
-    const stP = { session: [], history: [rec()], local: { historyEnabled: true }, pruneFailed: true };
-    const h3 = createHistory({ chrome: makeChrome(stP).chrome, FB });
-    await h3.start();
-    assert(/Не удалось удалить устаревшие записи из хранилища/.test(ru(h3.store.getState().error)) && h3.store.getState().status === 'ready', '25s: a failed pruning is reported while the retained records are still shown');
-    const off2 = createHistory({ chrome: makeChrome({ session: [], history: [rec(), rec()], local: { historyEnabled: false, historyInviteDismissed: true } }).chrome, FB });
-    await off2.start();
-    assert(off2.store.getState().records.length === 2 && off2.store.getState().enabled === false && /Запись истории выключена/.test(present.statsView(FB, off2.store.getState().records, 'ok', false).disabledNote), '25t: the full page still shows retained records and statistics while recording is off, and explains it');
   }
 
   // =================================================================================================
-  console.log('\n--- 26. Settings: persistence and isolation (ui/src/core/settings.js, history.js) ---');
+  console.log('\n--- 26. Settings: persistence and isolation (ui/src/core/settings.js, statistics.js) ---');
   {
     const DEFAULTS_KEYS = ['subfolder', 'folderOrganizationMode', 'saveDirectoryId', 'xAuthorFolders', 'redditAuthorFolders', 'pixivAuthorFolders', 'xShareHost', 'igShareHost', 'ttShareHost', 'youtubeShareHost'];
     const timers = [];
@@ -429,17 +398,19 @@ function makeChrome(state) {
     assert(a.calls.localSets.length === before + 1 && JSON.stringify(notifySet) === JSON.stringify({ notifySuccess: true }) && st().notify.checked === true, '26e: the notification preference saves immediately and writes only notifySuccess');
     assert(a.state.local.subfolder === 'ab/c', '26f: the folder setting is unaffected by the notification change');
 
-    const hist = createHistory({ chrome: a.chrome, FB });
-    await hist.start();
+    // the statistics recording switch (ui/src/core/statistics.js) is the page's only writer of historyEnabled
+    const stats = createStatistics({ chrome: a.chrome });
+    await stats.ready;
     const before2 = a.calls.localSets.length;
-    await hist.setEnabled(false);
-    assert(a.calls.localSets.length === before2 + 1 && JSON.stringify(a.calls.localSets[a.calls.localSets.length - 1]) === JSON.stringify({ historyEnabled: false }), '26g: the history switch writes only historyEnabled');
+    await stats.setEnabled(false);
+    assert(a.calls.localSets.length === before2 + 1 && JSON.stringify(a.calls.localSets[a.calls.localSets.length - 1]) === JSON.stringify({ historyEnabled: false }), '26g: the recording switch writes only historyEnabled');
 
     a.state.failSet = true;
     await a.settings.setNotifySuccess(false);
     assert(st().notify.checked === true && /Не удалось сохранить настройку уведомлений/.test(ru(st().notify.error)) && a.state.local.notifySuccess === true, '26h: a storage failure reverts the notification preference and says so');
-    await hist.setEnabled(true);
-    assert(hist.store.getState().enabled === false && /Не удалось сохранить настройку истории/.test(ru(hist.store.getState().prefError)) && a.state.local.historyEnabled === false, '26h2: a storage failure reverts the history switch and says so');
+    await stats.setEnabled(true);
+    assert(stats.store.getState().enabled === false && /Не удалось сохранить настройку учёта/.test(ru(stats.store.getState().error)) && a.state.local.historyEnabled === false, '26h2: a storage failure keeps the recording switch off and says so');
+    stats.dispose();
     a.settings.setField('subfolder', 'x'.repeat(300));
     const setsBefore = a.calls.localSets.length;
     assert(await a.settings.save() === false);
@@ -529,12 +500,13 @@ function makeChrome(state) {
       assert(R.store.getState().loaded && R.store.getState().status.message === '' && R.store.getState().subfolder === local.subfolder, 'life19: the retry reads the stored values and clears the error');
       L.dispose(); R.dispose();
     }
-    const e3 = createHistory({ chrome: makeChrome({ session: [], history: [], local: { historyEnabled: 'true' } }).chrome, FB });
-    await e3.start();
-    assert(e3.store.getState().enabled === false, '26k: a malformed history preference is shown as off (opt-in preserved)');
-    const e4 = createHistory({ chrome: makeChrome({ session: [], history: [], local: {}, failGet: true }).chrome, FB });
-    await e4.start();
-    assert(e4.store.getState().enabled === false && /считается выключенной/.test(ru(e4.store.getState().prefError)), '26l: an unreadable history preference is off and says so');
+    const e3 = createStatistics({ chrome: makeChrome({ session: [], history: [], local: { historyEnabled: 'true' } }).chrome });
+    await e3.ready;
+    assert(e3.store.getState().enabled === false, '26k: a malformed recording preference is shown as off (opt-in preserved)');
+    const e4 = createStatistics({ chrome: makeChrome({ session: [], history: [], local: {}, failGet: true }).chrome });
+    await e4.ready;
+    assert(e4.store.getState().enabled === false && /считается выключенным/.test(ru(e4.store.getState().error)), '26l: an unreadable recording preference is off and says so');
+    e3.dispose(); e4.dispose();
     assert(cleanHost('xShareHost', 'evil.example') === 'fixupx.com' && cleanHost('igShareHost', 'kirkstagram.com') === 'kirkstagram.com' && cleanHost('ttShareHost', '__proto__') === 'tnktok.com' && cleanHost('youtubeShareHost', 'koutube.com') === 'koutube.com' && ALLOWED_HOSTS.xShareHost.length === 3, '26m: a share host outside its allow-list falls back to the preview default');
     const mal = await mountSettings({ xShareHost: 'evil.example', folderOrganizationMode: 'bogus', askEveryTime: 'yes', subfolder: 42 });
     assert(mal.st().xShareHost === 'fixupx.com' && mal.st().folderOrganizationMode === 'single' && !('askEveryTime' in mal.st()) && mal.st().subfolder === 'SavedImages', '26n: malformed values are normalized and the removed preference is ignored');
@@ -728,7 +700,7 @@ function makeChrome(state) {
       assert(status.every(s => surfaces.every(b => ratio(s,b) >= 4.5)) && ratio('primary-foreground','primary') >= 4.5 && ratio('ring','background') >= 3,
         `theme10-${theme}: status text, links, primary buttons and keyboard focus retain contrast`);
     }
-    assert(/--danger/.test(css) && !/text-red-|text-destructive/.test(['quick-app', 'full-app', 'result-row', 'result-details', 'stats-card', 'settings-panels', 'history-panel', 'results-list', 'debug-panel'].map((n) => read(`ui/src/components/app/${n}.tsx`)).join('\n') + read('ui/src/components/ui/alert.tsx')), '30g: error text uses the checked danger colour, not the darker destructive fill');
+    assert(/--danger/.test(css) && !/text-red-|text-destructive/.test(['quick-app', 'full-app', 'result-row', 'result-details', 'stats-card', 'settings-panels', 'statistics-panel', 'downloads-panel', 'debug-panel'].map((n) => read(`ui/src/components/app/${n}.tsx`)).join('\n') + read('ui/src/components/ui/alert.tsx')), '30g: error text uses the checked danger colour, not the darker destructive fill');
     assert(!/text-(?:amber|emerald)-/.test(read('ui/src/components/app/debug-panel.tsx')) && !/text-foreground\/60/.test(read('ui/src/components/ui/tabs.tsx')), 'theme11: Debug status and inactive tab text use checked semantic theme colours');
     assert(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*0\.01ms !important[\s\S]*transition-duration:\s*0\.01ms !important/.test(css) && /motion-reduce:animate-none/.test(read('ui/src/components/app/result-row.tsx')) && !/animate-|transition-/.test(read('ui/src/components/ui/tooltip.tsx')), '30h: reduced-motion rules cover animated controls; the tooltip has no motion');
     assert(/color-scheme:\s*dark/.test(css) && /@custom-variant dark/.test(css) && /<html lang="en" class="dark" data-theme="violet">/.test(read('ui/popup.html')) && /<html lang="en" class="dark" data-theme="violet">/.test(read('ui/quick.html')) && /documentElement\.lang = value\.lang/.test(read('ui/src/hooks/use-i18n.tsx')), '30i: both pages initially use Violet; the static lang is replaced at runtime by the interface language');
@@ -749,8 +721,8 @@ function makeChrome(state) {
     };
 
     // the keys are the persistence keys of the tracker and of the history store
-    const trackerLib = (() => { const sb = { URL, console }; vm.createContext(sb); vm.runInContext(read('lib/feedback.js'), sb); vm.runInContext(read('lib/feedback_tracker.js'), sb); vm.runInContext(read('lib/feedback_history.js'), sb); return sb; })();
-    assert(keys.FEEDBACK_KEY === trackerLib.ImageSaverFeedbackTracker.STORAGE_KEY && keys.HISTORY_KEY === trackerLib.ImageSaverFeedbackHistory.STORAGE_KEY && keys.HISTORY_ENABLED_KEY === trackerLib.ImageSaverFeedbackHistory.ENABLED_KEY, '31a: the watched keys are the tracker and history persistence keys and the history preference key');
+    const trackerLib = (() => { const sb = { URL, console }; vm.createContext(sb); vm.runInContext(read('lib/feedback.js'), sb); vm.runInContext(read('lib/feedback_tracker.js'), sb); return sb; })();
+    assert(keys.FEEDBACK_KEY === trackerLib.ImageSaverFeedbackTracker.STORAGE_KEY && read('background.js').includes(`(await chrome.storage.local.get('${keys.HISTORY_ENABLED_KEY}')).${keys.HISTORY_ENABLED_KEY} === true`), '31a: the watched keys are the tracker persistence key and the recording preference the worker reads');
 
     // a new result, a transition, a failure and a cancellation appear without reopening
     const a = await mount();
@@ -784,7 +756,7 @@ function makeChrome(state) {
 
     // other changes are ignored
     const n0 = a.count('FEEDBACK_LIST');
-    emit(a.state, { [keys.HISTORY_KEY]: {} }, 'local');
+    emit(a.state, { imageSaverHistoryV1: {} }, 'local');
     emit(a.state, { notifySuccess: { newValue: false } }, 'local');
     emit(a.state, FEED, 'sync');
     emit(a.state, FEED, 'managed');
@@ -903,32 +875,18 @@ function makeChrome(state) {
     assert(eList2.store.getState().status === 'ready' && eList2.store.getState().records.length === 1 && eList2.store.getState().error === '', '31wa: the next change recovers the list without reopening the page');
     eList2.dispose();
 
-    // the history: its key refreshes the records and the statistics inputs, the preference follows elsewhere
-    const hState = { session: [], history: [rec()], local: { historyEnabled: true } };
-    const hMade = makeChrome(hState);
-    const hist = createHistory({ chrome: hMade.chrome, FB });
-    await hist.start();
-    assert(hist.store.getState().records.length === 1 && (hState.changeListeners || []).length === 1 && hist.stats().total === 1, '31x: the history starts with one subscription');
-    hState.history.push(rec({ state: 'failed', output: {}, failure: failure('download', 'network') }));
-    emit(hState, { [keys.HISTORY_KEY]: {} }, 'local');
-    await settle();
-    assert(hist.store.getState().records.length === 2 && hist.stats().total === 2 && hist.stats().failed === 1, '31y: an operation that finishes while the page is open appears in the history and its statistics');
-    const hn = hMade.calls.messages.filter((m) => m === 'HISTORY_LIST').length;
-    emit(hState, { [keys.HISTORY_KEY]: {} }, 'session');
-    emit(hState, { [keys.FEEDBACK_KEY]: {} }, 'session');
-    await settle();
-    assert(hMade.calls.messages.filter((m) => m === 'HISTORY_LIST').length === hn, '31z: session-storage changes (the tracker) do not refresh the history');
+    // the statistics page follows a recording change made elsewhere and removes its one subscription
+    const hState = { session: [], history: [], local: { historyEnabled: true } };
+    const hist = createStatistics({ chrome: makeChrome(hState).chrome });
+    await hist.ready;
+    assert(hist.store.getState().enabled === true && (hState.changeListeners || []).length === 1, '31x: the statistics page starts with one subscription');
     emit(hState, { historyEnabled: { newValue: false, oldValue: true } }, 'local');
     assert(hist.store.getState().enabled === false, '31za: switching recording elsewhere updates the switch');
-    hState.history.length = 0;
-    emit(hState, { [keys.HISTORY_KEY]: {} }, 'local');
-    await settle();
-    assert(hist.store.getState().records.length === 0 && present.statsView(FB, hist.store.getState().records, 'ok', false).state === 'empty', '31zb: a clear elsewhere empties the history and the statistics');
     hist.dispose();
-    assert((hState.changeListeners || []).length === 0, '31zc: the history removes its subscription');
+    assert((hState.changeListeners || []).length === 0, '31zc: the statistics page removes its subscription');
 
     // no polling anywhere in the refresh code
-    const refreshSrc = ['feedbackList.js', 'history.js', 'keys.js'].map((n) => read(`ui/src/core/${n}`).replace(/\/\/.*$/gm, '')).join('\n');
+    const refreshSrc = ['feedbackList.js', 'statistics.js', 'keys.js'].map((n) => read(`ui/src/core/${n}`).replace(/\/\/.*$/gm, '')).join('\n');
     assert(!/setInterval|setTimeout|requestAnimationFrame|MutationObserver|IntersectionObserver/.test(refreshSrc), '31zd: no timer, animation frame or observer in the refresh code: events only');
   }
 
@@ -1150,8 +1108,8 @@ function makeChrome(state) {
     // interpolation and fallbacks
     assert(I18n.t('en', 'updates.installed', { version: '2.0.0.25' }) === 'Installed version: 2.0.0.25' && I18n.t('ru', 'updates.installed', { version: '2.0.0.25' }) === 'Установленная версия: 2.0.0.25', '33g: placeholders are substituted in both languages');
     assert(I18n.t('en', 'filename.actual', { name: '{name} <b>x</b> $& $1' }) === 'File name: {name} <b>x</b> $& $1 (actual)', '33h: a substituted value is inserted literally (no second substitution, no $-patterns, no markup interpretation)');
-    assert(I18n.t('en', 'updates.installed') === 'Installed version: {version}' && I18n.t('de', 'results.empty') === 'No save results yet.' && I18n.t('ru', 'no.such.key') === 'no.such.key', '33i: a missing value keeps its placeholder; an unknown language uses English; an unknown key is shown as itself');
-    assert(I18n.message('en', '') === '' && I18n.message('en', 'history.cleared') === 'History cleared.' && I18n.message('ru', { key: 'settings.error.tooDeep', vars: { max: 8 } }) === 'Слишком много вложенных папок (максимум 8)', '33j: stored messages (key or { key, vars }) render in the requested language');
+    assert(I18n.t('en', 'updates.installed') === 'Installed version: {version}' && I18n.t('de', 'results.error') === 'Could not load the save results.' && I18n.t('ru', 'no.such.key') === 'no.such.key', '33i: a missing value keeps its placeholder; an unknown language uses English; an unknown key is shown as itself');
+    assert(I18n.message('en', '') === '' && I18n.message('en', 'statistics.cleared') === 'Statistics cleared.' && I18n.message('ru', { key: 'settings.error.tooDeep', vars: { max: 8 } }) === 'Слишком много вложенных папок (максимум 8)', '33j: stored messages (key or { key, vars }) render in the requested language');
 
     // the default rule: a valid saved choice wins; otherwise Russian only for a Russian browser
     assert(['ru', 'ru-RU', 'RU', 'ru_RU'].every((u) => I18n.browserDefault(u) === 'ru') && ['en', 'en-US', 'de-DE', 'uk', 'rus', '', undefined, null].every((u) => I18n.browserDefault(u) === 'en'), '33k: Russian browser -> ru, every other or unknown browser language -> en');
@@ -1282,8 +1240,8 @@ function makeChrome(state) {
     assert(FB.formatSize(1004544, 'en') === '981 KB' && FB.formatSize(1004544, 'ru') === '981 КБ' && FB.formatSize(1536, 'en') === '1.5 KB' && FB.formatSize(1536, 'ru') === '1,5 КБ' && FB.formatSize(1536) === '1,5 КБ', '33zh: sizes use the unit and decimal mark of the language');
     assert(present.filenameLine(okRec, 'en') === 'File name: Фото «оригинал».jpg (actual)', '33zi: the file-name line is translated around the unchanged name');
     const enStats = present.statsView(FB, [okRec, failRec], 'ok', true, 'en');
-    assert(enStats.tiles[0].label === 'Operations in history' && /^Known total size: at least 981 KB\. Size measured for 1 of 1 successful saves\.$/.test(enStats.sizeText) && /50 operations/.test(enStats.note), '33zj: statistics are presented in English');
-    assert(FB.buildReport(failRec, { env: { version: '2.0.0' } }) === FB.buildReport(failRec, { env: { version: '2.0.0' } }) && /^MediaLatch bug report\n/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })) && /http_status: 500/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })), '33zk: the copied bug report keeps its single format');
+    assert(enStats.tiles[0].label === 'Operations' && /^Known total size: at least 981 KB\. Size measured for 1 of 1 successful saves\.$/.test(enStats.sizeText) && /No entry or time limit/.test(enStats.note), '33zj: statistics are presented in English');
+    assert(FB.buildReport(failRec, { env: { version: '2.0.0' }, now: 1700000000000 }) === FB.buildReport(failRec, { env: { version: '2.0.0' }, now: 1700000000000 }) && /^MediaLatch bug report\n/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })) && /http_status: 500/.test(FB.buildReport(failRec, { env: { version: '2.0.0' } })), '33zk: the copied bug report keeps its single format');
     const t0 = Date.UTC(2026, 9, 10, 15, 5);
     assert(present.formatDateTime(t0, 'en-US') !== present.formatDateTime(t0, 'ru-RU') && /\d/.test(present.formatTime(t0, 'en-US')), '33zl: dates are formatted with the locale of the language');
 

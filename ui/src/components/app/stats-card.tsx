@@ -10,7 +10,7 @@ const TILE_TONE: Record<string, string> = {
   failed: "text-danger",
 }
 
-/** Statistics over the retained history. The view model is built by statsView(); unknown stays unknown. */
+/** The statistics card. The view model is built by statsView(); unknown stays unknown. */
 export function StatsCard({ view }: { view: any }) {
   const { t, locale } = useI18n()
   const count = (n: number) => (Number.isFinite(n) ? n.toLocaleString(locale) : String(n))

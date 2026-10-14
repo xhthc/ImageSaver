@@ -15,13 +15,9 @@ bgCode += `
 globalThis.KNOWN_SITE_RESOLVERS = KNOWN_SITE_RESOLVERS;
 globalThis.BOORU_ENGINE_RESOLVERS = BOORU_ENGINE_RESOLVERS;
 globalThis.extractYandexImgUrl = extractYandexImgUrl;
-globalThis.resolveFromLinkUrl = resolveFromLinkUrl;
 globalThis.resolvePixivUrl = resolvePixivUrl;
 globalThis.resolveTwitterOriginalUrl = resolveTwitterOriginalUrl;
 globalThis.resolveTweetVideoThumbUrl = resolveTweetVideoThumbUrl;
-globalThis.resolveTweetVideoFromThumb = resolveTweetVideoFromThumb;
-globalThis.resolveTwitterVideoThumb = resolveTwitterVideoThumb;
-globalThis.resolveTwitterVideoThumbUrl = resolveTwitterVideoThumbUrl;
 globalThis.isXVideoPosterUrl = isXVideoPosterUrl;
 globalThis.classifyMediaTarget = classifyMediaTarget;
 globalThis.resolveRedditUrl = resolveRedditUrl;
@@ -31,7 +27,6 @@ globalThis.resolveOriginalImageUrl = resolveOriginalImageUrl;
 globalThis.extractDomImageMetadata = extractDomImageMetadata;
 globalThis.scoreCandidateUrl = scoreCandidateUrl;
 globalThis.isThumbnailUrl = isThumbnailUrl;
-globalThis.hasImageAssociation = hasImageAssociation;
 globalThis.getFilenameFromUrl = getFilenameFromUrl;
 globalThis.addTrackedDownloadId = addTrackedDownloadId;
 globalThis.removeTrackedDownloadId = removeTrackedDownloadId;
@@ -40,7 +35,6 @@ globalThis.getTrackedDownloadCount = getTrackedDownloadCount;
 globalThis.restoreOrClearBadge = restoreOrClearBadge;
 globalThis.flashBadge = flashBadge;
 globalThis.setBadge = setBadge;
-globalThis.clearBadge = clearBadge;
 globalThis.trackedDownloadIds = trackedDownloadIds;
 globalThis.activeDownloadsMetadata = activeDownloadsMetadata;
 globalThis.nativeResumeDecisions = nativeResumeDecisions;
@@ -55,8 +49,6 @@ globalThis.resolveEshuushuuUrl = resolveEshuushuuUrl;
 globalThis.createMediaDescriptor = createMediaDescriptor;
 globalThis.detectVideoMime = detectVideoMime;
 globalThis.isDirectVideoUrl = isDirectVideoUrl;
-globalThis.verifyVideoUrl = verifyVideoUrl;
-globalThis.findMediaInElements = findMediaInElements;
 globalThis.resolveMediaTarget = resolveMediaTarget;
 globalThis.hasMediaAssociation = hasMediaAssociation;
 globalThis.sanitizeUrlForLog = sanitizeUrlForLog;
@@ -73,7 +65,6 @@ globalThis.createAnimePicturesOriginalGroup = createAnimePicturesOriginalGroup;
 globalThis.parseAnimePicturesCdnUrl = parseAnimePicturesCdnUrl;
 globalThis.resolveOriginalMediaPlan = resolveOriginalMediaPlan;
 globalThis.executeMediaPlan = executeMediaPlan;
-globalThis.getCanonicalExtension = getCanonicalExtension;
 globalThis.resolveCanonicalExtension = resolveCanonicalExtension;
 globalThis.MIME_TO_CANONICAL_EXT = MIME_TO_CANONICAL_EXT;
 globalThis.buildFinalFilename = buildFinalFilename;
@@ -107,10 +98,8 @@ globalThis.transferOffscreenTask = transferOffscreenTask;
 globalThis.activeProtectedBlobsByDownloadId = activeProtectedBlobsByDownloadId;
 globalThis.earlyTerminalDownloadStates = typeof earlyTerminalDownloadStates !== 'undefined' ? earlyTerminalDownloadStates : undefined;
 globalThis.sniffMediaMagicBytes = sniffMediaMagicBytes;
-globalThis.isAnimatedGif = isAnimatedGif;
 globalThis.isRedditDomain = typeof isRedditDomain !== 'undefined' ? isRedditDomain : undefined;
 globalThis.extractRedditPostUrl = typeof extractRedditPostUrl !== 'undefined' ? extractRedditPostUrl : undefined;
-globalThis.mapMimeToPreferredExtension = typeof mapMimeToPreferredExtension !== 'undefined' ? mapMimeToPreferredExtension : undefined;
 globalThis.isDanbooruDomain = typeof isDanbooruDomain !== 'undefined' ? isDanbooruDomain : undefined;
 globalThis.isValidDanbooruMetadata = typeof isValidDanbooruMetadata !== 'undefined' ? isValidDanbooruMetadata : undefined;
 globalThis.queryBooruDomMetadata = typeof queryBooruDomMetadata !== 'undefined' ? queryBooruDomMetadata : undefined;
@@ -540,6 +529,8 @@ vm.createContext(sandbox);
 // Service-worker importScripts: load the real shared script (lib/*.js) into the same context.
 sandbox.importScripts = (file) => vm.runInContext(fs.readFileSync(path.resolve(REPO_ROOT, file), 'utf8'), sandbox);
 vm.runInContext(bgCode, sandbox);
+// GIF frame counting runs in the offscreen document (the worker has no copy): the cases below use that production function.
+sandbox.isAnimatedGif = require(path.resolve(REPO_ROOT, 'offscreen.js')).isAnimatedGif;
 
 // A fresh service-worker execution context of the real background.js (a worker restart). Chrome APIs other than storage are inert
 // stubs, so loading it registers nothing in the main sandbox's mock; the given session storage is shared with the caller.
@@ -648,8 +639,8 @@ async function runTests() {
   assert(standardResult === 'https://example.com/simple_photo.jpg', 'universal fallback: Обычное изображение -> fallback на исходный srcUrl');
 
   // 2. direct media link: Изображение внутри <a> -> приоритетный выбор прямого linkUrl
-  const directLinkResult = await sandbox.resolveFromLinkUrl('https://example.com/images/fullsize.jpg', 'https://example.com/thumb.jpg');
-  assert(directLinkResult === 'https://example.com/images/fullsize.jpg', 'direct media link: Изображение внутри <a> -> приоритетный выбор прямого linkUrl');
+  const directLinkPlan = await sandbox.resolveOriginalMediaPlan({ srcUrl: 'https://example.com/thumb.jpg', pageUrl: 'https://example.com/', linkUrl: 'https://example.com/images/fullsize.jpg' });
+  assert(directLinkPlan.primaryUrl === 'https://example.com/images/fullsize.jpg', 'direct media link: Изображение внутри <a> -> прямой linkUrl становится кандидатом плана');
 
   // 3. srcset: выбор макс. разрешения 4096w
   const srcsetCandidates = sandbox.parseSrcset(
@@ -685,8 +676,8 @@ async function runTests() {
   assert(cdnCandidates.includes('https://example.com/wp-content/uploads/2026/photo.jpg'), 'CDN/CMS: удаление суффикса масштабирования -1024x768 и query-параметров');
 
   // 8. Pixiv: исключение HTML страницы artwork из linkUrl
-  const linkArtworkResult = await sandbox.resolveFromLinkUrl('https://www.pixiv.net/artworks/149989236', 'https://i.pximg.net/c/250x250/thumb.jpg');
-  assert(linkArtworkResult === null, 'Pixiv: исключение HTML страницы /artworks/{id} из linkUrl');
+  const linkArtworkPlan = await sandbox.resolveOriginalMediaPlan({ srcUrl: 'https://example.com/thumb.jpg', pageUrl: 'https://example.com/', linkUrl: 'https://www.pixiv.net/artworks/149989236' });
+  assert(!JSON.stringify(linkArtworkPlan || {}).includes('/artworks/'), 'Pixiv: исключение HTML страницы /artworks/{id} из linkUrl');
 
   // 9. Pixiv лента: получение оригинального URL через Ajax API
   const feedCandidates = await pixivEngine.resolve(
@@ -1779,10 +1770,10 @@ async function runTests() {
 
   // 83. Image association: не-картиночные текстовые/навигационные ссылки не начинают разрешение и не уходят в OpenGraph
   {
-    const nonImageLink1 = sandbox.hasImageAssociation('', 'https://example.com/about');
-    const nonImageLink2 = sandbox.hasImageAssociation('', 'https://example.com/articles/help');
-    const imageDirectLink = sandbox.hasImageAssociation('', 'https://example.com/assets/banner.jpg');
-    const imageImgTag = sandbox.hasImageAssociation('https://example.com/thumb.png', 'https://example.com/articles/help');
+    const nonImageLink1 = sandbox.hasMediaAssociation('', 'https://example.com/about');
+    const nonImageLink2 = sandbox.hasMediaAssociation('', 'https://example.com/articles/help');
+    const imageDirectLink = sandbox.hasMediaAssociation('', 'https://example.com/assets/banner.jpg');
+    const imageImgTag = sandbox.hasMediaAssociation('https://example.com/thumb.png', 'https://example.com/articles/help');
 
     // Клик контекстного меню по чисто текстовой ссылке
     downloadedCalls.length = 0;
@@ -3802,60 +3793,13 @@ async function runTests() {
 
   // ── Universal Video Save Regression Tests ───────────────────────────────
 
-  // 161. video: currentSrc выигрывает у poster
-  {
-    const videoElement = {
-      tagName: 'VIDEO',
-      currentSrc: 'https://example.com/videos/stream.mp4',
-      src: '',
-      poster: 'https://example.com/previews/poster.jpg',
-      querySelector: () => null,
-      querySelectorAll: () => []
-    };
-    const desc = sandbox.findMediaInElements([videoElement]);
-    assert(
-      desc &&
-      desc.type === 'video' &&
-      desc.src === 'https://example.com/videos/stream.mp4' &&
-      desc.poster === 'https://example.com/previews/poster.jpg',
-      'video: currentSrc выигрывает у poster в media descriptor'
-    );
-  }
-
-  // 162. video: <source src> fallback при отсутствии video.currentSrc и video.src
-  {
-    const sourceEl = {
-      tagName: 'SOURCE',
-      src: 'https://example.com/sources/clip.webm',
-      type: 'video/webm'
-    };
-    const videoElement = {
-      tagName: 'VIDEO',
-      currentSrc: '',
-      src: '',
-      poster: 'https://example.com/poster.jpg',
-      querySelector: (sel) => sel === 'source' ? sourceEl : null,
-      querySelectorAll: (sel) => sel === 'source' ? [sourceEl] : []
-    };
-    sourceEl.parentElement = videoElement;
-
-    const desc = sandbox.findMediaInElements([videoElement]);
-    assert(
-      desc &&
-      desc.type === 'video' &&
-      desc.src === 'https://example.com/sources/clip.webm' &&
-      desc.mime === 'video/webm',
-      'video: <source src> fallback корректно обнаруживается с типом video'
-    );
-  }
-
   // 163. video: MP4 direct URL распознается, MIME детектируется, имя и верификация работают
   {
     const mp4Url = 'https://cdn.example.org/videos/nature_clip.mp4?hd=1';
     const isVid = sandbox.isDirectVideoUrl(mp4Url);
     const mime = sandbox.detectVideoMime(mp4Url);
     const filename = sandbox.getFilenameFromUrl(mp4Url);
-    const isVerified = await sandbox.verifyVideoUrl(mp4Url);
+    const isVerified = (await sandbox.probeVideoUrlDetails(mp4Url)).ok;
 
     assert(
       isVid === true &&
@@ -3872,7 +3816,7 @@ async function runTests() {
     const isVid = sandbox.isDirectVideoUrl(webmUrl);
     const mime = sandbox.detectVideoMime(webmUrl);
     const filename = sandbox.getFilenameFromUrl(webmUrl);
-    const isVerified = await sandbox.verifyVideoUrl(webmUrl);
+    const isVerified = (await sandbox.probeVideoUrlDetails(webmUrl)).ok;
 
     assert(
       isVid === true &&
@@ -3927,7 +3871,7 @@ async function runTests() {
       src: 'https://example.com/photos/landscape.jpg',
       currentSrc: 'https://example.com/photos/landscape.jpg'
     };
-    const desc = sandbox.findMediaInElements([imgEl]);
+    const desc = sandbox.createMediaDescriptor({ type: 'image', src: imgEl.src, currentSrc: imgEl.currentSrc });
     const target = await sandbox.resolveMediaTarget({ descriptor: desc });
 
     assert(
@@ -3937,57 +3881,6 @@ async function runTests() {
       target.type === 'image' &&
       target.targetUrl === 'https://example.com/photos/landscape.jpg',
       'image-only: чистый image-only элемент продолжает работать как раньше'
-    );
-  }
-
-  // 167. X GIF: video.twimg.com/tweet_video/*.mp4 сохраняет type 'x_tweet_video' для offscreen конвертации
-  {
-    const xVideoEl = {
-      tagName: 'VIDEO',
-      currentSrc: 'https://video.twimg.com/tweet_video/GzTestGIF123.mp4',
-      querySelector: () => null,
-      querySelectorAll: () => []
-    };
-    const desc = sandbox.findMediaInElements([xVideoEl]);
-
-    assert(
-      desc &&
-      desc.type === 'x_tweet_video' &&
-      desc.src === 'https://video.twimg.com/tweet_video/GzTestGIF123.mp4' &&
-      desc.url === 'https://video.twimg.com/tweet_video/GzTestGIF123.mp4',
-      'X GIF: путь x_tweet_video не регрессировал и сохраняет backward compatibility'
-    );
-  }
-
-  // 168. overlay: прозрачные оверлеи пробиваются через stack элементов в findMediaInElements
-  {
-    const overlayDiv = {
-      tagName: 'DIV',
-      className: 'video-player-controls-overlay',
-      querySelector: () => null
-    };
-    const overlayBtn = {
-      tagName: 'BUTTON',
-      className: 'play-button-overlay',
-      querySelector: () => null
-    };
-    const underVideo = {
-      tagName: 'VIDEO',
-      currentSrc: 'https://example.com/stream/movie.mp4',
-      poster: 'https://example.com/posters/movie.jpg',
-      querySelector: () => null,
-      querySelectorAll: () => []
-    };
-
-    const desc = sandbox.findMediaInElements([overlayBtn, overlayDiv, underVideo], 'https://example.com/watch/123');
-
-    assert(
-      desc &&
-      desc.type === 'video' &&
-      desc.src === 'https://example.com/stream/movie.mp4' &&
-      desc.poster === 'https://example.com/posters/movie.jpg' &&
-      desc.pageUrl === 'https://example.com/watch/123',
-      'overlay: overlay stack успешно пробивается, возвращая дескриптор скрытого видео'
     );
   }
 
@@ -4037,11 +3930,11 @@ async function runTests() {
     };
 
     const binUrl = 'https://example.com/files/archive.bin';
-    const isVerifiedBin = await sandbox.verifyVideoUrl(binUrl);
+    const isVerifiedBin = (await sandbox.probeVideoUrlDetails(binUrl)).ok;
 
     // Но на явном видео URL с application/octet-stream верификация проходит
     const mp4Url = 'https://example.com/media/stream.mp4';
-    const isVerifiedMp4 = await sandbox.verifyVideoUrl(mp4Url);
+    const isVerifiedMp4 = (await sandbox.probeVideoUrlDetails(mp4Url)).ok;
     sandbox.fetch = origFetch;
 
     assert(
@@ -4067,7 +3960,7 @@ async function runTests() {
       };
     };
 
-    const isVerified = await sandbox.verifyVideoUrl('https://example.com/videos/not_found_page.mp4');
+    const isVerified = (await sandbox.probeVideoUrlDetails('https://example.com/videos/not_found_page.mp4')).ok;
     sandbox.fetch = origFetch;
 
     assert(
@@ -4093,7 +3986,7 @@ async function runTests() {
       };
     };
 
-    const isVerified = await sandbox.verifyVideoUrl('https://example.com/api/video_error.mp4');
+    const isVerified = (await sandbox.probeVideoUrlDetails('https://example.com/api/video_error.mp4')).ok;
     sandbox.fetch = origFetch;
 
     assert(
@@ -4149,7 +4042,7 @@ async function runTests() {
     };
 
     const details = await sandbox.probeVideoUrlDetails('https://packaged-media.redd.it/protected/video.mp4');
-    const isVerified = await sandbox.verifyVideoUrl('https://packaged-media.redd.it/protected/video.mp4');
+    const isVerified = (await sandbox.probeVideoUrlDetails('https://packaged-media.redd.it/protected/video.mp4')).ok;
     sandbox.fetch = origFetch;
 
     assert(
@@ -8428,10 +8321,7 @@ async function runTests() {
 
     // 205.2: Candidate probing, reachability promotion & fallback, and content_x DOM recovery
     {
-      const resolveCandidate = sandbox.resolveTweetVideoFromThumb;
-      assert(typeof resolveCandidate === 'function', '205.2: sandbox.resolveTweetVideoFromThumb доступна в sandbox');
-
-      // A. Reachable candidate probe succeeds -> MP4 promoted as primary media source
+      // A reachable candidate MP4 and a missing one (HTTP 404)
       sandbox.fetch = async (url, opts) => {
         const u = url ? url.toString() : '';
         if (u.includes('GZReachable123.mp4')) {
@@ -8453,26 +8343,6 @@ async function runTests() {
         return origSandboxFetch(url, opts);
       };
 
-      const reachableResult = await resolveCandidate('https://pbs.twimg.com/tweet_video_thumb/GZReachable123.jpg');
-      assert(
-        reachableResult.targetUrl === 'https://video.twimg.com/tweet_video/GZReachable123.mp4' &&
-        reachableResult.type === 'x_tweet_video' &&
-        reachableResult.verified === true &&
-        reachableResult.fallbackToPoster === false &&
-        reachableResult.poster === 'https://pbs.twimg.com/tweet_video_thumb/GZReachable123.jpg',
-        '205.2a: доступный кандидат MP4 промоутируется как основной медиа-источник (wins over poster)'
-      );
-
-      // B. Unreachable candidate probe (404) -> falls back to poster image
-      const missingResult = await resolveCandidate('https://pbs.twimg.com/tweet_video_thumb/GZMissing404.jpg');
-      assert(
-        missingResult.targetUrl === 'https://pbs.twimg.com/tweet_video_thumb/GZMissing404.jpg' &&
-        missingResult.type === 'image' &&
-        missingResult.fallbackToPoster === true &&
-        missingResult.poster === 'https://pbs.twimg.com/tweet_video_thumb/GZMissing404.jpg',
-        '205.2b: недоступный кандидат (HTTP 404) корректно откатывается к постеру (fallbackToPoster)'
-      );
-
       // C. resolveMediaTarget integration: promotions and fallbacks
       const targetReachable = await sandbox.resolveMediaTarget({
         srcUrl: 'https://pbs.twimg.com/tweet_video_thumb/GZReachable123.jpg'
@@ -8491,41 +8361,6 @@ async function runTests() {
         targetMissing.type === 'image' &&
         targetMissing.fallbackFromVideo === true,
         '205.2d: resolveMediaTarget с недоступным tweet_video откатывается к постеру как к изображению'
-      );
-
-      // D. content_x DOM detection: lazy-loaded video with empty currentSrc recovers tweet_video from poster
-      const lazyVideoEl = {
-        tagName: 'VIDEO',
-        currentSrc: '',
-        src: '',
-        poster: 'https://pbs.twimg.com/tweet_video_thumb/GZLazy999.jpg',
-        querySelector: () => null,
-        querySelectorAll: () => []
-      };
-      const recoveredDesc = sandbox.findMediaInElements([lazyVideoEl]);
-      assert(
-        recoveredDesc &&
-        recoveredDesc.type === 'x_tweet_video' &&
-        recoveredDesc.src === 'https://video.twimg.com/tweet_video/GZLazy999.mp4' &&
-        recoveredDesc.poster === 'https://pbs.twimg.com/tweet_video_thumb/GZLazy999.jpg',
-        '205.2e: findMediaInElements восстанавливает x_tweet_video из постера, когда video.currentSrc пуст (lazy load)'
-      );
-
-      // Non-tweet video with empty currentSrc still falls back to image
-      const nonTweetVideoEl = {
-        tagName: 'VIDEO',
-        currentSrc: '',
-        src: '',
-        poster: 'https://example.com/regular_poster.jpg',
-        querySelector: () => null,
-        querySelectorAll: () => []
-      };
-      const regularDesc = sandbox.findMediaInElements([nonTweetVideoEl]);
-      assert(
-        regularDesc &&
-        regularDesc.type === 'image' &&
-        regularDesc.src === 'https://example.com/regular_poster.jpg',
-        '205.2f: не-твиттер видео без потока по-прежнему откатывается к постеру как image'
       );
 
     }
@@ -8667,26 +8502,6 @@ async function runTests() {
         '206.4b: recovered tweet_video src имеет приоритет над blob currentSrc'
       );
 
-      // C. content_x DOM detection: video element with blob currentSrc and tweet_video_thumb poster
-      const domVideoEl = {
-        tagName: 'VIDEO',
-        currentSrc: 'blob:https://x.com/active-playback-blob-789',
-        src: 'blob:https://x.com/active-playback-blob-789',
-        poster: 'https://pbs.twimg.com/tweet_video_thumb/GZDomRecover.jpg',
-        querySelector: () => null,
-        querySelectorAll: () => []
-      };
-      const domDesc = sandbox.findMediaInElements([domVideoEl]);
-      assert(
-        domDesc &&
-        domDesc.type === 'x_tweet_video' &&
-        domDesc.src === 'https://video.twimg.com/tweet_video/GZDomRecover.mp4' &&
-        domDesc.sourceType === 'x_tweet_video' &&
-        domDesc.animated === true &&
-        !domDesc.src.startsWith('blob:'),
-        '206.4c: findMediaInElements восстанавливает tweet_video MP4 из постера, игнорируя blob currentSrc'
-      );
-
       // D. resolveMediaTarget with blob descriptor and tweet_video_thumb poster
       sandbox.fetch = async (url) => {
         return {
@@ -8719,7 +8534,7 @@ async function runTests() {
 
     // 206.6: One-click native format preservation for X video media
     {
-      const mp4Ext = sandbox.mapMimeToPreferredExtension('video/mp4');
+      const mp4Ext = sandbox.resolveCanonicalExtension('video/mp4');
       const tweetVideoFn = sandbox.buildFinalFilename('https://video.twimg.com/tweet_video/GzExample.mp4', mp4Ext);
       const normalVideoFn = sandbox.buildFinalFilename('https://video.twimg.com/ext_tw_video/123/pu/vid/720x720/abc.mp4', mp4Ext);
 
@@ -21957,7 +21772,7 @@ async function runTests() {
 
     // 234.1: Path sanitization helpers
     {
-      const sanitizePathSegment = sandbox.sanitizePathSegment;
+      const sanitizePathSegment = (segment, fallback = 'unknown') => sandbox.ImageSaverFolderPath.normalizeSite(segment, fallback);
       const sanitizeRootSubfolder = sandbox.sanitizeRootSubfolder;
 
       assert(sanitizePathSegment('../../../etc/passwd') === 'etcpasswd', '234.1a: sanitizePathSegment очищает попытки обхода директорий (..)');

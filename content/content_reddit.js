@@ -1003,15 +1003,6 @@
         sendResponse(selectedPostAuthor(typeof message.proof === 'string' ? message.proof : '') || {});
         return true;
       }
-      if (message?.action === 'GET_REDDIT_POST_URL') {
-        const postUrl = extractRedditPostUrl({
-          target: lastContextmenuTarget,
-          composedPath: () => lastContextmenuPath,
-          locationHref: typeof window !== 'undefined' ? window.location.href : ''
-        });
-        sendResponse({ postUrl });
-        return true;
-      }
       if (message?.action === 'GET_REDDIT_MEDIA_AT_CURSOR') {
         const isFresh = (Date.now() - lastContextmenuTime) < 15000;
         let freshMedia = null;
@@ -1267,23 +1258,20 @@
       }
     }
 
+    // A /comments/<id>/ address: the first gives the id and the address, a later one only fills the address of that same id.
+    const takePostHref = (href) => {
+      const m = href.match(/\/comments\/([a-z0-9]{1,12})(?:\/|$)/i);
+      if (!m) return false;
+      const candId = m[1].toLowerCase();
+      if (!rawId) { rawId = candId; postUrl = normalizeRedditPostUrl(href); return true; }
+      if (candId === rawId && !postUrl) { postUrl = normalizeRedditPostUrl(href); return true; }
+      return false;
+    };
+
     // 2. permalink or content-href on owner
     for (const attr of ['permalink', 'content-href', 'data-permalink']) {
       const href = typeof owner.getAttribute === 'function' ? owner.getAttribute(attr) : null;
-      if (href && typeof href === 'string') {
-        const m = href.match(/\/comments\/([a-z0-9]{1,12})(?:\/|$)/i);
-        if (m) {
-          const candId = m[1].toLowerCase();
-          if (!rawId) {
-            rawId = candId;
-            postUrl = normalizeRedditPostUrl(href);
-            break;
-          } else if (candId === rawId && !postUrl) {
-            postUrl = normalizeRedditPostUrl(href);
-            break;
-          }
-        }
-      }
+      if (href && typeof href === 'string' && takePostHref(href)) break;
     }
 
     // 3. Child anchor tags inside owner
@@ -1292,18 +1280,7 @@
       for (const a of anchors) {
         if (!isCrosspost && typeof a.closest === 'function' && a.closest(RI_CROSSPOST)) continue;
         const href = (typeof a.getAttribute === 'function' && a.getAttribute('href')) || a.href || '';
-        const m = href.match(/\/comments\/([a-z0-9]{1,12})(?:\/|$)/i);
-        if (m) {
-          const candId = m[1].toLowerCase();
-          if (!rawId) {
-            rawId = candId;
-            postUrl = normalizeRedditPostUrl(href);
-            break;
-          } else if (candId === rawId && !postUrl) {
-            postUrl = normalizeRedditPostUrl(href);
-            break;
-          }
-        }
+        if (takePostHref(href)) break;
       }
     }
 

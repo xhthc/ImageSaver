@@ -1692,7 +1692,7 @@ exports.verifyResourceLifecycle = async function ({REPO_ROOT, assert, downloaded
       );
 
       // Native one-click download format resolution: both static and animated GIFs map to .gif
-      const gifExt = sandbox.mapMimeToPreferredExtension('image/gif');
+      const gifExt = sandbox.resolveCanonicalExtension('image/gif');
       const staticFn = sandbox.buildFinalFilename('https://example.com/icon.gif', gifExt);
       const animFn = sandbox.buildFinalFilename('https://example.com/anim.gif', gifExt);
 

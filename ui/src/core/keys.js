@@ -1,10 +1,8 @@
-// Storage keys whose change means "the list on this page is out of date". They are the persistence keys of the tracker
-// (lib/feedback_tracker.js STORAGE_KEY, session storage with a local fallback) and of the history store
-// (lib/feedback_history.js STORAGE_KEY, local storage); test_ux_ui.js asserts that they stay equal. A change is only a
-// trigger: the pages re-ask the background through the existing FEEDBACK_LIST / HISTORY_LIST messages, so the sender
-// validation, the sanitizing and the retention rules stay in one place and no page reads these keys itself.
+// Storage keys the pages watch. FEEDBACK_KEY is the tracker's persistence key (lib/feedback_tracker.js STORAGE_KEY, session storage
+// with a local fallback); its change means "the list on this page is out of date" and the page re-asks the background through
+// FEEDBACK_LIST, so the sender validation, the sanitizing and the retention rules stay in one place. HISTORY_ENABLED_KEY is the
+// recording preference of the statistics switch that the worker reads (background.js statistics). test_ux_ui.js asserts both.
 export const FEEDBACK_KEY = 'imageSaverFeedbackV1';
-export const HISTORY_KEY = 'imageSaverHistoryV1';
 export const HISTORY_ENABLED_KEY = 'historyEnabled';
 
 /**

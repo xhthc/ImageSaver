@@ -210,18 +210,6 @@
     } catch (_) {}
   }
 
-  function logDebug(message, details = null) {
-    if (typeof console !== 'undefined' && typeof console.debug === 'function') {
-      try {
-        if (details) {
-          console.debug(`[MediaLatch Instagram] ${message}`, details);
-        } else {
-          console.debug(`[MediaLatch Instagram] ${message}`);
-        }
-      } catch (_) {}
-    }
-  }
-
   function logRejection(reason, details = null) {
     DBG.log('instagram.copy', 'resolve', 'refused', String(reason).toUpperCase(), null, { lvl: 'debug' });
     if (typeof console !== 'undefined' && typeof console.warn === 'function') {

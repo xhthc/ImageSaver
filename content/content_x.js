@@ -290,18 +290,33 @@
     return { ok: false, isHlsOnly: false, error: 'UNSUPPORTED_VARIANTS' };
   }
 
-  /**
-   * Backward-compatible helper: returns best MP4 variant or null.
-   */
-  function selectBestMp4Variant(videoInfo) {
-    const res = inspectVideoVariants(videoInfo);
-    return res?.ok ? res.bestMp4 : null;
-  }
 
   /**
    * Helper: walks React fiber / props hierarchy starting from a video or post element.
    * Extracts post media metadata and determines best MP4 variant.
    */
+  // The post that owns a pressed node: its quote card when the node is inside one (never the outer post), else its article; with
+  // that post's address and id. The page address stands in only for an outer post.
+  function xPostOf(node, pageUrl) {
+    const o = node ? xiOwnerOf(node) : null;
+    const quoteContainer = o?.quote || (node?.closest ? node.closest(XI_QUOTE) : null);
+    const isQuoteTweet = Boolean(quoteContainer);
+    const postContainer = quoteContainer || o?.article ||
+      (node && node.closest ? (node.closest('article[data-testid="tweet"], article[role="article"]') || node.closest('article')) : null) ||
+      node?.parentElement;
+    const postUrl = extractTweetUrl(postContainer, isQuoteTweet ? null : pageUrl) || (isQuoteTweet ? null : pageUrl);
+    const tweetIdMatch = postUrl ? postUrl.match(/\/status(?:es)?\/(\d+)/) : null;
+    const tweetId = tweetIdMatch ? tweetIdMatch[1] : (isQuoteTweet ? xiIdOf(postContainer, true) : null);
+    return { isQuoteTweet, postContainer, postUrl, tweetId };
+  }
+
+  // The best MP4 the owning post declares for this player, or a confirmed HLS-only player; neither means "unknown" (not HLS).
+  function xDeclaredMp4(videoEl, postContainer, hints) {
+    const metaRes = extractPostMetadataFromDom(videoEl, postContainer, hints);
+    if (metaRes?.ok && metaRes.bestMp4) return { recoveredMp4Url: metaRes.bestMp4.url, recoveredBitrate: metaRes.bestMp4.bitrate, isConfirmedHls: false };
+    return { recoveredMp4Url: null, recoveredBitrate: null, isConfirmedHls: Boolean(metaRes?.isHlsOnly) };
+  }
+
   function extractPostMetadataFromDom(videoEl, postContainer, { posterUrl, mediaIndex, mediaIdHint, isQuoteTweet } = {}) {
     if (!videoEl && !postContainer) return null;
 
@@ -410,133 +425,6 @@
       return { ok: false, isHlsOnly: false, error: 'UNSUPPORTED_VARIANTS' };
     }
     return null;
-  }
-
-  /**
-   * Universal media classifier for X/Twitter context.
-   * If source matches video.twimg.com/tweet_video/*.mp4:
-   * classifies as { type: "gif", sourceType: "x_tweet_video", mime: "video/mp4", animated: true }.
-   * Normal MP4 remains video: { type: "video", sourceType: "video", mime: "video/mp4", animated: false }.
-   * Recovers genuine tweet_video source when blob fallback is present.
-   */
-  function classifyMediaTarget(target) {
-    if (!target) return null;
-    let url = '';
-    let mediaType = null;
-    let domType = null;
-    let mime = null;
-    let poster = null;
-    let currentSrc = null;
-    let src = null;
-
-    if (typeof target === 'string') {
-      url = target.trim();
-    } else if (typeof target === 'object') {
-      url = (target.url || target.src || target.currentSrc || '').trim();
-      src = (target.src || '').trim();
-      currentSrc = (target.currentSrc || '').trim();
-      poster = (target.poster || '').trim();
-      mediaType = target.mediaType || target.type || null;
-      domType = target.domType || target.type || null;
-      mime = target.mime || target.contentType || null;
-    }
-
-    const isTweetVidUrl = (u) => {
-      if (!u || typeof u !== 'string') return false;
-      try {
-        const base = (typeof window !== 'undefined' && window.location?.href) || 'https://x.com/';
-        const parsed = new URL(u, base);
-        const host = parsed.hostname.toLowerCase();
-        const pathname = parsed.pathname.toLowerCase();
-        return host === 'video.twimg.com' && pathname.includes('/tweet_video/') && pathname.endsWith('.mp4');
-      } catch (_) {
-        return false;
-      }
-    };
-
-    const isTweetThumbUrl = (u) => {
-      if (!u || typeof u !== 'string') return false;
-      try {
-        const base = (typeof window !== 'undefined' && window.location?.href) || 'https://x.com/';
-        const parsed = new URL(u, base);
-        const host = parsed.hostname.toLowerCase();
-        const pathname = parsed.pathname.toLowerCase();
-        return (host === 'twimg.com' || host.endsWith('.twimg.com')) && pathname.includes('/tweet_video_thumb/');
-      } catch (_) {
-        return false;
-      }
-    };
-
-    // If source or poster matches X tweet_video, or type indicates x_tweet_video:
-    // Blob fallback must not override recovered tweet_video source
-    const isXTweetVideo = isTweetVidUrl(url) ||
-                          isTweetVidUrl(src) ||
-                          isTweetVidUrl(currentSrc) ||
-                          isTweetThumbUrl(poster) ||
-                          isTweetThumbUrl(url) ||
-                          domType === 'x_tweet_video' ||
-                          mediaType === 'x_tweet_video' ||
-                          target?.sourceType === 'x_tweet_video';
-
-    if (isXTweetVideo) {
-      return {
-        type: 'gif',
-        sourceType: 'x_tweet_video',
-        mime: 'video/mp4',
-        animated: true
-      };
-    }
-
-    // Check if target represents an X ordinary video poster (amplify_video_thumb / ext_tw_video_thumb)
-    const isXPoster = isXVideoPosterUrl(url) ||
-                      isXVideoPosterUrl(src) ||
-                      isXVideoPosterUrl(currentSrc) ||
-                      isXVideoPosterUrl(poster);
-
-    if (isXPoster) {
-      return {
-        type: 'video',
-        sourceType: 'video',
-        mime: 'video/mp4',
-        animated: false
-      };
-    }
-
-    const isGifMime = mime && mime.toLowerCase().includes('image/gif');
-    const isGifUrl = /\.(gif)(\?.*)?$/i.test(url);
-    if (isGifMime || isGifUrl || domType === 'gif' || mediaType === 'gif') {
-      return {
-        type: 'gif',
-        sourceType: 'gif',
-        mime: 'image/gif',
-        animated: true
-      };
-    }
-
-    const isVideoExt = /\.(mp4|webm|ogv|mov|m4v)(\?.*)?$/i.test(url);
-    const isVideoMime = mime && mime.toLowerCase().startsWith('video/');
-    if (isVideoExt || isVideoMime || domType === 'video' || mediaType === 'video') {
-      const cleanMime = mime && mime.toLowerCase().startsWith('video/')
-        ? mime.toLowerCase().split(';')[0].trim()
-        : (/\.webm/i.test(url) ? 'video/webm' : 'video/mp4');
-      return {
-        type: 'video',
-        sourceType: 'video',
-        mime: cleanMime,
-        animated: false
-      };
-    }
-
-    const cleanImageMime = mime && mime.toLowerCase().startsWith('image/')
-      ? mime.toLowerCase().split(';')[0].trim()
-      : (/\.png/i.test(url) ? 'image/png' : (/\.webp/i.test(url) ? 'image/webp' : 'image/jpeg'));
-
-    return {
-      type: 'image',
-      sourceType: 'image',
-      mime: cleanImageMime,
-      animated: false
-    };
   }
 
   const XI_POST = 'article[data-testid="tweet"], article[role="article"]';
@@ -746,16 +634,7 @@
       // recovery from the post's own declared variants; it is never "HLS only" for lack of an address and the poster is never its media.
       const unplayedXPlayer = Boolean(video) && candidateUrls.length === 0 && isXVideoPosterUrl(posterUrl);
       if (blobCandidates.length > 0 || unplayedXPlayer) {
-        const o = video ? xiOwnerOf(video) : null;
-        const quoteContainer = o?.quote || (video?.closest ? video.closest(XI_QUOTE) : null);
-        const isQuoteTweet = Boolean(quoteContainer);
-        const postContainer = quoteContainer || o?.article ||
-          (video && video.closest ? (video.closest('article[data-testid="tweet"], article[role="article"]') || video.closest('article')) : null) ||
-          video?.parentElement;
-
-        const postUrl = extractTweetUrl(postContainer, isQuoteTweet ? null : pageUrl) || (isQuoteTweet ? null : pageUrl);
-        const tweetIdMatch = postUrl ? postUrl.match(/\/status(?:es)?\/(\d+)/) : null;
-        const tweetId = tweetIdMatch ? tweetIdMatch[1] : (isQuoteTweet ? xiIdOf(postContainer, true) : null);
+        const { isQuoteTweet, postContainer, postUrl, tweetId } = xPostOf(video, pageUrl);
 
         const videosInContainer = postContainer && postContainer.querySelectorAll
           ? Array.from(postContainer.querySelectorAll('video')).filter(v => !xiCardOf(v, postContainer))
@@ -771,18 +650,7 @@
         const mediaIdMatch = posterUrl ? posterUrl.match(/\/(?:ext_tw_video_thumb|amplify_video_thumb|media)\/(\d+)/i) : null;
         const mediaIdHint = mediaIdMatch ? mediaIdMatch[1] : null;
 
-        let recoveredMp4Url = null;
-        let recoveredBitrate = null;
-        let isConfirmedHls = false;
-
-        const metaRes = extractPostMetadataFromDom(video, postContainer, { posterUrl, mediaIndex, mediaIdHint, isQuoteTweet });
-        if (metaRes?.ok && metaRes.bestMp4) {
-          recoveredMp4Url = metaRes.bestMp4.url;
-          recoveredBitrate = metaRes.bestMp4.bitrate;
-          isConfirmedHls = false;
-        } else if (metaRes?.isHlsOnly) {
-          isConfirmedHls = true;
-        }
+        const { recoveredMp4Url, recoveredBitrate, isConfirmedHls } = xDeclaredMp4(video, postContainer, { posterUrl, mediaIndex, mediaIdHint, isQuoteTweet });
 
         const isBlob = unplayedXPlayer || Boolean(blobCandidates[0]?.startsWith('blob:'));
         // Represent "unknown", "confirmed HLS-only", and "MP4 found" separately:
@@ -813,24 +681,8 @@
         });
       }
 
-      // 3. Source-less video fallback: check poster for tweet_video recovery,
-      // or return unavailable video descriptor (NEVER fall back to downloading poster image!)
-      if (posterUrl) {
-        const recoveredTweetVideoUrl = toTweetVideoUrlFromPoster(posterUrl);
-        if (recoveredTweetVideoUrl) {
-          return createMediaDescriptor({
-            type: 'x_tweet_video',
-            src: recoveredTweetVideoUrl,
-            currentSrc: recoveredTweetVideoUrl,
-            poster: posterUrl,
-            mime: 'video/mp4',
-            pageUrl,
-            linkUrl,
-            sourceType: 'x_tweet_video',
-            animated: true
-          });
-        }
-      }
+      // 3. Source-less video: an unavailable video descriptor (NEVER fall back to downloading the poster image!). A tweet_video poster
+      // already returned its recovered MP4 above.
 
       return createMediaDescriptor({
         type: 'video',
@@ -846,169 +698,76 @@
       });
     }
 
-    // 2. Search for IMG element ONLY if no video or source element was present
+    // 2. Search for IMG element ONLY if no video or source element was present. A pressed IMG and the single IMG owned by a pressed
+    // wrapper give the same descriptor: an image, or the tweet_video / ordinary X video that its poster address names.
+    const imageDescriptor = (img, imgUrl) => {
+      lastChosenEl = img;
+      const tweetVideoUrl = toTweetVideoUrlFromPoster(imgUrl);
+      if (tweetVideoUrl) {
+        return createMediaDescriptor({
+          type: 'x_tweet_video',
+          src: tweetVideoUrl,
+          currentSrc: tweetVideoUrl,
+          poster: imgUrl,
+          mime: 'video/mp4',
+          pageUrl,
+          linkUrl,
+          sourceType: 'x_tweet_video',
+          animated: true
+        });
+      }
+      if (isXVideoPosterUrl(imgUrl)) {
+        const { isQuoteTweet, postContainer, postUrl, tweetId } = xPostOf(img, pageUrl);
+
+        const mediaIdMatch = imgUrl.match(/\/(?:ext_tw_video_thumb|amplify_video_thumb)\/(\d+)/i);
+        const mediaIdHint = mediaIdMatch ? mediaIdMatch[1] : null;
+
+        const { recoveredMp4Url, recoveredBitrate, isConfirmedHls } = xDeclaredMp4(null, postContainer, { posterUrl: imgUrl, mediaIdHint, isQuoteTweet });
+
+        return createMediaDescriptor({
+          type: 'video',
+          src: recoveredMp4Url || '',
+          currentSrc: recoveredMp4Url || '',
+          poster: imgUrl,
+          mime: 'video/mp4',
+          pageUrl,
+          linkUrl,
+          x: typeof lastContextmenuX === 'number' ? lastContextmenuX : null,
+          y: typeof lastContextmenuY === 'number' ? lastContextmenuY : null,
+          sourceType: 'video',
+          animated: false,
+          isHlsOnly: isConfirmedHls,
+          isBlobPlayer: true,
+          recoveredMp4Url,
+          recoveredBitrate,
+          postUrl,
+          tweetId,
+          mediaIdHint,
+          isQuoteTweet
+        });
+      }
+
+      return createMediaDescriptor({
+        type: 'image',
+        src: imgUrl,
+        currentSrc: imgUrl,
+        poster: null,
+        pageUrl,
+        linkUrl
+      });
+    };
     for (const el of elements) {
       if (!el || el === document.body || el === document.documentElement) continue;
 
       if (el.tagName === 'IMG') {
         const imgUrl = el.currentSrc || el.src;
-        if (imgUrl) {
-          lastChosenEl = el;
-          const tweetVideoUrl = toTweetVideoUrlFromPoster(imgUrl);
-          if (tweetVideoUrl) {
-            return createMediaDescriptor({
-              type: 'x_tweet_video',
-              src: tweetVideoUrl,
-              currentSrc: tweetVideoUrl,
-              poster: imgUrl,
-              mime: 'video/mp4',
-              pageUrl,
-              linkUrl,
-              sourceType: 'x_tweet_video',
-              animated: true
-            });
-          }
-          if (isXVideoPosterUrl(imgUrl)) {
-            const o = el ? xiOwnerOf(el) : null;
-            const quoteContainer = o?.quote || (el?.closest ? el.closest(XI_QUOTE) : null);
-            const isQuoteTweet = Boolean(quoteContainer);
-            const postContainer = quoteContainer || o?.article ||
-              (el.closest ? (el.closest('article[data-testid="tweet"], article[role="article"]') || el.closest('article')) : null) ||
-              el.parentElement;
-
-            const postUrl = extractTweetUrl(postContainer, isQuoteTweet ? null : pageUrl) || (isQuoteTweet ? null : pageUrl);
-            const tweetIdMatch = postUrl ? postUrl.match(/\/status(?:es)?\/(\d+)/) : null;
-            const tweetId = tweetIdMatch ? tweetIdMatch[1] : (isQuoteTweet ? xiIdOf(postContainer, true) : null);
-
-            const mediaIdMatch = imgUrl.match(/\/(?:ext_tw_video_thumb|amplify_video_thumb)\/(\d+)/i);
-            const mediaIdHint = mediaIdMatch ? mediaIdMatch[1] : null;
-
-            let recoveredMp4Url = null;
-            let recoveredBitrate = null;
-            let isConfirmedHls = false;
-
-            const metaRes = extractPostMetadataFromDom(null, postContainer, { posterUrl: imgUrl, mediaIdHint, isQuoteTweet });
-            if (metaRes?.ok && metaRes.bestMp4) {
-              recoveredMp4Url = metaRes.bestMp4.url;
-              recoveredBitrate = metaRes.bestMp4.bitrate;
-              isConfirmedHls = false;
-            } else if (metaRes?.isHlsOnly) {
-              isConfirmedHls = true;
-            }
-
-            return createMediaDescriptor({
-              type: 'video',
-              src: recoveredMp4Url || '',
-              currentSrc: recoveredMp4Url || '',
-              poster: imgUrl,
-              mime: 'video/mp4',
-              pageUrl,
-              linkUrl,
-              x: typeof lastContextmenuX === 'number' ? lastContextmenuX : null,
-              y: typeof lastContextmenuY === 'number' ? lastContextmenuY : null,
-              sourceType: 'video',
-              animated: false,
-              isHlsOnly: isConfirmedHls,
-              isBlobPlayer: true,
-              recoveredMp4Url,
-              recoveredBitrate,
-              postUrl,
-              tweetId,
-              mediaIdHint,
-              isQuoteTweet
-            });
-          }
-
-          return createMediaDescriptor({
-            type: 'image',
-            src: imgUrl,
-            currentSrc: imgUrl,
-            poster: null,
-            pageUrl,
-            linkUrl
-          });
-        }
+        if (imgUrl) return imageDescriptor(el, imgUrl);
       }
       const insideImgs = el.querySelector ? ownedWithin(el, 'img') : [];
       const insideImg = insideImgs.length === 1 ? insideImgs[0] : null;
       if (insideImg) {
         const imgUrl = insideImg.currentSrc || insideImg.src;
-        if (imgUrl) {
-          lastChosenEl = insideImg;
-          const tweetVideoUrl = toTweetVideoUrlFromPoster(imgUrl);
-          if (tweetVideoUrl) {
-            return createMediaDescriptor({
-              type: 'x_tweet_video',
-              src: tweetVideoUrl,
-              currentSrc: tweetVideoUrl,
-              poster: imgUrl,
-              mime: 'video/mp4',
-              pageUrl,
-              linkUrl,
-              sourceType: 'x_tweet_video',
-              animated: true
-            });
-          }
-          if (isXVideoPosterUrl(imgUrl)) {
-            const o = insideImg ? xiOwnerOf(insideImg) : null;
-            const quoteContainer = o?.quote || (insideImg?.closest ? insideImg.closest(XI_QUOTE) : null);
-            const isQuoteTweet = Boolean(quoteContainer);
-            const postContainer = quoteContainer || o?.article ||
-              (insideImg.closest ? (insideImg.closest('article[data-testid="tweet"], article[role="article"]') || insideImg.closest('article')) : null) ||
-              insideImg.parentElement;
-
-            const postUrl = extractTweetUrl(postContainer, isQuoteTweet ? null : pageUrl) || (isQuoteTweet ? null : pageUrl);
-            const tweetIdMatch = postUrl ? postUrl.match(/\/status(?:es)?\/(\d+)/) : null;
-            const tweetId = tweetIdMatch ? tweetIdMatch[1] : (isQuoteTweet ? xiIdOf(postContainer, true) : null);
-
-            const mediaIdMatch = imgUrl.match(/\/(?:ext_tw_video_thumb|amplify_video_thumb)\/(\d+)/i);
-            const mediaIdHint = mediaIdMatch ? mediaIdMatch[1] : null;
-
-            let recoveredMp4Url = null;
-            let recoveredBitrate = null;
-            let isConfirmedHls = false;
-
-            const metaRes = extractPostMetadataFromDom(null, postContainer, { posterUrl: imgUrl, mediaIdHint, isQuoteTweet });
-            if (metaRes?.ok && metaRes.bestMp4) {
-              recoveredMp4Url = metaRes.bestMp4.url;
-              recoveredBitrate = metaRes.bestMp4.bitrate;
-              isConfirmedHls = false;
-            } else if (metaRes?.isHlsOnly) {
-              isConfirmedHls = true;
-            }
-
-            return createMediaDescriptor({
-              type: 'video',
-              src: recoveredMp4Url || '',
-              currentSrc: recoveredMp4Url || '',
-              poster: imgUrl,
-              mime: 'video/mp4',
-              pageUrl,
-              linkUrl,
-              x: typeof lastContextmenuX === 'number' ? lastContextmenuX : null,
-              y: typeof lastContextmenuY === 'number' ? lastContextmenuY : null,
-              sourceType: 'video',
-              animated: false,
-              isHlsOnly: isConfirmedHls,
-              isBlobPlayer: true,
-              recoveredMp4Url,
-              recoveredBitrate,
-              postUrl,
-              tweetId,
-              mediaIdHint,
-              isQuoteTweet
-            });
-          }
-
-          return createMediaDescriptor({
-            type: 'image',
-            src: imgUrl,
-            currentSrc: imgUrl,
-            poster: null,
-            pageUrl,
-            linkUrl
-          });
-        }
+        if (imgUrl) return imageDescriptor(insideImg, imgUrl);
       }
     }
 
@@ -2413,7 +2172,6 @@
     globalThis.__findMediaInElements = findMediaInElements;
     globalThis.__createMediaDescriptor = createMediaDescriptor;
     globalThis.__detectVideoMime = detectVideoMime;
-    globalThis.__classifyMediaTarget = classifyMediaTarget;
     globalThis.__getLastContextmenuCoords = () => ({ x: lastContextmenuX, y: lastContextmenuY });
     globalThis.__setLastContextmenuCoords = (x, y) => { lastContextmenuX = x; lastContextmenuY = y; };
     globalThis.__getSavedMediaDescriptor = () => savedMediaDescriptor;
@@ -2430,7 +2188,6 @@
     globalThis.__ensureXButtonStyles = ensureXButtonStyles;
     globalThis.__extractMediaItemsFromTweet = extractMediaItemsFromTweet;
     globalThis.__selectMatchingMediaItem = selectMatchingMediaItem;
-    globalThis.__selectBestMp4Variant = selectBestMp4Variant;
     globalThis.__inspectVideoVariants = inspectVideoVariants;
     globalThis.__extractPostMetadataFromDom = extractPostMetadataFromDom;
     globalThis.__isXVideoPosterUrl = isXVideoPosterUrl;
