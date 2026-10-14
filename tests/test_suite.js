@@ -15142,7 +15142,7 @@ async function runTests() {
       const uuFallback = fmt('https://instagram.com/p/C_abc123-xyz/', 'uuinstagram.com');
       const ddFallback = fmt('https://instagram.com/p/C_abc123-xyz/', 'ddinstagram.com');
       const kkFallback = fmt('https://instagram.com/p/C_abc123-xyz/', 'kkinstagram.com');
-      const clipFallback = fmt('https://instagram.com/reel/D_reel789_0/', 'kkclip.com');
+      const clipReel = fmt('https://instagram.com/reel/D_reel789_0/', 'kkclip.com');
       const disallowedFallback = fmt('https://instagram.com/p/C_abc123-xyz/', 'evil.com');
 
       assert(
@@ -15155,7 +15155,7 @@ async function runTests() {
         uuFallback === 'https://oginstagram.com/p/C_abc123-xyz/' &&
         ddFallback === 'https://oginstagram.com/p/C_abc123-xyz/' &&
         kkFallback === 'https://oginstagram.com/p/C_abc123-xyz/' &&
-        clipFallback === 'https://oginstagram.com/reel/D_reel789_0/' &&
+        clipReel === 'https://kkclip.com/reel/D_reel789_0/' &&
         disallowedFallback === 'https://oginstagram.com/p/C_abc123-xyz/',
         '224.2: formatInstagramShareUrl сохраняет выбранный instagram.com и допустимые embeds; недопустимые хосты сбрасывает на oginstagram.com'
       );
@@ -18123,8 +18123,8 @@ async function runTests() {
       !popupHtml.includes('uuinstagram.com') &&
       !popupHtml.includes('ddinstagram.com') &&
       !popupHtml.includes('kkinstagram.com') &&
-      !popupHtml.includes('kkclip.com'),
-      '226.1: панель Embed содержит независимые селекторы для X, Instagram и TikTok с точными пользовательскими метками (oginstagram.com и kirkstagram.com для Instagram)'
+      embedOption('kkclip.com', 'embed.backup', 'kkclip.com (резерв)'),
+      '226.1: панель Embed содержит независимые селекторы для X, Instagram и TikTok с точными пользовательскими метками (oginstagram.com, kirkstagram.com и kkclip.com для Instagram)'
     );
 
     // 226.2: settings controller (the logic behind the full page) — load and save independence
@@ -18172,7 +18172,7 @@ async function runTests() {
       '226.2: Настройки хостов (контроллер страницы настроек) независимы: изменение Instagram не затрагивает сохраненные значения X и TikTok'
     );
 
-    // 226.2b: Fallback for previously saved removed hosts (eeinstagram.com, uuinstagram.com, kkclip.com, etc.)
+    // 226.2b: Fallback for previously saved removed hosts (eeinstagram.com, uuinstagram.com, etc.)
     storedSettings.igShareHost = 'eeinstagram.com';
     const fb226 = await openSettings();
 
@@ -18204,6 +18204,11 @@ async function runTests() {
       storedSettings.ttShareHost === 'tnktok.com',
       '226.2c: Выбор и сохранение oginstagram.com / kirkstagram.com сохраняются в chrome.storage.local и изолированы от X и TikTok'
     );
+
+    kirk226.setField('igShareHost', 'kkclip.com');
+    await quietly(() => kirk226.save());
+    const kk226 = await openSettings();
+    assert(kk226.store.getState().igShareHost === 'kkclip.com' && storedSettings.igShareHost === 'kkclip.com' && storedSettings.xShareHost === 'fixupx.com' && storedSettings.ttShareHost === 'tnktok.com', '226.2c-kkclip: saved kkclip preference loads again without changing other platforms');
 
     // 226.2d: Content script live storage synchronization and fallback for oginstagram.com and kirkstagram.com
     {
@@ -18239,11 +18244,12 @@ async function runTests() {
 
       assert(
         liveIgSandbox.__getCachedIgShareHost() === 'instagram.com' &&
-        liveIgSandbox.__ALLOWED_IG_SHARE_HOSTS.length === 3 &&
+        liveIgSandbox.__ALLOWED_IG_SHARE_HOSTS.length === 4 &&
         liveIgSandbox.__ALLOWED_IG_SHARE_HOSTS[0] === 'instagram.com' &&
         liveIgSandbox.__ALLOWED_IG_SHARE_HOSTS[1] === 'oginstagram.com' &&
-        liveIgSandbox.__ALLOWED_IG_SHARE_HOSTS[2] === 'kirkstagram.com',
-        '226.2d: ALLOWED_IG_SHARE_HOSTS содержит instagram.com (1-й, дефолт), oginstagram.com (2-й) и kirkstagram.com (3-й)'
+        liveIgSandbox.__ALLOWED_IG_SHARE_HOSTS[2] === 'kirkstagram.com' &&
+        liveIgSandbox.__ALLOWED_IG_SHARE_HOSTS[3] === 'kkclip.com',
+        '226.2d: Instagram allowlist preserves the original/default/backup and adds kkclip.com'
       );
 
       // Simulate live change event to oginstagram.com
@@ -18274,6 +18280,11 @@ async function runTests() {
         fmtLive('https://www.instagram.com/reel/C123456_xyz/') === 'https://kirkstagram.com/reel/C123456_xyz/',
         '226.2f2: formatInstagramShareUrl с активным кешем kirkstagram.com форматирует /reel/'
       );
+
+      storageChangeListener({ igShareHost: { newValue: 'kkclip.com' } }, 'local');
+      assert(liveIgSandbox.__getCachedIgShareHost() === 'kkclip.com' && fmtLive('https://www.instagram.com/reel/DeE-UkvMT4P/?exln=MWduc3UxbHB5aDkxNg==') === 'https://kkclip.com/reel/DeE-UkvMT4P/' && fmtLive('https://www.instagram.com/p/C987654_abc/?igsh=example#caption') === 'https://kkclip.com/p/C987654_abc/', '226.2f-kkclip: live storage synchronization keeps the exact Reel/post shortcode in canonical kkclip links');
+      assert(fmtLive('https://www.instagram.com/reel/audio/') === null && fmtLive('http://www.instagram.com/reel/DeE-UkvMT4P/') === null && fmtLive('https://instagram.com.evil.example/reel/DeE-UkvMT4P/') === null && fmtLive('https://www.kkclip.com/reel/DeE-UkvMT4P/') === null && fmtLive('https://www.instagram.com/reel/DeE-UkvMT4P/', 'kkclip.com.evil.example') === 'https://oginstagram.com/reel/DeE-UkvMT4P/', '226.2f-kkclip-guards: new target does not broaden source/shortcode/host validation');
+      storageChangeListener({ igShareHost: { newValue: 'kirkstagram.com' } }, 'local');
 
       // Simulate storage change with an invalid host (such as obsolete eeinstagram.com or uuinstagram.com)
       if (typeof storageChangeListener === 'function') {

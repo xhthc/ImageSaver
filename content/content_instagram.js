@@ -98,7 +98,7 @@
     <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
   </svg>`;
 
-  const ALLOWED_IG_SHARE_HOSTS = ['instagram.com', 'oginstagram.com', 'kirkstagram.com'];
+  const ALLOWED_IG_SHARE_HOSTS = ['instagram.com', 'oginstagram.com', 'kirkstagram.com', 'kkclip.com'];
   const DEFAULT_IG_SHARE_HOST = 'oginstagram.com';
   let cachedIgShareHost = DEFAULT_IG_SHARE_HOST;
 
@@ -168,7 +168,7 @@
 
   /**
    * Constructs an embed-friendly or canonical share URL for an Instagram post or Reel.
-   * Only allowed hosts: 'instagram.com', 'oginstagram.com', 'kirkstagram.com'.
+   * Only allowed hosts: 'instagram.com', 'oginstagram.com', 'kirkstagram.com', 'kkclip.com'.
    * Input must be HTTPS instagram.com URL with valid /p/ or /reel/ shortcode.
    * Suffixes, query string, and hash are omitted. Rejects non-post routes such as /reel/audio/.
    */

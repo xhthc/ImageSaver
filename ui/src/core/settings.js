@@ -15,7 +15,7 @@ import { uiLog } from './debuglog.js';
 
 export const ALLOWED_HOSTS = Object.freeze({
   xShareHost: Object.freeze(['x.com', 'fixupx.com', 'cunnyx.com']),
-  igShareHost: Object.freeze(['instagram.com', 'oginstagram.com', 'kirkstagram.com']),
+  igShareHost: Object.freeze(['instagram.com', 'oginstagram.com', 'kirkstagram.com', 'kkclip.com']),
   ttShareHost: Object.freeze(['tiktok.com', 'tnktok.com', 'd.tnktok.com']),
   youtubeShareHost: Object.freeze(['youtube.com', 'yfxtube.com', 'koutube.com']),
 });

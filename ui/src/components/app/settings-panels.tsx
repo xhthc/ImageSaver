@@ -316,6 +316,7 @@ const EMBED_FIELDS = [
       ["oginstagram.com", "embed.primary"],
       ["instagram.com", "embed.original"],
       ["kirkstagram.com", "embed.backup"],
+      ["kkclip.com", "embed.backup"],
     ],
     hint: "embed.ig.hint",
   },

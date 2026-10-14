@@ -1286,6 +1286,26 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     }
   }
 
+  // Instagram preview host: a real dropdown choice, draft/save failure/retry and reopened preference.
+  for (const lang of ['en', 'ru']) {
+    const state = { session: [], history: [], local: { uiLanguage: lang } };
+    const p = await page('full', state, { hash: '#embed' });
+    await p.key(p.q('#igShareHostSelect'), 'Enter'); await p.settle();
+    const option = p.qa('[role="option"]').find((n) => n.textContent.startsWith('kkclip.com'));
+    assert(option && p.qa('[role="option"]').length === 4, `R26a ${lang}: Instagram exposes kkclip alongside the existing three choices`);
+    await p.key(option, 'Enter');
+    assert(p.q('#igShareHostSelect').textContent === 'kkclip.com' && p.calls.localSets.length === 0 && p.q('#settingsSaveBar').getAttribute('data-state') === 'dirty', `R26b ${lang}: selecting kkclip remains an unsaved draft`);
+    await p.mousedown(p.q('[data-section="saving"]')); await p.mousedown(p.q('[data-section="embed"]'));
+    await p.click(p.qa('[data-slot="embed"] [data-slot="collapsible-trigger"]')[1]);
+    assert(p.q('#igShareHostSelect').textContent === 'kkclip.com' && p.q('#igShareHostSelectHint').textContent.includes('kkclip.com'), `R26c ${lang}: navigation retains the choice and localized help names the service`);
+    state.failSet = true; await p.click(p.q('#saveButton'));
+    assert(p.q('#igShareHostSelect').textContent === 'kkclip.com' && state.local.igShareHost === undefined && p.q('#statusMessage').getAttribute('data-type') === 'error', `R26d ${lang}: failed Save retains the kkclip draft and error`);
+    state.failSet = false; await p.click(p.q('#saveButton'));
+    assert(state.local.igShareHost === 'kkclip.com' && state.local.xShareHost === 'fixupx.com' && state.local.ttShareHost === 'tnktok.com' && state.local.youtubeShareHost === 'koutube.com', `R26e ${lang}: explicit Save persists kkclip without changing other defaults`);
+    await p.unmount(); const again = await page('full', state, { hash: '#embed' });
+    assert(again.q('#igShareHostSelect').textContent === 'kkclip.com', `R26f ${lang}: reopened settings show the saved kkclip choice`); await again.unmount();
+  }
+
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);
   process.exit(failed > 0 ? 1 : 0);
 })().catch((err) => {
