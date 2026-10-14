@@ -15,16 +15,12 @@ import {jobFailure} from "@/core/present.js"
 const bytes=(n:number)=>n>=1048576?`${(n/1048576).toFixed(1)} MB`:n>=1024?`${(n/1024).toFixed(1)} KB`:`${n} B`
 const TERMINAL=['complete','failed','cancelled']
 type FeedbackController=ReturnType<typeof createFeedbackList>
+// Icon and tone per job state; every other (preparing or post-transfer) state spins.
+const JOB_ICONS:Record<string,[typeof Download,string]>={complete:[CheckCircle2,"text-success"],failed:[XCircle,"text-danger"],cancelled:[Ban,"text-muted-foreground"],queued:[Clock,"text-muted-foreground"],receiving:[Download,"text-ring"]}
 /** A job's state as an icon; the state is also written out in the row, so colour is never the only signal. */
 function JobIcon({state}:{state:string}) {
-  const box="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted"
-  const icon="size-4"
-  if(state==='complete')return <span className={box} aria-hidden="true"><CheckCircle2 className={cn(icon,"text-success")}/></span>
-  if(state==='failed')return <span className={box} aria-hidden="true"><XCircle className={cn(icon,"text-danger")}/></span>
-  if(state==='cancelled')return <span className={box} aria-hidden="true"><Ban className={cn(icon,"text-muted-foreground")}/></span>
-  if(state==='queued')return <span className={box} aria-hidden="true"><Clock className={cn(icon,"text-muted-foreground")}/></span>
-  if(state==='receiving')return <span className={box} aria-hidden="true"><Download className={cn(icon,"text-ring")}/></span>
-  return <span className={box} aria-hidden="true"><Loader2 className={cn(icon,"animate-spin text-ring motion-reduce:animate-none")}/></span>
+  const [Icon,tone]=JOB_ICONS[state] || [Loader2,"animate-spin text-ring motion-reduce:animate-none"]
+  return <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted" aria-hidden="true"><Icon className={cn("size-4",tone)}/></span>
 }
 /** A job's error as a localized title/explanation (and, for a failed job on the full page, the next step), with the raw code kept on a small line.
  * A queued job that the manager retries itself (RATE_LIMIT) is not styled as a failure. */
@@ -58,9 +54,12 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
     if(controller.store.getState().status==='ready')list?.focus()
   }
   const finished=s.jobs.some(j=>TERMINAL.includes(j.state))
+  const pauseLabel=t(s.paused?'downloads.resume':'downloads.pause')
+  // A row action: an icon button whose accessible name is also its tooltip.
+  const rowAction=(label:string,command:Parameters<typeof controller.command>[0],id:string,icon:React.ReactNode)=><Button variant="ghost" size="icon-sm" disabled={s.busy} aria-label={label} title={label} onClick={()=>void controller.command(command,id)}>{icon}</Button>
   const queueControls=<>
-    <Button variant={full?'outline':'ghost'} size={full?'sm':'icon-sm'} disabled={s.busy} aria-label={t(s.paused?'downloads.resume':'downloads.pause')} title={t(s.paused?'downloads.resume':'downloads.pause')} onClick={()=>void controller.command('pause',undefined)}>
-      {s.paused?<Play/>:<Pause/>}{full?t(s.paused?'downloads.resume':'downloads.pause'):null}
+    <Button variant={full?'outline':'ghost'} size={full?'sm':'icon-sm'} disabled={s.busy} aria-label={pauseLabel} title={pauseLabel} onClick={()=>void controller.command('pause',undefined)}>
+      {s.paused?<Play/>:<Pause/>}{full?pauseLabel:null}
     </Button>
     <Button variant={full?'outline':'ghost'} size="icon-sm" disabled={s.busy || !finished} aria-label={t('downloads.clearFinished')} title={t('downloads.clearFinished')} onClick={()=>void controller.command('clearFinished',undefined)}><Trash2/></Button>
   </>
@@ -79,9 +78,9 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
       const seconds=j.total && j.speed>0?Math.ceil((j.total-j.received)/j.speed):null
       const record=records.find(r=>r.id===(j.op || j.id))
       const actions=<div className="flex shrink-0 items-center gap-0.5">
-        {active && j.managed!==false?<Button variant="ghost" size="icon-sm" disabled={s.busy} aria-label={t('downloads.cancel')} title={t('downloads.cancel')} onClick={()=>void controller.command('cancel',j.id)}><X/></Button>:null}
-        {j.state==='failed' && j.managed!==false && j.error!=='EXPORT_UNCERTAIN'?<Button variant="ghost" size="icon-sm" disabled={s.busy} aria-label={t(j.ready?'downloads.exportAgain':'downloads.retry')} title={t(j.ready?'downloads.exportAgain':'downloads.retry')} onClick={()=>void controller.command('retry',j.id)}><RotateCcw/></Button>:null}
-        {full && !active?<Button variant="ghost" size="icon-sm" disabled={s.busy} aria-label={t(j.managed===false?'downloads.removeRecord':'downloads.remove')} title={t(j.managed===false?'downloads.removeRecord':'downloads.remove')} onClick={()=>void controller.command('remove',j.id)}><Trash2/></Button>:null}
+        {active && j.managed!==false?rowAction(t('downloads.cancel'),'cancel',j.id,<X/>):null}
+        {j.state==='failed' && j.managed!==false && j.error!=='EXPORT_UNCERTAIN'?rowAction(t(j.ready?'downloads.exportAgain':'downloads.retry'),'retry',j.id,<RotateCcw/>):null}
+        {full && !active?rowAction(t(j.managed===false?'downloads.removeRecord':'downloads.remove'),'remove',j.id,<Trash2/>):null}
       </div>
       // Only received bytes with a known total fill the bar; preparation, checking, the wait before saving and the export itself are
       // indeterminate, and a queued job has no bar, so a full bar is never shown for a file that is not saved yet.

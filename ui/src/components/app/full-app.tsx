@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { Bell, Bug, ChartColumn, FolderCog, Download, Link2, PackageCheck } from "lucide-react"
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -103,6 +103,12 @@ export function FullApp({ settings }: { settings: SettingsController }) {
   const welcome = guide.open || (welcomeFromLocation(env.location) && !guide.ready)
 
   const showSave = (SETTINGS_SECTIONS as readonly string[]).includes(section)
+  // Every section stays mounted; an inactive one is only hidden, so drafts and controllers survive switching.
+  const panel = (name: string, children: ReactNode) => (
+    <TabsContent value={name} forceMount hidden={section !== name} className="data-[state=inactive]:hidden" tabIndex={-1}>
+      {children}
+    </TabsContent>
+  )
 
   return (
     <TooltipProvider>
@@ -151,29 +157,18 @@ export function FullApp({ settings }: { settings: SettingsController }) {
               </TabsList>
 
               <div className="flex min-w-0 flex-1 flex-col gap-6">
-                <TabsContent value="history" forceMount hidden={section !== "history"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-                  <StatisticsPanel />
-                </TabsContent>
-                <TabsContent value="downloads" forceMount hidden={section !== "downloads"} className="data-[state=inactive]:hidden" tabIndex={-1}>
+                {panel("history", <StatisticsPanel />)}
+                {panel(
+                  "downloads",
                   <div data-slot="recent">
                     <DownloadsPanel full focusId={focusId} visible={section === "downloads" && !welcome} />
-                  </div>
-                </TabsContent>
-                <TabsContent value="saving" forceMount hidden={section !== "saving"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-                  <SavingPanel settings={settings} />
-                </TabsContent>
-                <TabsContent value="notifications" forceMount hidden={section !== "notifications"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-                  <NotificationsPanel settings={settings} />
-                </TabsContent>
-                <TabsContent value="embed" forceMount hidden={section !== "embed"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-                  <EmbedPanel settings={settings} />
-                </TabsContent>
-                <TabsContent value="updates" forceMount hidden={section !== "updates"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-                  <UpdatesPanel active={section === "updates"} />
-                </TabsContent>
-                <TabsContent value="debug" forceMount hidden={section !== "debug"} className="data-[state=inactive]:hidden" tabIndex={-1}>
-                  <DebugPanel />
-                </TabsContent>
+                  </div>,
+                )}
+                {panel("saving", <SavingPanel settings={settings} />)}
+                {panel("notifications", <NotificationsPanel settings={settings} />)}
+                {panel("embed", <EmbedPanel settings={settings} />)}
+                {panel("updates", <UpdatesPanel active={section === "updates"} />)}
+                {panel("debug", <DebugPanel />)}
 
                 {showSave ? <SaveBar settings={settings} /> : null}
 
