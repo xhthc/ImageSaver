@@ -142,7 +142,15 @@ export function FullApp({ settings }: { settings: SettingsController }) {
                   const Icon = TAB_ICONS[name]
                   return (
                     <Fragment key={name}>
-                      {GROUP_LABELS[name] ? <span role="presentation" data-slot="nav-group" className="hidden px-3 text-xs font-medium leading-4 text-muted-foreground md:block">{t(GROUP_LABELS[name])}</span> : null}
+                      {GROUP_LABELS[name] ? (
+                        <span
+                          role="presentation"
+                          data-slot="nav-group"
+                          className={`hidden pr-3 pb-1.5 pl-[2.375rem] text-xs font-semibold leading-4 tracking-[0.06em] text-muted-foreground uppercase md:block ${name === "downloads" ? "" : "md:mt-4"}`}
+                        >
+                          {t(GROUP_LABELS[name])}
+                        </span>
+                      ) : null}
                       <TabsTrigger
                         value={name}
                         data-section={name}
