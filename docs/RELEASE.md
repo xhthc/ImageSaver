@@ -35,7 +35,7 @@ Privacy URL: https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md
 
 Support URL: https://github.com/xhthc/MediaLatch/issues
 
-The v2.0.0.32 preview removes the Explorer companion integration, folder-location controls and native messaging permission. Saving to a selected directory remains browser-only. Validate the exact committed runtime ZIP, including imported worker modules; no companion archive is produced. The user confirmed the existing manager-return notice fix; toolbar lifetime, crash/restart, quota stress, broader codecs/audio and store approval remain separate gates.
+The v2.0.0.33 preview keeps the Explorer companion, folder-location controls and native messaging permission removed. It includes the reviewed refactor, first-install welcome, theme icons, author folders for x.com/Reddit/Pixiv and selected-media scroll continuity. Saving to a selected directory remains browser-only. Validate the exact committed runtime ZIP, including imported worker modules; no companion archive is produced. Limited user Helium checks and isolated startup/UI/statistics migration checks passed; exhaustive crash/restart, quota, codecs/audio and store approval remain separate gates.
 
 ## Permission and privacy disclosures
 

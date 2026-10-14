@@ -3,25 +3,25 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.32"><img src="https://img.shields.io/badge/preview-v2.0.0.32-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Preview v2.0.0.32"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.33"><img src="https://img.shields.io/badge/pre--release-v2.0.0.33-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.0.0.33"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.32"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.33"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
     <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Chrome Web Store distribution planned; not yet available">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
   <p><a href="README.ru.md">Русский</a> · <a href="#quick-start">Quick start</a> · <a href="#install">Installation</a> · <a href="#roadmap">Roadmap</a> · <a href="docs/PRIVACY.md">Privacy</a></p>
 </div>
 
-MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**, track parallel downloads and choose where files go — including **a folder for each x.com author**.
+MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**, track parallel downloads and choose where files go — including **author folders for x.com, Reddit and Pixiv**.
 
-> **Current preview: [v2.0.0.32](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.32).** Notices keep working after returning from the manager. Explorer integration and file-location buttons have been removed; saving requires no companion software. Violet interface, parallel saves and English/Russian settings.
+> **Current pre-release: [v2.0.0.33](https://github.com/xhthc/MediaLatch/releases/tag/v2.0.0.33).** First-install welcome, author folders for x.com/Reddit/Pixiv, theme-colored icons and a compact download popup. Pixiv preview saves and selected-media continuity during scrolling are improved. Saving requires no companion software.
 
-The runtime ZIP includes the current worker refactoring and interface changes. Toolbar-popup lifetime and broader manual regression checks remain pending.
+The runtime ZIP includes the reviewed worker refactor and current interface. Ordinary downloads and the interface passed the latest user smoke check in Helium; exhaustive media/audio, crash/restart and quota testing remain separate checks.
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
@@ -31,7 +31,7 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/assets/welcome.png" alt="Violet welcome screen: three short steps and one Continue button"><br><strong>Start in three steps</strong><br>A fresh install opens a short welcome screen once; Continue opens the Saving settings (development main only).</td>
+    <td width="50%"><img src="docs/assets/welcome.png" alt="Violet welcome screen: three short steps and one Continue button"><br><strong>Start in three steps</strong><br>A fresh install opens a short welcome screen once; Continue opens the Saving settings.</td>
     <td width="50%"><img src="docs/assets/downloads.png" alt="Download manager on a fresh install, showing its empty state"><br><strong>Follow every download</strong><br>Progress, cancel, retry and plain-language failure explanations with the technical code.</td>
   </tr>
   <tr>
@@ -40,7 +40,7 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
   </tr>
 </table>
 
-Screenshots from an isolated fresh install of the current development main (default settings, no downloads). Violet by default, English/Russian localization and short transitions that respect reduced motion.
+Screenshots from an isolated fresh install of the v2.0.0.33 build (default settings, no downloads). Violet by default, English/Russian localization and short transitions that respect reduced motion.
 
 ---
 
@@ -51,13 +51,13 @@ Screenshots from an isolated fresh install of the current development main (defa
 3. Track downloads in the popup. **Open download manager** leads to details, cancellation and retrying export from prepared bytes. MediaLatch notices appear on the original page.
 4. Open **Saving**, choose a destination and organization, then press **Save settings**. Files default to `Downloads/SavedImages/`.
 
-Development main only (not in the published v2.0.0.32 ZIP): a fresh install opens a separate welcome screen with three short steps. **Continue** remembers it and opens **Saving**; the welcome is shown only for that first install, never after updates or browser restarts, and there is no tutorial button afterwards. Saving and Embed show **Unsaved changes** whenever the form differs from what is stored (also right after a save), saving progress, success or a lasting error; a failed settings read offers **Try again**. Both download managers explain failures in plain language, consistently on the card and in its details, and keep the technical code on a small line.
+A fresh install opens a separate welcome screen with three short steps. **Continue** remembers it and opens **Saving**; the welcome is shown only for that first install, never after updates or browser restarts, and there is no tutorial button afterwards. Saving and Embed show **Unsaved changes** whenever the form differs from what is stored (also right after a save), saving progress, success or a lasting error; a failed settings read offers **Try again**. Both download managers explain failures in plain language, consistently on the card and in its details, and keep the technical code on a small line.
 
 ---
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.32-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.0.0.33-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -76,7 +76,7 @@ The committed `popup/` pages are ready to use. Node/npm are needed only for deve
 
 ## Features
 
-The packaged preview includes these features. Ordinary downloads, themes, Statistics, chosen-folder routing and Pixiv batches were checked in Helium; the user confirmed notices after manager return. Toolbar lifetime, native crash/restart, quota stress and broader codec/audio checks remain pending.
+The v2.0.0.33 runtime ZIP includes the features below. Manual Helium checks cover Pixiv, Zerochan, X, Reddit and embedded RedGIFs, standalone RedGIFs and tested booru boards, plus folders, themes, language and popup scrolling. These checks cover the reported scenarios, not every layout or media format.
 
 ### Save the selected media
 
@@ -88,13 +88,14 @@ The packaged preview includes these features. Ordinary downloads, themes, Statis
 
 ### Manage files
 
-- Choose a writable base folder, an optional subfolder and site/type organization. X can also use folders named after the selected post author. Save results and redacted error reports stay in the manager.
+- Choose a writable base folder and an optional subfolder. Save everything into one folder or organize by site/type. One Author folders menu enables any combination of x.com, Reddit and Pixiv: usernames on X/Reddit, author name plus user ID on Pixiv. Save results and redacted error reports stay in the manager.
+- Compact popup with wheel/keyboard scrolling, hidden scrollbar and one clear action for finished records; individual removal and details stay in the full manager.
 - Download manager with received/total bytes, speed and approximate remaining time when measurable. Complete files are staged locally before browser export; failed export can retry from retained bytes without another source download.
 
 ### Settings and diagnostics
 
 - Own MediaLatch notices on the source page, grouping bulk saves into one card with success/error counts, dismiss/manager buttons and synchronized themes. Closed or navigated tabs cannot display them; results and the failure badge remain in the extension. Success notices can be switched off independently.
-- Violet interface theme by default, with optional Blue, Dark and Light themes. Saved choices apply across the popup and settings page; existing preferences are preserved. Brief interface animations respect reduced motion.
+- Violet by default, with Blue, Dark and Light themes and matching MediaLatch icons in the interface and toolbar. Saved choices apply across the popup, settings and notices; existing preferences are preserved. Brief animations respect reduced motion.
 - Opt-in local statistics without an entry count or time limit, with recording and clear controls. Available old history is imported once; expired or removed records cannot be reconstructed.
 - Opt-in local Debug journal with filters, copy/export and clear controls: up to 2,000 events, 1 MiB and 24 hours. Full URLs, tokens, page text and local paths are excluded.
 - Supported post-link copying on X, Instagram, TikTok and YouTube Shorts, with optional preview-link hosts.
@@ -111,13 +112,14 @@ The packaged preview includes these features. Ordinary downloads, themes, Statis
 | RedGIFs | Selected clip and same-clip video renditions; inline saving; provider audio recovery where available |
 | Pawchive | Declared post originals from previews or individual attachments; common 100-file batch limit, with spaced starts and a rate-limit stop |
 | Sankaku | Selected preview/sample to declared same-post original via the context menu in feeds/opened posts; image/video smoke tests reported working in Helium, native GIF test pending |
-| Booru boards (development main) | Gelbooru, safebooru.org, yande.re, Konachan and Sakugabooru: a feed preview or the image/video on an opened post saves the post's declared original (photo, GIF or video), checked in an isolated browser; Danbooru and rule34.xxx use the same engine rules but were not reachable from an isolated profile (challenge page) |
+| Booru boards | Danbooru, Gelbooru/rule34.xxx/safebooru.org and Moebooru boards such as yande.re, Konachan and Sakugabooru: selected preview/post media resolves to the declared same-post, same-file original; access/challenge pages can still prevent saving |
+| Zerochan | Selected thumbnail or opened-post media resolves to the declared same-post original; unavailable originals are refused |
 | Pixiv | Feed previews save the post's declared original pages (up to 100); an image selected inside an opened artwork remains single |
 | Other sites | Generic discovery plus existing rules, including selected booru paths; coverage varies |
 
-Kemono is deferred while the site is unavailable. Booru originals come from the post's own page or metadata and must name the same file (hash) and post; a sample, JPEG version or thumbnail is never saved as the original. Other booru deployments are not promised. The published v2.0.0.32 ZIP has the earlier booru rules. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
+Kemono is deferred while the site is unavailable. Booru originals come from the post's own page or metadata and must name the same file (hash) and post; a sample, JPEG version or thumbnail is never saved as the original. Other booru deployments are not promised. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
 
-Existing post batches on X, Reddit, Pixiv and Pawchive share a limit of 100 owned items. Completeness and per-item ownership checks remain; a larger limit does not turn a whole feed into a download batch. Source preparation stays bounded and HTTP 429 stops further admission where supported.
+Post batches on X, Reddit, Pixiv and Pawchive share a limit of 100 owned items. The admitted selection, batch membership and author stay fixed when a feed scrolls or reuses its media nodes; navigation, replaced documents and unavailable players/frames can still cause a safe refusal. Completeness and ownership checks remain: a post batch does not download the whole feed. Source preparation is bounded and HTTP 429 stops further admission where supported.
 
 ---
 
@@ -133,7 +135,7 @@ To discover this preview in **Updates**, set **Update channel** to **Regular and
 
 For troubleshooting, enable recording in **Debug**, reproduce the problem, then copy or export the filtered events. Recording starts when enabled; turning it off preserves the journal until it is cleared or expires. Reports stay local unless you share them.
 
-In **Saving**, choose a writable base folder and press **Save settings**. Subfolders are created inside it. Without a selected folder, files use the browser's Downloads directory. The optional **X: create a folder for each author** setting uses the selected post's username, in lowercase: `SavedImages/username/file.jpg`, or `SavedImages/x/username/pic/file.jpg` with site/type organization. Quotes use their own author; an unproven author keeps the usual layout. Other sites keep their existing layout. Development main replaces it with one **Author folders** menu (x.com, Reddit, Pixiv; any combination, applied by Save settings): Reddit uses the username of the post that owns the selected media (including its RedGIFs embed; crossposts, comments and unclear cases keep the usual layout), Pixiv `Name (user ID)` from the artwork's own metadata; the earlier X choice is kept.
+In **Saving**, choose a base folder, optional subfolder and **One folder** or **By site and media type**, then press **Save settings**. Subfolders are created inside that folder; without a chosen folder, the browser's Downloads directory is used. **Author folders** is one dropdown with independent x.com, Reddit and Pixiv checkboxes. X and Reddit use the selected post author's username; Pixiv uses `Name (user ID)`. For example: `SavedImages/x/username/pic/file.jpg` or `SavedImages/pixiv/Name (12345)/pic/file.jpg`. X quotes use their own author; Reddit crossposts, comments and unproven authors retain the usual layout. Existing X author preferences are preserved.
 
 Directory selection requires a browser supporting the File System Access API. Selected-folder files are written directly and appear in MediaLatch's manager rather than Chrome's download history. Existing files are preserved with numbered names on collisions. Browser restart may require selecting the same folder again and saving settings to restore write access; prepared files can then be retried. Changing destination affects newly queued files. Cancellation before writing finishes can leave an empty placeholder. The extension receives files into private disk storage and validates them before export. The byte-transfer queue runs up to three files concurrently, at most two per source origin; Pause queue stops new transfers, not source discovery or an active transfer. Unknown totals have no invented percentage or ETA. Processing keeps the existing GIF/HLS resource limits.
 
@@ -143,9 +145,9 @@ Failed exports retain prepared bytes for explicit retry; removing a record delet
 
 ## Limits and privacy
 
-DRM, access bypass, arbitrary blob/MSE players and general HLS/DASH downloads are not supported. Separate audio tracks are assembled only within the supported Reddit HLS path. Missing files, rate limits and permission failures cannot be guaranteed away.
+DRM, access bypass, arbitrary blob/MSE players and general HLS/DASH downloads are not supported. Separate audio tracks are assembled only within the supported Reddit HLS path. Missing files, rate limits and permission failures cannot be guaranteed away. Very rapid RedGIFs inline saves can hit the extension's four-active preparation limit before entering the transfer queue. The current `RATE_LIMIT` message also covers a site/CDN HTTP 429; wait for active preparation to finish and try again.
 
-GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output, 15 MiB encoded output and 45 seconds of processing. Pixiv images have a 50 MiB ceiling on the declared and the actually received size; in development main they are acquired by the download manager with progress and a stall timeout instead of a 20-second whole-transfer deadline. These are limits of specific processing paths, not every direct browser download.
+GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output, 15 MiB encoded output and 45 seconds of processing. Pixiv images have a 50 MiB ceiling on the declared and the actually received size; they are acquired by the download manager with progress and a stall timeout instead of a 20-second whole-transfer deadline. These are limits of specific processing paths, not every direct browser download.
 
 There is no telemetry or extension backend. Statistics and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
 
@@ -157,17 +159,17 @@ Statuses distinguish implemented features from future work. They describe direct
 
 | Area | Planned result | Status |
 |---|---|---|
-| Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Booru part implemented in development main (Gelbooru/Moebooru boards verified; Danbooru pending live access); image-result discovery next |
+| Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Booru families included in this preview; reported manual board checks passed, access/layout limits remain; image-result discovery planned |
 | Controls and selection | Small universal inline controls and optional post/media multi-selection | Planned |
 | Download manager | Extend the implemented file queue to paced post resolution, batch totals and proven transfer resume | File queue in preview; remaining work planned |
 | Complete-file staging | Disk-backed acquisition/validation before export and local retry; broaden native restart, quota and media checks | Included in preview; ordinary Helium checks passed, stress checks pending |
 | Batch archives | Selected-post/page batches, ZIP first; 7z only if a practical bounded implementation is justified | Planned |
-| Destination and naming | Writable base-directory selection and optional selected X author folders | User-confirmed external folder and X author saves in Helium; browser-restart permission recovery and broader layouts remain untested |
+| Destination and naming | Writable base-directory selection, flat/site/type layouts and x.com/Reddit/Pixiv author folders | Included; reported flat and author-folder checks passed in Helium; broader permission-recovery checks remain |
 | Kemono | Declared same-post originals and scoped feed behavior | Deferred until the site is usable |
 | Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
 | Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Planned; security/privacy gates first |
-| Settings and documentation | Compact settings groups, visual quick start and EN/RU README | Included in preview; user visual acceptance pending |
-| First-run setup | One-time three-step welcome screen with Continue to Saving; settings save states; readable download failures and list retry | Implemented in development main; not in the published v2.0.0.32 ZIP; awaiting review and release |
+| Settings and documentation | Compact settings groups, visual quick start and EN/RU README | Included; reported manual interface checks passed |
+| First-run setup | One-time three-step welcome screen with Continue to Saving; settings save states; readable download failures and list retry | Included; isolated fresh-install and reported manual checks passed |
 
 The Telegram/VK roadmap concerns **publishing**.
 
@@ -183,10 +185,10 @@ See [Security](docs/SECURITY.md), [Privacy](docs/PRIVACY.md) and [Release prepar
 
 ## Development
 
-Project layout: `content/` holds site scripts; `lib/` shared and worker modules; `ui/` interface source; `popup/` its committed build; `tests/` offline checks; `tools/` verification and packaging. `background.js` remains the worker entry point. Add new behavior to the relevant module.
+Project layout: `content/` holds site scripts; `lib/` shared and worker modules; `ui/` interface source; `popup/` its committed build; `tests/` offline checks; `tools/` verification and packaging. `background.js` loads worker modules in one ordered block. `candidates.js` handles media candidates, `booru_resolvers.js` engine rules, `page_selection.js` frame/owner reads and `x_recovery.js` X video recovery. Add behavior to the responsible module.
 
 
-Use Node.js 26, or another runtime compatible with the UI lockfile.
+Use a Node.js runtime compatible with the UI lockfile. Current checks also run on Node.js 24.19.
 
 ```bash
 npm ci --prefix ui

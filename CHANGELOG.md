@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.0.33 — author folders, selected-media continuity and refactor
+
+- Add a separate first-install welcome with one Continue action to Saving; keep it dismissed after updates and restarts.
+- Add one Author folders menu for x.com, Reddit and Pixiv. Preserve the previous X preference; Pixiv folders use author name plus user ID. Keep flat and site/type organization choices.
+- Improve original Pixiv preview acquisition through staged downloads with progress and a durable 50 MiB cap. Preserve the selected post, author and batch when feed nodes scroll away or are recycled; keep document/navigation and ownership refusals.
+- Strengthen declared-original ownership for booru engines and Zerochan; preserve existing rate/access, MIME and file-identity checks.
+- Match interface and toolbar icons to Violet, Blue, Dark and Light themes. Keep popup wheel scrolling with hidden rails and one global clear action; per-file removal remains in the full manager.
+- Split worker candidates, booru adapters, selected-frame reads and X recovery into focused modules. Remove unreachable legacy history/UI/helpers and fold equivalent repeated branches without changing stored preferences or statistics migration.
+- Refresh EN/RU README and interface screenshots for this preview.
+
+Validation: reviewed refactor72/72 checks and seven-file UI build parity, independent source review, isolated Chromium startup/UI/legacy-statistics/restart checks, and limited user-reported Helium saves/interface smoke tests. This prerelease does not establish exhaustive audio/byte, crash/quota or performance/leak coverage. Rapid RedGIFs inline saves can hit the existing four-active admission limit; the current RATE_LIMIT label also covers remote HTTP429.
+
 ## 2.0.0.32 — remove Explorer integration
 
 - Remove the Windows Explorer companion, native messaging permission and destination-link setup. Saving to custom folders and per-author subfolders remains available without companion software.
