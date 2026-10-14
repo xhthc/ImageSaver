@@ -1,6 +1,6 @@
 # Release preparation
 
-The published GitHub pre-release remains v2.5.1. The current v2.5.2 checkout prepares the first Chrome Web Store submission, including the reviewed project organization, original sidebar without category captions and optional Instagram `kkclip.com` previews. Preparation, submission and approval are separate states; this document does not claim store approval or complete browser acceptance.
+The current GitHub pre-release is v2.5.2. It includes the reviewed project organization, original sidebar without category captions, optional Instagram `kkclip.com` previews and scoped media-request guards. GitHub release assets contain only the runtime ZIP, SHA-256 file and per-file provenance JSON. Chrome Web Store artwork and upload materials are kept separately. Store preparation, submission and approval are separate states; this document does not claim store approval or complete browser acceptance.
 
 ## Build and package
 
@@ -9,7 +9,7 @@ The published GitHub pre-release remains v2.5.1. The current v2.5.2 checkout pre
 3. Run `npm run build --prefix ui`, then `node tools/verify.mjs --ui`.
 4. Independently review the exact candidate, resolve blockers, and commit only product source/docs/tests/build assets.
 5. Run `node tools/package.mjs <accepted-commit>`; inspect its ZIP, SHA-256 and per-file inventory. The manifest is at the ZIP root.
-6. Upload the verified runtime ZIP to the existing Chrome Web Store draft. Do not upload the WebStore-Materials ZIP as extension code. Source ZIPs contain development files; the runtime ZIP does not. GitHub publication is a separate action.
+6. For an authorized GitHub release, publish the accepted tag as a pre-release with only the runtime ZIP, SHA-256 and provenance JSON; verify downloaded asset hashes. For a separately authorized store submission, upload that verified runtime ZIP to the existing Chrome Web Store draft. Do not upload the WebStore-Materials ZIP as extension code. Source ZIPs contain development files; the runtime ZIP does not.
 
 Never package arbitrary working-folder contents. Local agent files, recovery archives, credentials, logs, dependencies and task notes are excluded. A numeric version alone does not identify a build; use the recorded source SHA and ZIP hash.
 
@@ -35,7 +35,7 @@ Privacy URL: https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md
 
 Support URL: https://github.com/xhthc/MediaLatch/issues
 
-The v2.5.1 preview keeps the Explorer companion, folder-location controls and native messaging permission removed. It includes the redesigned four-theme interface, compact Embed grid, violet gradient branding, reviewed refactor, first-install welcome, theme icons, author folders for x.com/Reddit/Pixiv and selected-media scroll continuity. Saving to a selected directory remains browser-only. Validate the exact committed runtime ZIP, including imported worker modules; no companion archive is produced. Limited user Helium checks and isolated startup/UI/statistics migration checks passed; exhaustive crash/restart, quota, codecs/audio and store approval remain separate gates.
+The v2.5.2 preview keeps the Explorer companion, folder-location controls and native messaging permission removed. It includes the redesigned four-theme interface, compact Embed grid, violet gradient branding, reviewed refactor, first-install welcome, theme icons, author folders for x.com/Reddit/Pixiv and selected-media scroll continuity. Saving to a selected directory remains browser-only. Validate the exact committed runtime ZIP, including imported worker modules; no companion archive is produced. Limited user Helium checks and isolated startup/UI/statistics migration checks passed; exhaustive crash/restart, quota, codecs/audio and store approval remain separate gates.
 
 ## Permission and privacy disclosures
 
@@ -43,7 +43,9 @@ Use the permission justifications in [PRIVACY.md](PRIVACY.md). Explain broad hos
 
 All executed JavaScript and binary-processing libraries are bundled locally. GitHub/provider responses are data. Maintain the [remote hosted code restrictions](https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code).
 
-## Remaining store gates
+## Validation and remaining store gates
+
+The 2.5.2 runtime passed 77 combined checks and an exact-ZIP disposable Helium check: startup, actual PNG byte equality, saved settings, four themes in both languages and worker/popup command refusals. Production dependency advisory counts were zero at the preparation check. Security review remains scoped: literal-private admission, refused unchecked redirects and bounded Zerochan metadata do not establish DNS-rebinding protection or a full security audit. User-reported live X/Reddit/RedGIFs checks predate the final guards; repetition and Google Chrome coverage remain separate.
 
 - Complete the [security plan](SECURITY.md): final-package code/CSP inspection, all privileged message/job boundaries, URL/redirect/private-network admission, resource limits, minimum permissions and dependency/supply-chain checks. The scoped release review is not a complete security audit.
 - Load the exact runtime ZIP in a clean Chromium profile. Confirm installation, permissions, popup/settings/history, unchanged first-click Save media and actual saved files.

@@ -3,14 +3,14 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.1"><img src="https://img.shields.io/badge/pre--release-v2.5.1-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.1"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.2"><img src="https://img.shields.io/badge/pre--release-v2.5.2-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.2"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.1"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.2"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
     <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Chrome Web Store distribution planned; not yet available">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
@@ -19,9 +19,9 @@
 
 MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**, track parallel downloads and choose where files go — including **author folders for x.com, Reddit and Pixiv**.
 
-> **Current pre-release: [v2.5.1](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.1).** A redesigned interface with grouped navigation, compact link-preview settings and a refreshed violet gradient icon. Blue, Dark and Light themes and English/Russian localization remain supported. Saving requires no companion software.
+> **Current pre-release: [v2.5.2](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.2).** A refined interface with the original seven-item sidebar, compact link-preview settings, optional Instagram `kkclip.com` links and tighter media-request checks. Blue, Dark and Light themes and English/Russian localization remain supported. Saving requires no companion software.
 
-The runtime ZIP includes the redesigned interface and previously reviewed download engine. UI checks and isolated Chromium save/settings checks cover this build. Earlier user-reported Helium provider smoke checks apply to the unchanged engine; they do not establish exhaustive new-UI, audio, crash/restart or quota coverage.
+The release includes the reviewed UI cleanup, module/fixture organization and scoped security fixes. Verification passed 77 checks with targeted fixture reruns. The exact runtime ZIP passed isolated Helium startup, real PNG byte comparison, settings persistence, all four themes in English/Russian and privileged-message refusal checks. User-reported X, Reddit and RedGIFs saves passed in Helium before the final security changes; repetition on the corrected build remains pending. Google Chrome, exhaustive audio, crash/restart and quota coverage are not established.
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
@@ -57,7 +57,7 @@ A fresh install opens a separate welcome screen with three short steps. **Contin
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.1-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.2-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -76,9 +76,11 @@ The committed `popup/` pages are ready to use. Node/npm are needed only for deve
 
 ## Features
 
-The v2.5.1 runtime ZIP includes the features below. Previous manual Helium checks cover the reported Pixiv, Zerochan, X, Reddit/RedGIFs and booru scenarios. The redesign has separate automated and isolated browser checks; broader everyday testing remains ongoing.
+The v2.5.2 runtime ZIP includes the features below. Previous manual Helium checks cover the reported Pixiv, Zerochan, X, Reddit/RedGIFs and booru scenarios. Automated and isolated exact-package checks cover the current build; broader everyday testing remains ongoing.
 
 ### Save the selected media
+
+Privileged offscreen commands require the extension worker. Public selected pages cannot supply literal local/private-network media addresses, and unchecked server redirects are refused; deliberately selected local pages retain local media access. These restrictions can refuse redirect-dependent links and do not provide DNS-rebinding protection. Zerochan JSON uses a 2 MiB streaming limit with a full three-second deadline.
 
 - Original discovery through site adapters, image links, `srcset`, media attributes and unambiguous CSS backgrounds or overlays.
 - Native images/GIFs and accessible MP4/WebM videos. Exact declared URLs, including signatures, are preserved.

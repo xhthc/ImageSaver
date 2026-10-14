@@ -2,7 +2,7 @@
 
 The directory map follows the current source checkout. Existing published archives keep their original committed layout.
 
-This document describes the v2.5.1 preview. The Explorer companion integration and file-location controls were removed. Custom save directories, author folders and the manager-return notification fix remain. The user reported working ordinary saves and smoke checks of the earlier interface; the redesigned UI has separate isolated browser checks; exhaustive audio/bytes, crash/restart and quota checks remain separate. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
+This document describes the v2.5.2 preview. The Explorer companion integration and file-location controls were removed. Custom save directories, author folders and the manager-return notification fix remain. The user reported working ordinary saves and smoke checks of the earlier interface; the redesigned UI has separate isolated browser checks; exhaustive audio/bytes, crash/restart and quota checks remain separate. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
 
 ## Runtime layout
 
@@ -11,6 +11,7 @@ This document describes the v2.5.1 preview. The Explorer companion integration a
 | `manifest.json` | Manifest V3 permissions, classic service worker and content scripts |
 | `background.js` | Worker entry: one ordered block of worker modules, debug journal, DNR rules, context menu and selected-target hint, download tracking/badge, feedback, download lifecycle, offscreen bridge and the save entry points (context menu, inline X/Reddit/RedGIFs controls) |
 | `lib/media_format.js`, `lib/download_paths.js` | MIME/signature/extension policy and media classification; file names, folder layout and authors |
+| `lib/media_sources.js` | Shared HTTP(S), URL-credential and literal local/private-network admission, tied to the native selected page origin |
 | `lib/candidates.js` | Candidate addresses and groups (resolution plans), thumbnail detection, scoring, the image probe and generic CDN/CMS derivatives |
 | `lib/site_resolvers.js`, `lib/booru_resolvers.js` | Dedicated site adapters (X, Pixiv, Reddit, Zerochan, Anime-Pictures, Sankaku, Pawchive, ...) and booru engine families |
 | `lib/page_selection.js`, `lib/x_recovery.js` | Functions injected into the clicked frame (owner admission, context target, DOM metadata) and X selected-player recovery from the owning post |
@@ -31,6 +32,8 @@ This document describes the v2.5.1 preview. The Explorer companion integration a
 | `ui/src/components/` | React rendering with Radix, shadcn/ui and Lucide |
 | `popup/` | Committed Vite output, loaded without a developer toolchain |
 | `tools/`, `tests/` | Offline checks, fixtures, build parity and commit-based packaging |
+
+Privileged offscreen actions require the worker sender; synthetic converter test fields are refused in runtime IPC. Public-page media cannot address literal local/private destinations. The trusted selecting page origin travels only inside private queued jobs, allowing deliberately selected local-page media. Candidate/API probes and acquisition refuse unchecked server redirects before following them. The predicate does not resolve DNS or claim rebinding protection. Zerochan metadata uses the shared 2 MiB reader with its full three-second deadline and cancellation.
 
 ## Save flow
 
