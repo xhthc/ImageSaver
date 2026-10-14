@@ -17,17 +17,28 @@
   <p><a href="README.ru.md">Русский</a> · <a href="#quick-start">Quick start</a> · <a href="#install">Installation</a> · <a href="#roadmap">Roadmap</a> · <a href="docs/PRIVACY.md">Privacy</a></p>
 </div>
 
-MediaLatch (formerly Image Saver) is a Chromium extension for saving accessible original images, videos and GIFs. Right-click media and choose **Save media**, track parallel downloads and choose where files go — including **author folders for x.com, Reddit and Pixiv**.
+MediaLatch (formerly Image Saver) saves accessible original images, videos and GIFs directly from your browser. Choose the media you want, follow the save in the download manager and find the file where you expect it. No companion application is needed.
 
-> **Current pre-release: [v2.5.2](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.2).** A refined interface with the original seven-item sidebar, compact link-preview settings, optional Instagram `kkclip.com` links and tighter media-request checks. Blue, Dark and Light themes and English/Russian localization remain supported. Saving requires no companion software.
+> **Current pre-release: [v2.5.2](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.2).** Includes the refined interface, optional Instagram `kkclip.com` preview links and tighter media-request checks. [What changed](CHANGELOG.md).
 
-The release includes the reviewed UI cleanup, module/fixture organization and scoped security fixes. Verification passed 77 checks with targeted fixture reruns. The exact runtime ZIP passed isolated Helium startup, real PNG byte comparison, settings persistence, all four themes in English/Russian and privileged-message refusal checks. User-reported X, Reddit and RedGIFs saves passed in Helium before the final security changes; repetition on the corrected build remains pending. Google Chrome, exhaustive audio, crash/restart and quota coverage are not established.
+| What you want to do | What MediaLatch offers |
+|---|---|
+| Save selected media | Context-menu actions and inline controls on supported sites |
+| Keep files organized | One folder, site/type folders or optional X, Reddit and Pixiv author folders |
+| Follow each download | Progress, cancellation, supported retries and clear error explanations |
+| Make it yours | Violet, Blue, Dark and Light themes; English and Russian |
+| Keep records on this device | Opt-in local statistics and Debug; no analytics or automatic report upload |
 
 Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
 
 ---
 
 ## Interface
+
+![Your files, your order: one folder or organization by site, author and media type](docs/assets/overview-folders.png)
+
+<details>
+<summary>More interface screenshots</summary>
 
 <table>
   <tr>
@@ -40,7 +51,9 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
   </tr>
 </table>
 
-Actual v2.5.1 interface captured in an isolated Chromium profile. Three neutral public PNG files from this repository were saved and their exported bytes verified; folder settings were configured for the demonstration. Violet by default, with English/Russian localization and transitions that respect reduced motion.
+</details>
+
+The screenshots and illustrated cards use the actual v2.5.1 interface captured in an isolated Chromium profile; these screens remain representative of v2.5.2. Three neutral public PNG files from this repository were saved and their exported bytes verified; folder settings were configured for the demonstration. Violet by default, with English/Russian localization and transitions that respect reduced motion.
 
 ---
 
@@ -51,7 +64,14 @@ Actual v2.5.1 interface captured in an isolated Chromium profile. Three neutral 
 3. Track downloads in the popup. **Open download manager** leads to details, cancellation and retrying export from prepared bytes. MediaLatch notices appear on the original page.
 4. Open **Saving**, choose a destination and organization, then press **Save settings**. Files default to `Downloads/SavedImages/`.
 
+A fresh install opens a short welcome once. **Continue** opens **Saving**. Folder and preview-link choices apply after **Save settings**; themes, language and notification switches apply immediately.
+
+<details>
+<summary>Welcome, saved preferences and error states</summary>
+
 A fresh install opens a separate welcome screen with three short steps. **Continue** remembers it and opens **Saving**; the welcome is shown only for that first install, never after updates or browser restarts, and there is no tutorial button afterwards. Saving and Embed show **Unsaved changes** whenever the form differs from what is stored (also right after a save), saving progress, success or a lasting error; a failed settings read offers **Try again**. Both download managers explain failures in plain language, consistently on the card and in its details, and keep the technical code on a small line.
+
+</details>
 
 ---
 
@@ -76,11 +96,9 @@ The committed `popup/` pages are ready to use. Node/npm are needed only for deve
 
 ## Features
 
-The v2.5.2 runtime ZIP includes the features below. Previous manual Helium checks cover the reported Pixiv, Zerochan, X, Reddit/RedGIFs and booru scenarios. Automated and isolated exact-package checks cover the current build; broader everyday testing remains ongoing.
+The current preview covers the workflows below. Availability depends on the page, media format and your access to the source; see [site coverage](#site-coverage) and [limits](#limits-and-privacy).
 
 ### Save the selected media
-
-Privileged offscreen commands require the extension worker. Public selected pages cannot supply literal local/private-network media addresses, and unchecked server redirects are refused; deliberately selected local pages retain local media access. These restrictions can refuse redirect-dependent links and do not provide DNS-rebinding protection. Zerochan JSON uses a 2 MiB streaming limit with a full three-second deadline.
 
 - Original discovery through site adapters, image links, `srcset`, media attributes and unambiguous CSS backgrounds or overlays.
 - Native images/GIFs and accessible MP4/WebM videos. Exact declared URLs, including signatures, are preserved.
@@ -96,11 +114,13 @@ Privileged offscreen commands require the extension worker. Public selected page
 
 ### Settings and diagnostics
 
+![Your color, your language: Violet, Blue, Dark and Light with English and Russian](docs/assets/overview-themes.png)
+
 - Own MediaLatch notices on the source page, grouping bulk saves into one card with success/error counts, dismiss/manager buttons and synchronized themes. Closed or navigated tabs cannot display them; results and the failure badge remain in the extension. Success notices can be switched off independently.
 - Violet by default, with Blue, Dark and Light themes and matching MediaLatch icons in the interface and toolbar. Saved choices apply across the popup, settings and notices; existing preferences are preserved. Brief animations respect reduced motion.
 - Opt-in local statistics without an entry count or time limit, with recording and clear controls. Available old history is imported once; expired or removed records cannot be reconstructed.
 - Opt-in local Debug journal with filters, copy/export and clear controls: up to 2,000 events, 1 MiB and 24 hours. Full URLs, tokens, page text and local paths are excluded.
-- Supported post-link copying on X, Instagram, TikTok and YouTube Shorts, with optional preview-link hosts.
+- Supported post-link copying on X, Instagram, TikTok and YouTube Shorts, with optional preview-link hosts. Choose the service per platform; copying a link itself does not contact that service.
 - GitHub release checks manually or on opening Updates, at most daily. Downloaded extension code is not installed automatically.
 
 ---
@@ -127,6 +147,9 @@ Post batches on X, Reddit, Pixiv and Pawchive share a limit of 100 owned items. 
 
 ## Use and settings
 
+<details>
+<summary>Folder examples, recovery and troubleshooting</summary>
+
 Right-click an image, video or supported post preview and select **MediaLatch: Save media**. On X, Shift + right-click can open the browser menu when the site handles right-click itself.
 
 The toolbar popup shows downloads and source-discovery/processing states. Its full page contains statistics and Downloads, saving preferences, notifications, link settings and release checks. Files default to `Downloads/SavedImages/`. Site/type organization creates paths such as `SavedImages/x/pic/`, `video/` and `gif/`.
@@ -143,6 +166,8 @@ Directory selection requires a browser supporting the File System Access API. Se
 
 Failed exports retain prepared bytes for explicit retry; removing a record deletes its temporary file, not your saved download. Interrupted remote acquisition restarts from the exact source on explicit retry; partial transfer resume is not promised. Recovery reconciles owned browser exports instead of launching duplicate saves. A lost selection or expired source can require a fresh click on the site. Details and reports remain on the full Downloads page.
 
+</details>
+
 ---
 
 ## Limits and privacy
@@ -152,6 +177,15 @@ DRM, access bypass, arbitrary blob/MSE players and general HLS/DASH downloads ar
 GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output, 15 MiB encoded output and 45 seconds of processing. Pixiv images have a 50 MiB ceiling on the declared and the actually received size; they are acquired by the download manager with progress and a stall timeout instead of a 20-second whole-transfer deadline. These are limits of specific processing paths, not every direct browser download.
 
 There is no telemetry or extension backend. Statistics and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
+
+<details>
+<summary>Validation and request safeguards in 2.5.2</summary>
+
+Privileged offscreen commands require the extension worker. Public selected pages cannot supply literal local/private-network media addresses, and unchecked server redirects are refused; deliberately selected local pages retain local media access. These restrictions can refuse redirect-dependent links and do not provide DNS-rebinding protection. Zerochan JSON uses a 2 MiB streaming limit with a full three-second deadline.
+
+The release includes the reviewed UI cleanup, module/fixture organization and scoped security fixes. Verification passed 77 checks with targeted fixture reruns. The exact runtime ZIP passed isolated Helium startup, real PNG byte comparison, settings persistence, all four themes in English/Russian and privileged-message refusal checks. User-reported X, Reddit and RedGIFs saves passed in Helium before the final security changes; repetition on the corrected build remains pending. Google Chrome, exhaustive audio, crash/restart and quota coverage are not established.
+
+</details>
 
 ---
 
