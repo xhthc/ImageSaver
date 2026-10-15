@@ -24,7 +24,6 @@ function JobIcon({state}:{state:string}) {
   const [Icon,tone]=JOB_ICONS[state] || [Loader2,"animate-spin text-ring motion-reduce:animate-none"]
   return <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted" aria-hidden="true"><Icon className={cn("size-4",tone)}/></span>
 }
-const BATCH_SITES:Record<string,string>={x:'x.com',reddit:'Reddit'}
 /** One post batch ("Save all"): counts only. "Saved" is what the browser or the chosen folder confirmed; a batch with nothing left is
  * finished, which is not the same as every file saved. No bytes, speed or ETA is aggregated across files. */
 function BatchSummary({batch:b}:{batch:DownloadBatch}) {
@@ -33,9 +32,10 @@ function BatchSummary({batch:b}:{batch:DownloadBatch}) {
   return <li data-slot="batch-summary" data-batch={b.id} className="flex items-start gap-2 rounded-xl bg-muted px-3 py-2 text-xs leading-4">
     <Layers className="mt-px size-3.5 shrink-0 text-muted-foreground" aria-hidden="true"/>
     <p role="status" className="min-w-0 flex-1 tabular-nums">
-      <span className="font-semibold">{t('downloads.batch.title',{site:BATCH_SITES[b.site]||b.site})}</span>
-      {' · '}{b.saved===b.count?t('downloads.batch.allSaved',{count:b.count}):t('downloads.batch.saved',{saved:b.saved,count:b.count})}
+      <span className="font-semibold">{t('downloads.batch.title',{site:t('downloads.batch.site.'+b.site)})}</span>
+      {' · '}{b.saved===b.count && !b.partial?t('downloads.batch.allSaved',{count:b.count}):t('downloads.batch.saved',{saved:b.saved,count:b.count})}
       {parts.map(([key,n,tone])=><span key={key} className={tone||"text-muted-foreground"}>{' · '}{t('downloads.batch.'+key,{n})}</span>)}
+      {b.partial?<span className="text-muted-foreground">{' · '}{t('downloads.batch.partial')}</span>:null}
     </p>
   </li>
 }

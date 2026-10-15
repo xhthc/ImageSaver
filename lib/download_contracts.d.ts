@@ -16,14 +16,14 @@ export interface DownloadJob {
   createdAt: number;
   downloadId?: number | null;
   ready?: boolean;
-  /** Post batch this job belongs to (a "Save all" list of an X or Reddit post), when it has one. */
+  /** Post batch this job belongs to (a "Save all" list of an X or Reddit post, a multi-file Pixiv artwork or Pawchive post), when it has one. */
   batch?: string;
 }
 
 /** Progress of one post batch: every proven item is in exactly one count. Only `saved` is confirmed by the browser or the chosen folder. */
 export interface DownloadBatch {
   id: string;
-  site: 'x' | 'reddit';
+  site: 'x' | 'reddit' | 'pixiv' | 'pawchive';
   count: number;
   saved: number;
   failed: number;
@@ -31,6 +31,8 @@ export interface DownloadBatch {
   skipped: number;
   /** Not finished yet: proven but not started, resolving, receiving, checking or exporting. */
   remaining: number;
+  /** Pawchive only: the post declares originals the site has not imported. `count` is still only the downloadable items; the number missing is not known here. */
+  partial?: boolean;
   createdAt: number;
 }
 

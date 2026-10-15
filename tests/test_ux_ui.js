@@ -1108,7 +1108,7 @@ function makeChrome(state) {
     assert(enKeys.every((k) => placeholders(I18n.STRINGS.en[k]) === placeholders(I18n.STRINGS.ru[k])), '33b: every key has the same placeholders in both languages');
     assert(enKeys.every((k) => I18n.STRINGS.en[k].trim() && I18n.STRINGS.ru[k].trim() && !/<[a-z/!]/i.test(I18n.STRINGS.en[k] + I18n.STRINGS.ru[k])), '33c: no empty text and no markup in the catalogue (texts are rendered as text)');
     const same = enKeys.filter((k) => I18n.STRINGS.en[k] === I18n.STRINGS.ru[k]);
-    assert(JSON.stringify(same) === JSON.stringify(['embed.ig.label', 'embed.tt.label', 'embed.x.label', 'embed.yt.label', 'statistics.site.anime-pictures', 'statistics.site.curveybooru', 'statistics.site.danbooru', 'statistics.site.e-shuushuu', 'statistics.site.e621', 'statistics.site.gelbooru', 'statistics.site.giphy', 'statistics.site.hypnohub', 'statistics.site.inkbooru', 'statistics.site.konachan', 'statistics.site.mspabooru', 'statistics.site.pawchive', 'statistics.site.pixiv', 'statistics.site.realbooru', 'statistics.site.reddit', 'statistics.site.redgifs', 'statistics.site.rule34', 'statistics.site.safebooru', 'statistics.site.sankaku', 'statistics.site.scatbooru', 'statistics.site.tbib', 'statistics.site.tenor', 'statistics.site.wikimedia', 'statistics.site.x', 'statistics.site.xbooru', 'statistics.site.yakui', 'statistics.site.yande.re', 'statistics.site.zerochan', 'stats.type.gif', 'tab.embed', 'type.gif']), '33d: every text is translated except names that are the same in both languages: ' + same.join(', '));
+    assert(JSON.stringify(same) === JSON.stringify(['downloads.batch.site.pawchive', 'downloads.batch.site.pixiv', 'downloads.batch.site.reddit', 'downloads.batch.site.x', 'embed.ig.label', 'embed.tt.label', 'embed.x.label', 'embed.yt.label', 'statistics.site.anime-pictures', 'statistics.site.curveybooru', 'statistics.site.danbooru', 'statistics.site.e-shuushuu', 'statistics.site.e621', 'statistics.site.gelbooru', 'statistics.site.giphy', 'statistics.site.hypnohub', 'statistics.site.inkbooru', 'statistics.site.konachan', 'statistics.site.mspabooru', 'statistics.site.pawchive', 'statistics.site.pixiv', 'statistics.site.realbooru', 'statistics.site.reddit', 'statistics.site.redgifs', 'statistics.site.rule34', 'statistics.site.safebooru', 'statistics.site.sankaku', 'statistics.site.scatbooru', 'statistics.site.tbib', 'statistics.site.tenor', 'statistics.site.wikimedia', 'statistics.site.x', 'statistics.site.xbooru', 'statistics.site.yakui', 'statistics.site.yande.re', 'statistics.site.zerochan', 'stats.type.gif', 'tab.embed', 'type.gif']), '33d: every text is translated except names that are the same in both languages: ' + same.join(', '));
     assert(I18n.MENU_TITLE === 'MediaLatch: Save media' && !enKeys.some((k) => /Save (image|video|GIF)\b/.test(I18n.STRINGS.en[k]) && /^menu/.test(k)), '33e: the native menu title is the fixed "MediaLatch: Save media" in both languages (no per-type titles)');
     // keys used by the sources exist in the catalogue
     const uiSrc = ['ui/src/components/app', 'ui/src/core', 'ui/src/hooks'].flatMap((d) => fs.readdirSync(path.resolve(ROOT, d)).map((f) => read(`${d}/${f}`))).join('\n')
@@ -1277,6 +1277,32 @@ function makeChrome(state) {
     assert(n[0].title === 'MediaLatch: Server error', '33zo: an unreadable choice falls back to the browser rule (no Russian browser here -> English) and the notification is still shown');
     n = await notifyWith({ getLang: async () => 'de' });
     assert(n.length === 2 && n[1].title === 'example.com: saved', '33zp: an invalid saved value falls back to the browser rule');
+    // MANAGER-BATCH-PROGRESS-02: the batch notice names each service correctly and a partly imported post never claims that all files were saved
+    {
+      const batchNotice = async (lang, batch, prefs = { notifySuccess: true }) => {
+        const sink = [];
+        const notify = trackerCtx.ImageSaverFeedbackTracker.createNotifier({ getPrefs: async () => prefs, getLang: async () => lang, deliver: async (rec, o) => { sink.push(o); return true; } });
+        await notify.batch(batch, { id: 'op-notice', state: 'complete', noticeTarget: { tabId: 7, origin: 'https://example.com' } });
+        return sink[0];
+      };
+      const done = (site, extra = {}) => ({ id: 'batch-' + site, site, count: 3, saved: 3, failed: 0, cancelled: 0, skipped: 0, remaining: 0, createdAt: 1, ...extra });
+      const titles = { en: { x: 'x.com post', reddit: 'Reddit post', pixiv: 'Pixiv post', pawchive: 'Pawchive post' }, ru: { x: 'Пост x.com', reddit: 'Пост Reddit', pixiv: 'Пост Pixiv', pawchive: 'Пост Pawchive' } };
+      let ok = true;
+      for (const lang of ['en', 'ru']) for (const site of ['x', 'reddit', 'pixiv', 'pawchive']) {
+        const o = await batchNotice(lang, done(site));
+        ok = ok && o.title === titles[lang][site] && o.message === (lang === 'en' ? 'All 3 files saved' : 'Все файлы сохранены (3)') && o.final === true && o.kind === 'success';
+      }
+      assert(ok, '33zq: the batch notice names X, Reddit, Pixiv and Pawchive correctly in both languages (no service is shown as x.com by default)');
+      const partialEn = await batchNotice('en', done('pawchive', { partial: true })), partialRu = await batchNotice('ru', done('pawchive', { partial: true }));
+      assert(partialEn.message === 'Saved 3 of 3 · some originals not imported' && partialRu.message === 'Сохранено 3 из 3 · часть оригиналов не импортирована' && partialEn.kind === 'success' && partialEn.final === true, '33zr: a partly imported Pawchive post is qualified and never says all files were saved');
+      const running = await batchNotice('en', done('pawchive', { partial: true, saved: 1, remaining: 2 }));
+      assert(running.message === 'Saved 1 of 3 · 2 remaining · some originals not imported' && running.final === false, '33zs: a running partial post keeps the qualifier and its canonical counts');
+      const mixed = await batchNotice('en', done('pixiv', { saved: 1, failed: 1, skipped: 1 }));
+      assert(mixed.kind === 'error' && mixed.message === 'Saved 1 of 3 · 1 failed · 1 skipped', '33zt: a mixed Pixiv result is an error notice with the committed counts');
+      const quiet = await batchNotice('en', done('pawchive', { partial: true }), { notifySuccess: false });
+      assert(quiet.dismissBatch === true && !/Saved|saved/.test(quiet.message) && quiet.kind === 'success', '33zu: with success notices off an all-saved partial group creates no success card (the diagnostic keeps its own error notice)');
+      assert(JSON.stringify(Object.keys(partialEn).sort()) === JSON.stringify(Object.keys(await batchNotice('en', done('x'))).sort()), '33zv: the payload keys are the same for every service: no file name, URL or missing-file count is added');
+    }
   }
 
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);

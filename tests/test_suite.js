@@ -30383,6 +30383,20 @@ async function runTests() {
         reset(routes16({ [P16]: html(page16({ files: [F16[0], F16[1], F16[0]], before: attach([O16[1]]) })) }));
         dl = await click(card16);
         assert(urls(dl) === JSON.stringify([O16[1], O16[0]]) && calls.filter((c) => c.method === 'HEAD').length === 2, '265.16g: повторы объявлений сведены по хешу: ' + urls(dl));
+        // MANAGER-BATCH-PROGRESS-02: a Pawchive group is opened only after the post, the declared list and the 100-item bound are proven, with exactly the distinct declared originals
+        {
+          const opened = [], open0 = sandbox.batchOpen;
+          sandbox.batchOpen = async (...args) => { opened.push(args); return null; };
+          const groups = async (routes, info = card16) => { opened.length = 0; reset(routes); dl = await click(info); return JSON.stringify(opened); };
+          try {
+            assert(await groups(routes16()) === JSON.stringify([['pawchive', 6, false]]) && dl.length === 6, '265.16g2: six declared originals are one group of six');
+            assert(await groups(routes16({ [P16]: html(page16({ files: [F16[0], F16[1], F16[0]], before: attach([O16[1]]) })) })) === JSON.stringify([['pawchive', 2, false]]), '265.16g3: repeated declarations are counted once (one slot per distinct hash)');
+            assert(await groups(routes16({ [P16]: html(page16({ files: [F16[0]] })) })) === '[]' && dl.length === 1, '265.16g4: one declared original keeps the ordinary single-file path');
+            assert(await groups(routes16({ [P16]: html(page16({ files: [F16[0], [O16[1].replace('n2.pawchive.pw', 'n2.evil.example'), T16[1], N16[1]]] })) })) === '[]' && dl.length === 0, '265.16g5: a post refused as a whole opens no group');
+            const manyG = Array.from({ length: 101 }, (_, i) => (i + 16).toString(16).padStart(2, '0').repeat(32)).map((h) => [node2(h, 'p.png'), thumb(h, 'png'), 'p.png']);
+            assert(await groups({ [P16]: html(page16({ files: manyG })), ...Object.fromEntries(manyG.map(([o]) => [o, media('image/png')])) }, { ...card16, srcUrl: manyG[0][1] }) === '[]' && dl.length === 0, '265.16g6: 101 declared originals open no group and are not probed');
+          } finally { sandbox.batchOpen = open0; }
+        }
 
         // mixed media on other services and authors: the video, a GIF attachment and the PNG cover; the player poster is not a file of the post
         for (const [service, user, id] of [['fanbox', '1234567', '42'], ['subscribestar', 'artist_x', '7']]) {
@@ -31312,6 +31326,24 @@ ${stats !== null ? `<p class="post__missing-stats">\n        ${stats}\n      </p
       reset({ [POST_URL]: html(page({ missingNames: ['0_13.mp4'], videos: [VIDEO] })), [VIDEO]: media('video/mp4') });
       const single = await sandbox.resolveOriginalMediaPlan({ ...card });
       assert(single && single.primaryUrl === VIDEO, '271.9b: a caller without batch saving gets only the single available original (it reports no missing ones; the batch path does)');
+      // MANAGER-BATCH-PROGRESS-02: a partly imported post is one qualified group of its available originals; the missing ones stay a separate diagnostic operation
+      {
+        const opened = [], open0 = sandbox.batchOpen;
+        sandbox.batchOpen = async (...args) => { opened.push(args); return null; };
+        try {
+          reset({ [POST_URL]: html(page({ stats: 'Missing 1 full-res photo, as this post has not yet been imported.', missingNames: [], videos: [VIDEO], covers: [{ href: COVER, thumb: thumb(CH, 'jpeg') }] })), [VIDEO]: media('video/mp4'), [COVER]: media('image/jpeg') });
+          r = await click(card);
+          assert(JSON.stringify(opened) === JSON.stringify([['pawchive', 2, true]]) && r.dl.length === 2 && r.failed.length === 1 && r.failed[0].failure.code === 'NOT_ARCHIVED_P1_V0', '271.8c: two available originals of a partial post are one group flagged partial, and the diagnostic keeps its own failed operation: ' + JSON.stringify(opened));
+          opened.length = 0;
+          reset({ [POST_URL]: html(page({ stats: 'Missing 3 attachments, as this post has not yet been imported.', missingNames: [], videos: [VIDEO], covers: [{ href: COVER, thumb: thumb(CH, 'jpeg') }] })), [VIDEO]: media('video/mp4'), [COVER]: media('image/jpeg') });
+          r = await click(card);
+          assert(JSON.stringify(opened) === JSON.stringify([['pawchive', 2, true]]) && r.failed.length === 1 && r.failed[0].failure.code === 'NOT_ARCHIVED', '271.8d: an unknown missing count is still only the partial flag, never a number');
+          opened.length = 0;
+          reset({ [POST_URL]: html(page({ missingNames: ['0_13.mp4'], videos: [VIDEO] })), [VIDEO]: media('video/mp4') });
+          r = await click(card);
+          assert(opened.length === 0 && r.dl.length === 1 && r.failed.length === 1, '271.9c: one available original of a partial post keeps the ordinary path and its diagnostic');
+        } finally { sandbox.batchOpen = open0; }
+      }
 
       // 271.10: user text is never the site state: an imported post whose content repeats the notice and the markup saves normally
       const forged = `<p class="post__missing-stats">${STATS}</p><span class="state-badge state-badge--preview"></span><span class="post__attachment-link--missing">x.mp4</span> haven't archived this post yet`;

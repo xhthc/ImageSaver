@@ -15,10 +15,12 @@ function fixture(body=items.map(original=>({urls:{original}})),onPages){
  s.chrome.scripting.executeScript=async call=>{if(call.target.documentIds && !call.target.documentIds.includes(page.document))throw Error('No document with id');const result=await vm.runInContext('('+call.func+')',world)(...(call.args||[]));if(call.func.name==='verifyContextOwner')page.proofs.push(result);return [{result,documentId:page.document}];};
  s.fetch=async(raw,options={})=>{calls.push({url:raw,method:options.method||'GET'});if(String(raw).endsWith('/pages'))onPages?.(page);return String(raw).endsWith('/pages')?new Response(JSON.stringify({error:false,body}),{headers:{'content-type':'application/json'}}):items.includes(raw)?new Response(options.method==='HEAD'?null:png,{headers:{'content-type':'image/png','content-length':String(png.length)}}):new Response('not found',{status:404});};
  vm.runInContext('PAWCHIVE_POST_MEDIA_PACE_MS=0',s);
+ // MANAGER-BATCH-PROGRESS-02: records when a group is opened (and for how many proven pages); the real manager is covered by tests/test_ux_feedback.js
+ const opened=[];s.batchOpen=async(site,count,partial)=>{opened.push([site,count,partial]);return null;};
  // The installed extension acquires Pixiv originals in the download manager: this stand-in GETs the exact URL like its staging and
  // rejects with the manager's codes (a final 429 is RATE_LIMIT), then exports. Staging byte/MIME checks: tests/test_pixiv_saving.js.
  s.managedDownload=async options=>{const r=await s.fetch(options.url,{method:'GET'});if(r.status===429)throw Error('RATE_LIMIT');if(!r.ok)throw Error(r.status===401||r.status===403?'AUTH_REQUIRED':'HTTP_ERROR');return s.chrome.downloads.download(options);};
- return {e,s,calls,page};
+ return {e,s,calls,page,opened};
 }
 (async()=>{
  const good=fixture();const plan=await good.s.resolveOriginalMediaPlan({srcUrl:src,pageUrl:feed,linkUrl:post,allowPostMedia:true});
@@ -47,6 +49,7 @@ function fixture(body=items.map(original=>({urls:{original}})),onPages){
   const f=fixture(undefined,change);await f.s.onContextMenuClicked({menuItemId:'save-image-item',srcUrl:src,pageUrl:feed,linkUrl:post,mediaType:'image',frameId:0},{id:1,url:feed});
   assert.deepEqual(f.page.proofs,['proven'],name+': admitted once at entry, no live-thumbnail reproof');
   assert.equal(metadata(f),1);assert.deepEqual(f.e.downloadedCalls.map(x=>x.url).sort(),[...items].sort(),name+' preview during /pages still exports the four exact admitted originals');
+  assert.deepEqual(f.opened,[['pixiv',4,undefined]],name+': exactly one group of the four admitted pages, opened after the admission and the complete list');
  }
  // ...but never without an admission, nor for another document, page or artwork: zero media requests and exports
  const negatives={
@@ -62,8 +65,12 @@ function fixture(body=items.map(original=>({urls:{original}})),onPages){
   const f=fixture(c.body,c.during);c.before?.(f.page);
   await f.s.onContextMenuClicked({menuItemId:'save-image-item',srcUrl:src,pageUrl:feed,linkUrl:post,mediaType:'image',frameId:0,...c.click},{id:1,url:feed});
   assert.equal(metadata(f),c.requests,name+': metadata requests');assert.equal(media(f),0,name+': no media request');assert.equal(f.e.downloadedCalls.length,0,name+': no export');
+  assert.equal(f.opened.length,0,name+': no group is opened without a proven owner, document and list');
  }
  const forged=fixture();await forged.s.onContextMenuClicked({menuItemId:'save-image-item',srcUrl:src,pageUrl:feed,linkUrl:post,postMediaPlan:{primaryUrl:items[3]},frameId:0},{id:1,url:feed});assert.equal(forged.e.downloadedCalls.length,4,'External plan field cannot replace internal batch provenance');
+ assert.deepEqual(forged.opened,[['pixiv',4,undefined]],'a forged plan field does not change which group opens');
+ const onePage=fixture([{urls:{original:items[0]}}]);await onePage.s.onContextMenuClicked({menuItemId:'save-image-item',srcUrl:src,pageUrl:feed,linkUrl:post,mediaType:'image',frameId:0},{id:1,url:feed});
+ assert.equal(onePage.opened.length,0,'a one-page artwork keeps the ordinary single-file path');assert.equal(onePage.e.downloadedCalls.length,1);
  const click={menuItemId:'save-image-item',srcUrl:src,pageUrl:feed,linkUrl:post,mediaType:'image',frameId:0},tab={id:1,url:feed};
  for(const method of ['HEAD','GET']){
   const f=fixture(),fetch=f.s.fetch,fail=f.s.fbFail,failures=[];
@@ -74,6 +81,7 @@ function fixture(body=items.map(original=>({urls:{original}})),onPages){
   assert.equal(f.e.downloadedCalls.length,0,`${method}429 does not export`);
   assert(!f.calls.some(x=>items.slice(1).includes(x.url)),`${method}429 stops remaining media requests after pacing`);
   assert.equal(failures.filter(x=>x.code==='RATE_LIMIT' && x.status===429).length,4,'Every skipped attachment has a visible rate-limit failure');
+  assert.deepEqual(f.opened,[['pixiv',4,undefined]],method+'429: the group counts all four proven pages, including the ones the limit stopped');
  }
  const overlap=fixture(),fetch=overlap.s.fetch;let active=0,peak=0;const held=[];
  overlap.s.fetch=async(url,opts={})=>{

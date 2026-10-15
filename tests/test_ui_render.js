@@ -1433,6 +1433,43 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     }
   }
 
+  // MANAGER-BATCH-PROGRESS-02: Pixiv and Pawchive groups use the same summary with their own label; a partly imported post is qualified and never says all saved.
+  {
+    const T = {
+      en: { saved: (s, c) => `Saved ${s} of ${c}`, all: (c) => `All ${c} files saved`, failed: (n) => `${n} failed`, remaining: (n) => `${n} in progress`, partial: 'some originals not imported', title: { x: 'x.com post', reddit: 'Reddit post', pixiv: 'Pixiv post', pawchive: 'Pawchive post' }, retry: 'Retry download' },
+      ru: { saved: (s, c) => `Сохранено ${s} из ${c}`, all: (c) => `Все файлы сохранены (${c})`, failed: (n) => `ошибок: ${n}`, remaining: (n) => `в работе: ${n}`, partial: 'часть оригиналов не импортирована', title: { x: 'Пост x.com', reddit: 'Пост Reddit', pixiv: 'Пост Pixiv', pawchive: 'Пост Pawchive' }, retry: 'Повторить загрузку' },
+    };
+    const job = (id, state, over = {}) => ({ id, filename: id + '.png', state, received: state === 'complete' ? 2048 : 1024, total: state === 'receiving' ? 4096 : 2048, speed: state === 'receiving' ? 512 : 0, error: state === 'failed' ? 'NETWORK_FAILED' : '', ...over });
+    const batch = (over = {}) => ({ id: 'batch-g', site: 'pixiv', count: 4, saved: 2, failed: 1, cancelled: 0, skipped: 0, remaining: 1, createdAt: 5, ...over });
+    for (const lang of ['en', 'ru']) for (const kind of ['quick', 'full']) {
+      const t = T[lang];
+      const mk = (state) => page(kind, { session: [], history: [], local: { uiLanguage: lang }, ...state }, kind === 'full' ? { hash: '#downloads' } : {});
+      const text = (p) => p.q('[data-slot="batch-summary"]').textContent.replace(/\s+/g, ' ').trim();
+      const rows = (extra) => [job('m1', 'complete', { batch: 'batch-g', ...extra }), job('m2', 'failed', { batch: 'batch-g' }), job('m3', 'receiving', { batch: 'batch-g' })];
+      for (const site of ['pixiv', 'pawchive']) {
+        const p = await mk({ jobs: rows(), batches: [batch({ site })] });
+        assert(p.qa('[data-slot="batch-summary"]').length === 1 && text(p) === `${t.title[site]} · ${t.saved(2, 4)} · ${t.failed(1)} · ${t.remaining(1)}`, `R28a ${kind}/${lang}/${site}: one summary with the service's own label and the committed counts (${text(p)})`);
+        assert(p.q('[data-job="m2"] button[aria-label="' + t.retry + '"]') && p.qa('[data-job]').length === 3 && !p.q('[data-slot="batch-summary"] button, [data-slot="batch-summary"] a, [data-slot="batch-summary"] progress'), `R28b ${kind}/${lang}/${site}: the file rows keep their own actions and the summary has no control`);
+        await p.unmount();
+      }
+      const all = await mk({ jobs: [job('a', 'complete', { batch: 'batch-g' }), job('b', 'complete', { batch: 'batch-g' }), job('c', 'complete', { batch: 'batch-g' })], batches: [batch({ site: 'pixiv', count: 3, saved: 3, failed: 0, remaining: 0 })] });
+      assert(text(all) === `${t.title.pixiv} · ${t.all(3)}`, `R28c ${kind}/${lang}: every Pixiv page saved`);
+      await all.unmount();
+      const partialDone = await mk({ jobs: [job('a', 'complete', { batch: 'batch-g' }), job('b', 'complete', { batch: 'batch-g' }), job('c', 'complete', { batch: 'batch-g' })], batches: [batch({ site: 'pawchive', count: 3, saved: 3, failed: 0, remaining: 0, partial: true })] });
+      assert(text(partialDone) === `${t.title.pawchive} · ${t.saved(3, 3)} · ${t.partial}` && !text(partialDone).includes(t.all(3)), `R28d ${kind}/${lang}: a partly imported Pawchive post says what was saved and that some originals were not imported, never "all saved" (${text(partialDone)})`);
+      await partialDone.unmount();
+      const partialRun = await mk({ jobs: [job('a', 'complete', { batch: 'batch-g' }), job('b', 'receiving', { batch: 'batch-g' })], batches: [batch({ site: 'pawchive', count: 3, saved: 1, failed: 0, remaining: 2, partial: true })] });
+      assert(text(partialRun) === `${t.title.pawchive} · ${t.saved(1, 3)} · ${t.remaining(2)} · ${t.partial}`, `R28e ${kind}/${lang}: a running partial group keeps its counts and the qualifier (${text(partialRun)})`);
+      await partialRun.unmount();
+      const complete = await mk({ jobs: [job('a', 'complete', { batch: 'batch-g' }), job('b', 'complete', { batch: 'batch-g' })], batches: [batch({ site: 'pawchive', count: 2, saved: 2, failed: 0, remaining: 0 })] });
+      assert(text(complete) === `${t.title.pawchive} · ${t.all(2)}`, `R28f ${kind}/${lang}: a post with nothing missing says all files saved`);
+      await complete.unmount();
+      const legacy = await mk({ jobs: [job('a', 'complete', { batch: 'batch-g' })], batches: [batch({ site: 'reddit', count: 1, saved: 1, failed: 0, remaining: 0 }), batch({ id: 'batch-h', site: 'x', count: 1, saved: 1, failed: 0, remaining: 0 })] });
+      assert(legacy.qa('[data-slot="batch-summary"]').length >= 1 && legacy.text().includes(t.title.reddit), `R28g ${kind}/${lang}: the earlier X and Reddit labels are unchanged`);
+      await legacy.unmount();
+    }
+  }
+
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);
   process.exit(failed > 0 ? 1 : 0);
 })().catch((err) => {

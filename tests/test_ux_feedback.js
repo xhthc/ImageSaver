@@ -2730,6 +2730,257 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       await finishLoop(e, async () => (await e.snapshot()).batches[0].remaining === 0, 'ordering batch settled');
       await waitFinal(e, null, 'Saved 1 of 2 · 1 failed');
     }
+
+    // ---- 34. Pixiv artworks and Pawchive posts (MANAGER-BATCH-PROGRESS-02): the production loops (savePixivPostMedia, savePawchivePostMedia) feed the same slots ----
+    // Production: the provider loops, onContextMenuClicked for every item (operation, slot binding), the shared save path, the operation tracker, the durable
+    // queue, the notice transport. Fixtures: the document admission of the post (covered by test_post_media.js), the media pipeline tail and offscreen staging.
+    console.log('\n--- 34. Pixiv artworks and Pawchive posts: one summary and one page notice per post ---');
+    const PXPAGE = 'https://www.pixiv.net/', PWCARD = 'https://pawchive.pw/fanbox/user/37736420';
+    const PX = (n, id = '150000001') => `https://i.pximg.net/img-original/img/2026/10/13/18/32/13/${id}_p${n}.jpg`;
+    const pxPost = (id = '150000001') => `https://www.pixiv.net/artworks/${id}`;
+    const hexOf = (n) => n.toString(16).padStart(64, 'c');
+    const PW = (n, ext = 'jpg') => `https://file.pawchive.pw/data/${hexOf(n).slice(0, 2)}/${hexOf(n).slice(2, 4)}/${hexOf(n)}.${ext}?f=file-${n}.${ext}`;
+    const pworker = (page, opts = {}) => {
+      const e = worker({ indexedDB: idbDouble(), local: { uiLanguage: 'en', historyEnabled: true, ...(opts.local || {}) }, ...Object.fromEntries(Object.entries(opts).filter(([k]) => k !== 'local')) });
+      e.tabUrls.set(7, page); e.sandbox.console.info = () => {};
+      e.batchNotes = () => e.notifications.filter((x) => x.opts.batch);
+      e.singleNotes = () => e.notifications.filter((x) => !x.opts.batch);
+      e.tab = { id: 7, url: page };
+      e.pixiv = (items, id) => e.sandbox.savePixivPostMedia({ postUrl: pxPost(id), items }, { frameId: 0, pageUrl: page, srcUrl: items[0] }, e.tab);
+      e.pawchive = (items, missingCode) => e.sandbox.savePawchivePostMedia({ postUrl: PWCARD + '/post/1', items, ...(missingCode ? { missingCode } : {}) }, { frameId: 0, pageUrl: page }, e.tab);
+      // media answers of the probes (Pawchive) by address fragment: HTTP status, or a page that is not media
+      e.answers = new Map();
+      e.fetchImpl = async (url) => {
+        for (const [fragment, how] of e.answers) if (url.includes(fragment)) return how === 'html' ? { ok: true, status: 200, headers: { get: (h) => (h.toLowerCase() === 'content-type' ? 'text/html' : '10') } } : { ok: false, status: how, headers: { get: () => '' } };
+        return { ok: true, status: 200, headers: { get: (h) => (h.toLowerCase() === 'content-type' ? 'image/jpeg' : '2048') } };
+      };
+      e.stats = async () => { await e.tracker.flush(); return new Promise((resolve) => { for (const cb of e.messageListeners) { if (cb({ action: 'STATISTICS_LIST' }, { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' }, resolve) === true) return; } }); };
+      e.inFlight = (url) => vm.runInContext(`inFlightRequests.add(${JSON.stringify(url)})`, e.sandbox);
+      return e;
+    };
+    const summary = async (e, site) => (await e.snapshot()).batches.filter((b) => b.site === site);
+    const settled = (e, site) => finishLoop(e, async () => { const b = (await summary(e, site))[0]; return b && b.remaining === 0; }, site + ' group settled');
+    // a loop's pages beyond the two per host wait for the browser's downloads: finish them while the loop runs
+    const runGroup = async (e, site, start) => { const run = start(); await settled(e, site); await run; };
+
+    // P1: Pixiv, mixed: saved, a job failure, a duplicate of an address already being saved, saved. One group, one card, no per-file card.
+    {
+      const e = pworker(PXPAGE);
+      await e.ready(); await e.manager.ready;
+      e.stagingFails.add('_p1.jpg'); e.inFlight(PX(2));
+      await runGroup(e, 'pixiv', () => e.pixiv([PX(0), PX(1), PX(2), PX(3)]));
+      const [b] = await summary(e, 'pixiv'), snap = await e.snapshot();
+      assert(b && b.count === 4 && counts(b) === '2/1/0/1/0' && b.site === 'pixiv' && b.partial === undefined && snap.batches.length === 1, `34a: one Pixiv group of 4 proven pages: 2 saved, 1 failed, 1 duplicate skipped (${b && counts(b)})`);
+      assert(e.plan.length === 3 && !e.plan.includes(PX(2)) && snap.jobs.length === 3 && snap.jobs.every((j) => j.batch === b.id), '34b: only the proven pages that were not duplicates reached the shared save path; every row names its group');
+      await waitFinal(e, b.id, 'Saved 2 of 4 · 1 failed · 1 skipped');
+      const cards = e.batchNotes();
+      assert(cards.length >= 1 && cards.every((x) => x.opts.batch === b.id && x.opts.title === 'Pixiv post') && e.singleNotes().length === 0 && new Set(cards.map((x) => x.tabId)).size === 1 && cards[0].tabId === 7, '34c: one updating card titled "Pixiv post" on the original tab; the individual file operations produce no card of their own');
+      assert(cards.at(-1).opts.final === true && cards.at(-1).opts.kind === 'error' && !/All 4/.test(cards.at(-1).opts.message), '34d: a mixed result is an error card, never "all saved"');
+      const total = (await e.stats());
+      assert(total.stats.total === 3 && total.stats.success === 2 && total.stats.failed === 1, '34e: statistics count the three file operations once each; the group is not an operation');
+    }
+    // P2: Pixiv, every page saved: the final text says all files saved; a single manager row per page keeps its actions
+    {
+      const e = pworker(PXPAGE);
+      await e.ready(); await e.manager.ready;
+      await runGroup(e, 'pixiv', () => e.pixiv([PX(0), PX(1), PX(2)]));
+      const [b] = await summary(e, 'pixiv');
+      assert(counts(b) === '3/0/0/0/0', '34f: three confirmed saves');
+      await waitFinal(e, b.id, 'All 3 files saved');
+      assert(e.batchNotes().at(-1).opts.kind === 'success' && e.singleNotes().length === 0, '34g: all saved is a success card and nothing else is shown');
+    }
+    // P3: Pixiv, rate limit: the first limited page stops the remainder, every page is accounted for
+    {
+      const e = pworker(PXPAGE);
+      await e.ready(); await e.manager.ready;
+      const adapt = e.sandbox.adaptCandidateToGroup;
+      e.sandbox.adaptCandidateToGroup = (o) => { const p = adapt(o); if (p && o.url === PX(1)) { p._rateLimited = true; p.error = 'RATE_LIMIT'; } return p; };
+      e.gates.set('_p0.jpg', new Promise((resolve) => { e.openGate = resolve; }));
+      const running = e.pixiv([PX(0), PX(1), PX(2), PX(3)]);
+      await until(async () => { const x = (await summary(e, 'pixiv'))[0]; return x && x.failed === 3; }, 'the limited page and the two never-started pages failed');
+      let [b] = await summary(e, 'pixiv');
+      assert(counts(b) === '0/3/0/0/1', `34h: the limit fails its page and stops the remainder, all counted at once; the held page is still in progress (${counts(b)})`);
+      e.openGate(); await running; await settled(e, 'pixiv');
+      [b] = await summary(e, 'pixiv');
+      assert(counts(b) === '1/3/0/0/0' && e.plan.length === 1 && e.plan[0] === PX(0), `34i: the stopped pages were never requested (${counts(b)})`);
+      await waitFinal(e, b.id, 'Saved 1 of 4 · 3 failed');
+      assert(e.singleNotes().length === 0, '34j: no ordinary notice for the rate-limited pages');
+    }
+    // P4: Pixiv, retry: the failed page's job is retried into the same slot; the group becomes all saved and never gains an item
+    {
+      const e = pworker(PXPAGE);
+      await e.ready(); await e.manager.ready;
+      e.stagingFails.add('_p1.jpg');
+      await runGroup(e, 'pixiv', () => e.pixiv([PX(0), PX(1), PX(2)]));
+      let [b] = await summary(e, 'pixiv');
+      assert(counts(b) === '2/1/0/0/0', '34k: before the retry: 2 saved, 1 failed');
+      await waitFinal(e, b.id, 'Saved 2 of 3 · 1 failed');
+      e.stagingFails.clear();
+      const failed = (await e.snapshot()).jobs.find((j) => j.state === 'failed');
+      assert((await e.command('retry', failed.id)).success === true, '34l: the supported per-file retry is accepted');
+      await finishLoop(e, async () => counts((await summary(e, 'pixiv'))[0]) === '3/0/0/0/0', 'retry saved');
+      [b] = await summary(e, 'pixiv');
+      const afterRetry = await e.snapshot();
+      assert(b.count === 3 && afterRetry.jobs.filter((j) => j.batch === b.id).length === 3 && afterRetry.batches.length === 1, `34m: the retry replaced its slot: no new item, no new group, and no extra member row (${afterRetry.jobs.length} rows, ${afterRetry.batches.length} groups)`);
+      await waitFinal(e, b.id, 'All 3 files saved');
+      assert(e.singleNotes().length === 0 && e.batchNotes().filter((x) => x.opts.final).length >= 2, '34n: the same card moved from the error to all saved; the retried operation made no card of its own');
+      // removing a file row does not change the group's counts, and removing every row retires the summary
+      const rows = (await e.snapshot()).jobs.filter((j) => j.batch === b.id);
+      for (const j of rows.slice(0, 2)) assert((await e.command('remove', j.id)).success === true);
+      assert(counts((await summary(e, 'pixiv'))[0]) === '3/0/0/0/0', '34o: removing rows keeps the counts');
+      const last = await e.command('remove', rows[2].id);
+      assert(last.success === true && last.batches.length === 0, `34p: removing the last member row leaves no orphan summary (${JSON.stringify(last.batches.map((x) => counts(x)))})`);
+    }
+    // P9: cancelling a queued page: the slot is cancelled (never saved, never failed) and the card says so
+    {
+      const e = pworker(PXPAGE);
+      await e.ready(); await e.manager.ready;
+      const run = e.pixiv([PX(0), PX(1), PX(2)]);
+      let queued = null;
+      await until(async () => { queued = (await e.snapshot()).jobs.find((j) => j.state === 'queued' && j.batch); return Boolean(queued); }, 'a page waits in the queue behind the two active ones');
+      assert(queued && (await e.command('cancel', queued.id)).success === true, '34x1: the supported per-file Cancel is accepted for a queued page');
+      await runGroup(e, 'pixiv', async () => run);
+      const [b] = await summary(e, 'pixiv');
+      assert(counts(b) === '2/0/1/0/0', `34x2: two pages saved, one cancelled (${counts(b)})`);
+      await waitFinal(e, b.id, 'Saved 2 of 3 · 1 cancelled');
+      assert(e.singleNotes().length === 0, '34x3: no ordinary notice for the cancelled page');
+    }
+    // P5: two Pixiv posts at once: separate groups, separate cards, nothing merged with another post
+    {
+      const e = pworker(PXPAGE);
+      await e.ready(); await e.manager.ready;
+      e.stagingFails.add('150000002_p1');
+      const runs = Promise.all([e.pixiv([PX(0), PX(1)], '150000001'), e.pixiv([PX(0, '150000002'), PX(1, '150000002')], '150000002')]);
+      await finishLoop(e, async () => (await e.snapshot()).batches.length === 2 && (await e.snapshot()).batches.every((b) => b.remaining === 0), 'both groups settled');
+      await runs;
+      const batches = (await e.snapshot()).batches.sort((a, b) => counts(b).localeCompare(counts(a)));
+      assert(batches.length === 2 && new Set(batches.map((b) => b.id)).size === 2 && counts(batches[0]) === '2/0/0/0/0' && counts(batches[1]) === '1/1/0/0/0', '34q: two concurrent posts, two groups with their own counts');
+      await waitFinal(e, batches[0].id, 'All 2 files saved'); await waitFinal(e, batches[1].id, 'Saved 1 of 2 · 1 failed');
+      assert(e.singleNotes().length === 0, '34r: one card per post');
+    }
+    // P6: the loop ends early: pages never started are skipped, none is saved or invented
+    {
+      const e = pworker(PXPAGE);
+      await e.ready(); await e.manager.ready;
+      const adapt = e.sandbox.adaptCandidateToGroup;
+      e.sandbox.adaptCandidateToGroup = (o) => { if (o.url === PX(2)) throw new Error('LOOP_FAILURE'); return adapt(o); };
+      const loopError = await e.pixiv([PX(0), PX(1), PX(2), PX(3), PX(4)]).then(() => null, (x) => x);
+      assert(loopError && loopError.message === 'LOOP_FAILURE', '34s0: the loop failure is still reported to the caller');
+      await settled(e, 'pixiv');
+      const [b] = await summary(e, 'pixiv');
+      assert(b.count === 5 && counts(b) === '2/0/0/3/0', `34s: after an unexpected exit the started pages are decided by their jobs and the never-started ones are skipped (${counts(b)})`);
+    }
+    // P7: a failed write while opening the group: no group, no fabricated counts, and the pages are still saved ordinarily
+    {
+      const idbF = idbDouble();
+      const e = pworker(PXPAGE, { indexedDB: idbF });
+      await e.ready(); await e.manager.ready;
+      idbF.fail = true;
+      await e.pixiv([PX(0), PX(1)]);
+      await finishLoop(e, async () => (await e.snapshot()).jobs.length === 2 && (await e.snapshot()).jobs.every((j) => j.state === 'complete'), 'ordinary saves');
+      const snap = await e.snapshot();
+      assert(snap.batches.length === 0 && snap.jobs.every((j) => j.batch === undefined), '34t: the rejected write left no group and no counts; the pages were saved as ordinary files');
+      await until(() => e.singleNotes().length === 2, 'ordinary notices');
+      assert(e.batchNotes().length === 0, '34u: without a group the ordinary per-file notices remain');
+    }
+    // P8: worker restart: a Pixiv group reconciles honestly: the two held pages (operation, no job) fail, the never-started pages are skipped
+    {
+      const idbR = idbDouble();
+      const e = pworker(PXPAGE, { indexedDB: idbR });
+      await e.ready(); await e.manager.ready;
+      e.gates.set('_p0.jpg', new Promise(() => {})); e.gates.set('_p1.jpg', new Promise(() => {}));
+      e.pixiv([PX(0), PX(1), PX(2), PX(3)]).catch(() => {});
+      await until(async () => e.plan.length === 2 && (await summary(e, 'pixiv'))[0]?.remaining === 4, 'two pages held, two not started');
+      const again = pworker(PXPAGE, { indexedDB: idbR, session: e.session, local: e.local, downloadsDb: e.downloadsDb });
+      await again.ready(); await again.manager.ready;
+      const [b] = await summary(again, 'pixiv');
+      assert(b && b.site === 'pixiv' && b.count === 4 && counts(b) === '0/2/0/2/0', `34v: the restored Pixiv group is reconciled: held pages failed, unstarted pages skipped, nothing remains open (${b && counts(b)})`);
+      assert(again.plan.length === 0, '34w: the restart fetched nothing');
+      await until(() => again.batchNotes().length > 0, 'the restart reconciliation notice');
+      assert(again.batchNotes().every((x) => x.opts.title === 'Pixiv post' && x.opts.message === 'Saved 0 of 4 · 2 failed · 2 skipped') && again.singleNotes().length === 0, '34x0: the reconciliation is one Pixiv card');
+    }
+
+    // W1: Pawchive, partly imported post with known counts: three declared originals saved, the missing ones are a diagnostic, never a slot
+    {
+      const e = pworker(PWCARD);
+      await e.ready(); await e.manager.ready;
+      await runGroup(e, 'pawchive', () => e.pawchive([PW(1), PW(2), PW(3)], 'NOT_ARCHIVED_P2_V1'));
+      const [b] = await summary(e, 'pawchive'), snap = await e.snapshot();
+      assert(b && b.count === 3 && counts(b) === '3/0/0/0/0' && b.partial === true && snap.batches.length === 1, `34x: three proven originals in one Pawchive group flagged partial; the missing originals are not slots (${b && counts(b)})`);
+      assert(!JSON.stringify(snap.batches).includes('P2') && Object.keys(b).sort().join() === 'cancelled,count,createdAt,failed,id,partial,remaining,saved,site,skipped', '34y: the group carries no missing-file count, only the boolean');
+      await waitFinal(e, b.id, 'Saved 3 of 3 · some originals not imported');
+      const diag = (await e.tracker.list()).filter((r) => r.failure && /^NOT_ARCHIVED/.test(r.failure.code));
+      assert(diag.length === 1 && diag[0].failure.code === 'NOT_ARCHIVED_P2_V1' && !(await e.manager.isBatchOp(diag[0].id)), '34z: the specific diagnosis keeps its own failed operation and its counts, outside the slots');
+      assert(e.batchNotes().every((x) => !/All 3/.test(x.opts.message)) && e.singleNotes().length === 1 && /not imported|Original not imported/i.test(e.singleNotes()[0].opts.title + e.singleNotes()[0].opts.message), '34aa: a partial post never says all files were saved; the diagnosis is shown by its own error notice');
+      const st = await e.stats();
+      assert(st.stats.total === 4 && st.stats.success === 3 && st.stats.failed === 1, '34ab: statistics keep their meaning: three saves and the diagnostic as one failed operation');
+    }
+    // W2: unknown missing count (plain NOT_ARCHIVED), and an all-declared post
+    {
+      const e = pworker(PWCARD);
+      await e.ready(); await e.manager.ready;
+      await runGroup(e, 'pawchive', () => e.pawchive([PW(1), PW(2)], 'NOT_ARCHIVED'));
+      const [b] = await summary(e, 'pawchive');
+      await waitFinal(e, b.id, 'Saved 2 of 2 · some originals not imported');
+      assert(b.partial === true && (await e.tracker.list()).some((r) => r.failure && r.failure.code === 'NOT_ARCHIVED'), '34ac: an unknown number of missing originals stays unknown');
+      const full = pworker(PWCARD);
+      await full.ready(); await full.manager.ready;
+      await runGroup(full, 'pawchive', () => full.pawchive([PW(1), PW(2), PW(3)]));
+      const [fb] = await summary(full, 'pawchive');
+      assert(fb.partial === undefined, '34ad: a complete post has no partial flag');
+      await waitFinal(full, fb.id, 'All 3 files saved');
+      assert(full.batchNotes().at(-1).opts.title === 'Pawchive post' && full.singleNotes().length === 0, '34ae: a complete post says all files saved under the Pawchive label');
+    }
+    // W3: mixed: a refused item (not media), an HTTP 404, a rate limit that stops the remainder, a duplicate, and a saved one
+    {
+      const e = pworker(PWCARD);
+      await e.ready(); await e.manager.ready;
+      e.answers.set(hexOf(2), 'html'); e.answers.set(hexOf(3), 404); e.answers.set(hexOf(4), 429); e.inFlight(PW(1));
+      await runGroup(e, 'pawchive', () => e.pawchive([PW(0), PW(1), PW(2), PW(3), PW(4), PW(5), PW(6)]));
+      const [b] = await summary(e, 'pawchive');
+      assert(b.count === 7 && counts(b) === '1/5/0/1/0', `34af: saved 1; failed: not media, 404, 429, and the two after the limit; the duplicate is skipped (${counts(b)})`);
+      assert(b.saved + b.failed + b.cancelled + b.skipped + b.remaining === b.count && (await e.tracker.list()).filter((r) => r.state === 'failed').length === 5, '34ag: every proven item is counted exactly once');
+      assert(e.singleNotes().length === 0 && e.batchNotes().at(-1).opts.final === true, '34ah: pre-job refusals and rate limits make no card of their own');
+    }
+    // W4: the cap boundary: 100 originals with a partial import are one group of 100 plus the diagnostic; 101 are refused as before; one original is the ordinary path
+    {
+      const e = pworker(PWCARD);
+      await e.ready(); await e.manager.ready;
+      e.answers.set('cccc', 404);
+      await e.pawchive(Array.from({ length: 100 }, (_, i) => PW(i)), 'NOT_ARCHIVED');
+      const [b] = await summary(e, 'pawchive');
+      assert(b.count === 100 && b.partial === true && counts(b) === '0/100/0/0/0', '34ai: exactly 100 proven originals are one group; the missing ones add no slot');
+      assert((await e.tracker.list()).filter((r) => r.failure && r.failure.code === 'NOT_ARCHIVED').length === 1, '34aj: and one diagnostic operation');
+      const over = pworker(PWCARD);
+      await over.ready(); await over.manager.ready;
+      await over.pawchive(Array.from({ length: 101 }, (_, i) => PW(i)), 'NOT_ARCHIVED');
+      assert((await over.snapshot()).batches.length === 0 && (await over.tracker.list()).length === 1 && (await over.tracker.list())[0].failure.code === 'BATCH_LIMIT' && over.plan.length === 0, '34ak: 101 originals are refused with BATCH_LIMIT, no group, no request, no truncation');
+      const one = pworker(PWCARD);
+      await one.ready(); await one.manager.ready;
+      await one.pawchive([PW(1)], 'NOT_ARCHIVED_P1_V0');
+      await finishLoop(one, async () => (await one.tracker.list()).filter((r) => r.state === 'complete').length === 1, 'single original saved');
+      assert((await one.snapshot()).batches.length === 0 && (await one.tracker.list()).length === 2, '34al: one declared original keeps the ordinary single-file path (and its diagnostic)');
+    }
+    // W5: success notices off: an all-saved Pawchive group is silent, but a partial post's diagnostic error remains visible
+    {
+      const e = pworker(PWCARD, { local: { notifySuccess: false } });
+      await e.ready(); await e.manager.ready;
+      await runGroup(e, 'pawchive', () => e.pawchive([PW(1), PW(2)], 'NOT_ARCHIVED_P1_V1'));
+      await e.tracker.flush(); await sleep(120);
+      assert(e.batchNotes().every((x) => x.opts.dismissBatch === true || x.opts.kind === 'error') && e.batchNotes().every((x) => !/Saved 2 of 2/.test(x.opts.message)) && e.singleNotes().filter((x) => x.opts.kind === 'error').length === 1, '34am: with success notices off no success card is created; the partial-import error is still shown');
+    }
+    // W6: two Pawchive posts and a Pixiv post at once keep separate groups and labels
+    {
+      const e = pworker(PWCARD);
+      await e.ready(); await e.manager.ready;
+      const runs = Promise.all([e.pawchive([PW(1), PW(2)]), e.pawchive([PW(11), PW(12), PW(13)], 'NOT_ARCHIVED'), e.pixiv([PX(0), PX(1)])]);
+      await finishLoop(e, async () => { const s = await e.snapshot(); return s.batches.length === 3 && s.batches.every((b) => b.remaining === 0); }, 'three groups settled');
+      await runs;
+      const s = await e.snapshot();
+      assert(s.batches.map((b) => b.site).sort().join() === 'pawchive,pawchive,pixiv' && s.batches.filter((b) => b.partial).length === 1, '34an: concurrent groups stay separate');
+      await until(() => e.batchNotes().filter((x) => x.opts.final).length >= 3, 'three final cards');
+      assert(new Set(e.batchNotes().map((x) => x.opts.batch)).size === 3 && ['Pawchive post', 'Pixiv post'].every((t) => e.batchNotes().some((x) => x.opts.title === t)), '34ao: one card per post with the right service label');
+    }
   }
 
   // 31. A manager-polled completion/failure must notify after the feedback record becomes terminal.

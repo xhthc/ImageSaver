@@ -1199,8 +1199,8 @@ async function managedDownload(options, feedbackOp=null, mime='', maxBytes=0, se
 }
 // Post batches (MANAGER-BATCH-PROGRESS-01; model in lib/download_manager.js). Best effort: a batch that cannot be recorded never stops,
 // delays or changes a save, and batch data never reaches a fetch decision.
-async function batchOpen(site, count) {
-  try { const id = downloadManager ? await downloadManager.openBatch(site, count) : null; return id ? { id } : null; } catch (_) { return null; }
+async function batchOpen(site, count, partial = false) {
+  try { const id = downloadManager ? await downloadManager.openBatch(site, count, partial) : null; return id ? { id } : null; } catch (_) { return null; }
 }
 const batchRef = (batch, i) => (batch ? { id: batch.id, i } : undefined);
 async function batchBind(ref, op) {

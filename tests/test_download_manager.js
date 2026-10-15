@@ -325,7 +325,7 @@ function env(stored={jobs:[],paused:false}) {
       // repeated events and repeated writes never count a slot twice
       await m.settleSlot({id,i:0},'failed');await m.settleSlot({id,i:0},'saved');await m.bindSlot({id,i:0},'op-other');await m.command('pause');await m.command('pause');
       assert.deepEqual(counts(await only(m)),{saved:1,failed:0,cancelled:0,skipped:0,remaining:1},'settle/bind/pause repeats cannot change a slot that a job decided');
-      await m.settleSlot({id,i:1},'skipped');await m.settleSlot({id,i:1},'failed');await m.settleSlot({id:'batch-missing',i:0},'failed');await m.settleSlot({id,i:9},'failed');await assert.rejects(m.openBatch('x',101),/INVALID_BATCH/);await assert.rejects(m.openBatch('pixiv',2),/INVALID_BATCH/);
+      await m.settleSlot({id,i:1},'skipped');await m.settleSlot({id,i:1},'failed');await m.settleSlot({id:'batch-missing',i:0},'failed');await m.settleSlot({id,i:9},'failed');await assert.rejects(m.openBatch('x',101),/INVALID_BATCH/);await assert.rejects(m.openBatch('redgifs',2),/INVALID_BATCH/);
       assert.deepEqual(counts(await only(m)),{saved:1,failed:0,cancelled:0,skipped:1,remaining:0},'a settled slot is final; unknown batches and slots are ignored');
     }
     // retry updates the same slot: failed -> active -> saved, never a second success
@@ -351,6 +351,31 @@ function env(stored={jobs:[],paused:false}) {
       e.native.get(101).state='complete';await m.drain();
       assert.deepEqual(counts((await m.list()).batches.find(x=>x.id===b2)),{saved:0,failed:1,cancelled:0,skipped:1,remaining:1},'the other batch is untouched');
     }
+    // MANAGER-BATCH-PROGRESS-02: Pixiv and Pawchive groups use the same slots; "partial" (Pawchive) is only the boolean true, never a count of missing files
+    {
+      const e=env({jobs:[],paused:false});e.autoComplete=false;const m=createManager(e.d);await m.ready;
+      const p=await m.openBatch('pixiv',3),w=await m.openBatch('pawchive',2,true),w2=await m.openBatch('pawchive',2,'yes'),w3=await m.openBatch('pawchive',2);
+      const l=await m.list();const by=(list,id)=>list.batches.find(x=>x.id===id);
+      assert.deepEqual([by(l,p).site,by(l,w).site,by(l,p).partial,by(l,w).partial,by(l,w2).partial,by(l,w3).partial],['pixiv','pawchive',undefined,true,undefined,undefined],'partial exists only as the boolean true');
+      assert.equal(by(l,w).count,2,'the count is the proven downloadable items; missing originals add no slot');
+      for(const bad of ['example','redgifs','','X',null,undefined])await assert.rejects(m.openBatch(bad,2),/INVALID_BATCH/,'only x, reddit, pixiv and pawchive can open a batch');
+      await item(m,{id:p,i:0},'op-p0','https://media.test/p0','p0.png');e.native.get(101).state='complete';await m.drain();
+      await m.settleSlot({id:w,i:0},'failed');
+      assert.deepEqual(counts(by(await m.list(),p)),{saved:1,failed:0,cancelled:0,skipped:0,remaining:2},'a Pixiv group counts like any other');
+      assert.deepEqual(counts(by(await m.list(),w)),{saved:0,failed:1,cancelled:0,skipped:0,remaining:1});
+      assert(!JSON.stringify(e.data).includes('media.test'),'no address in the batch record');
+      const reopened=createManager({...e.d});await reopened.ready;const after=(await reopened.list()).batches;
+      assert.deepEqual(after.map(b=>[b.site,b.partial===true]).sort(),[['pawchive',false],['pawchive',false],['pawchive',true],['pixiv',false]],'reopen keeps both new sites and the flag');
+      assert.deepEqual(counts(by(await reopened.list(),p)),{saved:1,failed:0,cancelled:0,skipped:2,remaining:0},'a restart skips the never-started slots of a Pixiv group');
+      // a failed write is not a group
+      e.failWrite=()=>true;await assert.rejects(m.openBatch('pawchive',2,true),/STORAGE_FAILED/);e.failWrite=null;assert.equal((await m.list()).batches.length,4,'a rejected open leaves no group and no flag behind');
+      // legacy x/reddit records still load; junk partial values and unknown sites do not
+      const old=env({jobs:[],paused:false,batches:[{id:'batch-lx',site:'x',createdAt:1,slots:[{s:'saved',op:'op-1'},{s:'saved',op:'op-2'}]},{id:'batch-lr',site:'reddit',createdAt:2,slots:[{s:'failed',op:'op-3'},{s:'saved',op:'op-4'}]},
+        {id:'batch-pt',site:'pawchive',createdAt:3,partial:true,slots:[{s:'saved',op:'op-5'},{s:'saved',op:'op-6'}]},{id:'batch-ps',site:'pawchive',createdAt:4,partial:'true',slots:[{s:'saved',op:'op-7'},{s:'saved',op:'op-8'}]},
+        {id:'batch-pn',site:'pawchive',createdAt:5,partial:1,slots:[{s:'saved',op:'op-9'},{s:'saved',op:'op-0'}]},{id:'batch-pp',site:'pixiv',createdAt:6,slots:[{s:'saved',op:'op-a'},{s:'saved',op:'op-b'}]},{id:'batch-no',site:'redgifs',createdAt:7,slots:[{s:'saved'}]}]});
+      const om=createManager(old.d);await om.ready;const ol=(await om.list()).batches;
+      assert.deepEqual(ol.map(b=>[b.id,b.site,b.partial===true]),[['batch-lx','x',false],['batch-lr','reddit',false],['batch-pt','pawchive',true],['batch-ps','pawchive',false],['batch-pn','pawchive',false],['batch-pp','pixiv',false]],'legacy x/reddit batches load unchanged; only a boolean true survives; an unknown site is dropped');
+    }
     // reopen: a new manager over the same record shows the same batch; an older record without batches loads
     {
       const e=env({jobs:[],paused:false});const m=createManager(e.d);await m.ready;
@@ -362,7 +387,7 @@ function env(stored={jobs:[],paused:false}) {
       assert.deepEqual(after.jobs,before.jobs);
       const legacy=env({jobs:[],paused:false});const lm=createManager(legacy.d);await lm.ready;assert.deepEqual((await lm.list()).batches,[]);
       await lm.enqueue({url:'https://media.test/old',filename:'old.png'});await lm.drain();assert.deepEqual((await lm.list()).batches,[]);assert.deepEqual(legacy.data.batches,[]);
-      const junk=env({jobs:[],paused:false,batches:[null,{id:'x'},{id:'batch-ok',site:'pixiv',createdAt:1,slots:[{s:'pending'}]},{id:'b'.repeat(80),site:'x',createdAt:1,slots:[{s:'pending'}]},{id:'batch-big',site:'x',createdAt:1,slots:Array.from({length:101},()=>({s:'pending'}))},{id:'batch-good',site:'x',createdAt:5,slots:[{s:'weird',op:'op ok'},{s:'saved',op:'op-9'}]}]});
+      const junk=env({jobs:[],paused:false,batches:[null,{id:'x'},{id:'batch-ok',site:'redgifs',createdAt:1,slots:[{s:'pending'}]},{id:'b'.repeat(80),site:'x',createdAt:1,slots:[{s:'pending'}]},{id:'batch-big',site:'x',createdAt:1,slots:Array.from({length:101},()=>({s:'pending'}))},{id:'batch-good',site:'x',createdAt:5,slots:[{s:'weird',op:'op ok'},{s:'saved',op:'op-9'}]}]});
       const jm=createManager(junk.d);await jm.ready;const jl=(await jm.list()).batches;assert.equal(jl.length,1);assert.equal(jl[0].id,'batch-good');assert.equal(jl[0].failed,1,'an unknown slot state is not a success');assert.equal(jl[0].saved,1);
     }
     // worker restart: unfinished preparations end as failed, never-started slots as skipped, nothing is resumed or re-fetched
