@@ -6,6 +6,13 @@
   const notices = new Map();
   const GROUP_IDLE_MS = 10000;
   const UPDATE_MS = 500;
+  // Post batches (MANAGER-BATCH-NOTICES-01): the worker names the batch; one card per batch, updated in place. Memory is bounded: a few
+  // visible batch cards and the batches whose card was closed on this page (their later automatic updates stay silent).
+  const MAX_BATCH_CARDS = 4;
+  const MAX_SUPPRESSED = 32;
+  const suppressed = new Set();
+  // an active batch keeps its card while results arrive; a finished one is shown for the usual time
+  const batchLife = (n) => (n.final ? (n.kind === 'error' ? 12000 : 6000) : 30000);
   let group = null;
   // The extension pages' tokens (ui/src/index.css): card, foreground, muted text, border, focus, primary, its text, danger.
   const palettes = {
@@ -65,6 +72,7 @@
     pause(entry);
     if (entry.updateTimer) clearTimeout(entry.updateTimer);
     if (group?.entry === entry) { group.entry = null; if (suppress) group.suppressed = true; }
+    if (suppress && entry.batch) { suppressed.add(entry.batch); if (suppressed.size > MAX_SUPPRESSED) suppressed.delete(suppressed.values().next().value); }
     const focused = entry.node.contains(shadow.activeElement);
     notices.delete(id); entry.node.inert = true; entry.node.setAttribute('aria-hidden','true'); entry.node.setAttribute('data-closing','');
     if (focused) {
@@ -102,7 +110,7 @@
       open.disabled=false;open.focus();
     });
     node.append(head,result,open);stack.append(node);
-    const entry={id:notice.id,latestId:notice.id,node,result,title,message,status,close,open,remaining:notice.kind==='error'?12000:6000,timer:null,updateTimer:null,started:0,hover:false};notices.set(notice.id,entry);
+    const entry={id:notice.id,latestId:notice.id,node,result,title,message,status,close,open,remaining:notice.batch?batchLife(notice):notice.kind==='error'?12000:6000,timer:null,updateTimer:null,started:0,hover:false};notices.set(notice.id,entry);
     node.addEventListener('mouseenter',()=>{entry.hover=true;pause(entry);});node.addEventListener('mouseleave',()=>{entry.hover=false;resume(entry);});
     node.addEventListener('focusin',e=>{if(e.relatedTarget && e.relatedTarget!==host && !stack.contains(e.relatedTarget))returnFocus=e.relatedTarget;pause(entry);});node.addEventListener('focusout',()=>queueMicrotask(()=>{if(notices.has(entry.id))resume(entry);}));
     node.addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();remove(entry.id,true,true);}});
@@ -110,7 +118,43 @@
     return entry;
   }
 
+  // A batch card is keyed by the batch id (its DOM identity, action and focus stay while the text changes); Open manager names the latest
+  // finished operation the worker sent. Closing or Escape mutes the batch on this page; expiry or Open manager does not.
+  function showBatch(notice) {
+    if (notice.dismissBatch) { remove(notice.batch, false); return true; }
+    if (suppressed.has(notice.batch)) return true;
+    const live = notices.get(notice.batch);
+    if (live && live.batch) {
+      applyTheme(notice.theme);
+      live.latestId = notice.id; live.display = notice;
+      pause(live); live.remaining = batchLife(notice); resume(live);
+      // one restrained announcement: the first text and the final result; counts changing in between are not read out
+      live.result.setAttribute('aria-live', notice.final ? 'polite' : 'off');
+      if (!live.updateTimer) live.updateTimer = setTimeout(() => {
+        live.updateTimer = null;
+        if (notices.get(live.id) !== live) return;
+        const n = live.display;
+        live.node.className = 'notice ' + n.kind; live.status.textContent = n.kind === 'error' ? '!' : '✓';
+        live.title.textContent = n.title; live.message.textContent = n.message;
+        live.close.setAttribute('aria-label', n.dismissLabel);
+        if (live.open.textContent !== n.actionLabel) live.open.textContent = n.actionLabel;
+      }, UPDATE_MS);
+      return true;
+    }
+    if (notice.updateOnly) return true; // Retry progress may update an existing card, never create the first card.
+    const cards = [...notices.values()].filter((e) => e.batch);
+    while (cards.length >= MAX_BATCH_CARDS) {
+      const index = cards.findIndex(e => !e.hover && !e.node.contains(shadow.activeElement));
+      if (index < 0) return true; // Never interrupt a card being read to make room for another.
+      remove(cards.splice(index, 1)[0].id, false);
+    }
+    const entry = showCard({ ...notice, id: notice.batch, grouped: true });
+    entry.batch = notice.batch; entry.latestId = notice.id; entry.display = notice;
+    return true;
+  }
+
   function show(notice) {
+    if (notice.batch) return showBatch(notice);
     const now=Date.now();
     if(!group || (now-group.lastAt>=GROUP_IDLE_MS && !group.entry?.hover && !group.entry?.node.contains(shadow?.activeElement))) {
       if(group?.entry)remove(group.entry.id,false);
@@ -149,7 +193,7 @@
   chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     if(message?.action!=='MEDIALATCH_NOTICE')return false;
     const n=message.notice;
-    if(sender?.id!==chrome.runtime.id || sender.tab || !n || n.origin!==location.origin || typeof n.id!=='string' || !/^[a-z0-9-]{6,48}$/.test(n.id) || !['success','error'].includes(n.kind) || typeof n.successEnabled!=='boolean' || !['title','message','actionLabel','dismissLabel','summaryTitle','savedLabel','failedLabel'].every(k=>typeof n[k]==='string' && n[k].length>0 && n[k].length<=240)) {respond({success:false});return false;}
+    if(sender?.id!==chrome.runtime.id || sender.tab || !n || n.origin!==location.origin || typeof n.id!=='string' || !/^[a-z0-9-]{6,48}$/.test(n.id) || !['success','error'].includes(n.kind) || typeof n.successEnabled!=='boolean' || !['title','message','actionLabel','dismissLabel','summaryTitle','savedLabel','failedLabel'].every(k=>typeof n[k]==='string' && n[k].length>0 && n[k].length<=240) || (n.batch!==undefined && !(typeof n.batch==='string' && /^[a-z0-9-]{6,64}$/.test(n.batch) && typeof n.final==='boolean')) || (['dismissBatch','updateOnly'].some(k=>n[k]!==undefined && !(n.batch && typeof n[k]==='boolean')))) {respond({success:false});return false;}
     try {respond({success:show(n)});}catch(_){respond({success:false});}
     return false;
   });

@@ -16,9 +16,25 @@ export interface DownloadJob {
   createdAt: number;
   downloadId?: number | null;
   ready?: boolean;
+  /** Post batch this job belongs to (a "Save all" list of an X or Reddit post), when it has one. */
+  batch?: string;
 }
 
-export interface DownloadSnapshot { jobs: DownloadJob[]; paused: boolean }
+/** Progress of one post batch: every proven item is in exactly one count. Only `saved` is confirmed by the browser or the chosen folder. */
+export interface DownloadBatch {
+  id: string;
+  site: 'x' | 'reddit';
+  count: number;
+  saved: number;
+  failed: number;
+  cancelled: number;
+  skipped: number;
+  /** Not finished yet: proven but not started, resolving, receiving, checking or exporting. */
+  remaining: number;
+  createdAt: number;
+}
+
+export interface DownloadSnapshot { jobs: DownloadJob[]; paused: boolean; batches?: DownloadBatch[] }
 export type DownloadCommand = 'pause' | 'cancel' | 'retry' | 'remove';
 export type DownloadRequest =
   | { action: 'DOWNLOADS_LIST' }
@@ -38,6 +54,7 @@ export interface DownloadsChrome {
 }
 
 export interface DownloadsViewState extends DownloadSnapshot {
+  batches: DownloadBatch[];
   status: 'loading' | 'ready' | 'error';
   error: '' | 'downloads.unavailable' | 'downloads.commandFailed';
   busy: boolean;

@@ -286,6 +286,188 @@ function env(stored={jobs:[],paused:false}) {
     assert.equal(failedReported, true);
     assert.equal((await dm.list()).jobs[0].state, 'failed');
   }
+  // 6b. Post batches (MANAGER-BATCH-PROGRESS-01): one slot per proven item; only a finished export is saved; every event is idempotent.
+  {
+    const counts=b=>({saved:b.saved,failed:b.failed,cancelled:b.cancelled,skipped:b.skipped,remaining:b.remaining});
+    const only=async m=>{const l=await m.list();assert.equal(l.batches.length,1);return l.batches[0];};
+    const item=async(m,ref,op,url,name)=>{await m.bindSlot(ref,op);return m.enqueue({url,filename:name},{op,mime:'image/png'});};
+    // mixed outcomes: saved, failed, cancelled (still queued), refused before any job, duplicate, and an item that never started
+    {
+      const e=env({jobs:[],paused:true});e.d.stage=async j=>{if(j.source.endsWith('/bad'))throw Error('INVALID_MEDIA');return {size:png.length,mime:'image/png'};};
+      const m=createManager(e.d);await m.ready;
+      const id=await m.openBatch('x',6);const ref=i=>({id,i});
+      let b=await only(m);assert.deepEqual(counts(b),{saved:0,failed:0,cancelled:0,skipped:0,remaining:6},'every proven item starts as a remaining slot, none is saved by admission');
+      assert.equal(b.count,6);assert.equal(b.site,'x');
+      await m.bindSlot(ref(2),'op-q');const queued=m.enqueue({url:'https://media.test/q',filename:'q.png'},{op:'op-q'}).catch(x=>x.message);
+      await until(async()=>(await m.list()).jobs.length===1);
+      assert.deepEqual(counts(await only(m)),{saved:0,failed:0,cancelled:0,skipped:0,remaining:6},'a queued job is not saved');
+      await m.command('cancel',(await m.list()).jobs[0].id);assert.equal(await queued,'CANCELLED');
+      await m.settleSlot(ref(3),'failed');await m.settleSlot(ref(4),'skipped');
+      await m.command('pause');
+      await item(m,ref(0),'op-a','https://media.test/a','a.png');
+      await m.bindSlot(ref(1),'op-b');await assert.rejects(m.enqueue({url:'https://media.test/bad',filename:'b.png'},{op:'op-b'}),/INVALID_MEDIA/);
+      await m.drain();
+      b=await only(m);assert.deepEqual(counts(b),{saved:1,failed:2,cancelled:1,skipped:1,remaining:1},'saved, failed (job and refusal), cancelled and skipped are distinct; slot 5 never started');
+      assert.equal(b.saved+b.failed+b.cancelled+b.skipped+b.remaining,b.count,'every proven item is counted exactly once');
+      await m.closeBatch(id);assert.deepEqual(counts(await only(m)),{saved:1,failed:2,cancelled:1,skipped:2,remaining:0},'a slot that never started ends as skipped, not as saved');
+      const jobs=(await m.list()).jobs;assert.deepEqual(jobs.map(j=>j.state).sort(),['cancelled','complete','failed']);assert(jobs.every(j=>j.batch===id));
+    }
+    // saved needs the confirmed export; received bytes and a finished transfer are not saved
+    {
+      const e=env({jobs:[],paused:false});e.autoComplete=false;const m=createManager(e.d);await m.ready;
+      const id=await m.openBatch('reddit',2);const first=item(m,{id,i:0},'op-1','https://media.test/1','1.png');await first;
+      let b=await only(m);assert.deepEqual(counts(b),{saved:0,failed:0,cancelled:0,skipped:0,remaining:2},'bytes prepared and export accepted, but the browser has not finished the file: not saved');
+      assert((await m.list()).jobs[0].state==='exporting');
+      e.native.get(101).state='complete';await m.drain();
+      b=await only(m);assert.deepEqual(counts(b),{saved:1,failed:0,cancelled:0,skipped:0,remaining:1},'the finished export is the only thing that counts as saved');
+      // repeated events and repeated writes never count a slot twice
+      await m.settleSlot({id,i:0},'failed');await m.settleSlot({id,i:0},'saved');await m.bindSlot({id,i:0},'op-other');await m.command('pause');await m.command('pause');
+      assert.deepEqual(counts(await only(m)),{saved:1,failed:0,cancelled:0,skipped:0,remaining:1},'settle/bind/pause repeats cannot change a slot that a job decided');
+      await m.settleSlot({id,i:1},'skipped');await m.settleSlot({id,i:1},'failed');await m.settleSlot({id:'batch-missing',i:0},'failed');await m.settleSlot({id,i:9},'failed');await assert.rejects(m.openBatch('x',101),/INVALID_BATCH/);await assert.rejects(m.openBatch('pixiv',2),/INVALID_BATCH/);
+      assert.deepEqual(counts(await only(m)),{saved:1,failed:0,cancelled:0,skipped:1,remaining:0},'a settled slot is final; unknown batches and slots are ignored');
+    }
+    // retry updates the same slot: failed -> active -> saved, never a second success
+    {
+      const e=env({jobs:[],paused:false});let fail=true;const stage=e.d.stage;e.d.stage=async(...a)=>{if(fail)throw Error('NETWORK_FAILED');return stage(...a);};
+      e.d.newAttempt=async()=>'op-retry';
+      const m=createManager(e.d);await m.ready;const id=await m.openBatch('x',2);
+      await assert.rejects(item(m,{id,i:0},'op-1','https://media.test/r','r.png'),/NETWORK_FAILED/);
+      let b=await only(m);assert.deepEqual(counts(b),{saved:0,failed:1,cancelled:0,skipped:0,remaining:1});
+      fail=false;const job=(await m.list()).jobs[0];await m.command('retry',job.id);
+      await until(async()=>(await only(m)).saved===1);await m.drain();
+      b=await only(m);assert.deepEqual(counts(b),{saved:1,failed:0,cancelled:0,skipped:0,remaining:1},'the retry saved the same slot once');
+      assert.equal((await m.list()).jobs.length,1,'a retry is not another job');
+    }
+    // two batches stay separate
+    {
+      const e=env({jobs:[],paused:false});e.autoComplete=false;const m=createManager(e.d);await m.ready;
+      const a=await m.openBatch('x',2),b2=await m.openBatch('reddit',3);
+      await item(m,{id:a,i:0},'op-a0','https://media.test/a0','a0.png');await m.settleSlot({id:b2,i:0},'failed');await m.settleSlot({id:b2,i:1},'skipped');
+      const l=await m.list();const A=l.batches.find(x=>x.id===a),B=l.batches.find(x=>x.id===b2);
+      assert.deepEqual([counts(A),A.site],[{saved:0,failed:0,cancelled:0,skipped:0,remaining:2},'x']);assert.deepEqual([counts(B),B.site],[{saved:0,failed:1,cancelled:0,skipped:1,remaining:1},'reddit']);
+      assert.deepEqual(l.jobs.map(j=>j.batch),[a],'a job names only its own batch');
+      e.native.get(101).state='complete';await m.drain();
+      assert.deepEqual(counts((await m.list()).batches.find(x=>x.id===b2)),{saved:0,failed:1,cancelled:0,skipped:1,remaining:1},'the other batch is untouched');
+    }
+    // reopen: a new manager over the same record shows the same batch; an older record without batches loads
+    {
+      const e=env({jobs:[],paused:false});const m=createManager(e.d);await m.ready;
+      const id=await m.openBatch('x',3);await item(m,{id,i:0},'op-1','https://media.test/1','1.png');await m.drain();await m.settleSlot({id,i:1},'failed');
+      const before=await m.list();assert.deepEqual(counts(before.batches[0]),{saved:1,failed:1,cancelled:0,skipped:0,remaining:1});
+      assert(!JSON.stringify(e.data).includes('media.test'),'batch data holds no source address');
+      const reopened=createManager({...e.d});await reopened.ready;
+      const after=await reopened.list();assert.deepEqual(after.batches,before.batches.map(b=>({...b,remaining:0,skipped:1})),'after a restart the never-started slot is skipped, the rest is unchanged');
+      assert.deepEqual(after.jobs,before.jobs);
+      const legacy=env({jobs:[],paused:false});const lm=createManager(legacy.d);await lm.ready;assert.deepEqual((await lm.list()).batches,[]);
+      await lm.enqueue({url:'https://media.test/old',filename:'old.png'});await lm.drain();assert.deepEqual((await lm.list()).batches,[]);assert.deepEqual(legacy.data.batches,[]);
+      const junk=env({jobs:[],paused:false,batches:[null,{id:'x'},{id:'batch-ok',site:'pixiv',createdAt:1,slots:[{s:'pending'}]},{id:'b'.repeat(80),site:'x',createdAt:1,slots:[{s:'pending'}]},{id:'batch-big',site:'x',createdAt:1,slots:Array.from({length:101},()=>({s:'pending'}))},{id:'batch-good',site:'x',createdAt:5,slots:[{s:'weird',op:'op ok'},{s:'saved',op:'op-9'}]}]});
+      const jm=createManager(junk.d);await jm.ready;const jl=(await jm.list()).batches;assert.equal(jl.length,1);assert.equal(jl[0].id,'batch-good');assert.equal(jl[0].failed,1,'an unknown slot state is not a success');assert.equal(jl[0].saved,1);
+    }
+    // worker restart: unfinished preparations end as failed, never-started slots as skipped, nothing is resumed or re-fetched
+    {
+      const stored={jobs:[{id:'job-live',op:'op-live',source:'https://media.test/live',filename:'live.png',createdAt:1,state:'receiving',received:5,total:10,speed:1,prepared:false,error:'',batch:{id:'batch-r',i:2}}],paused:false,
+        batches:[{id:'batch-r',site:'reddit',createdAt:1,slots:[{s:'saved',op:'op-0'},{s:'active',op:'op-prep'},{s:'active',op:'op-live',job:'job-live'},{s:'pending'},{s:'pending'},{s:'failed',op:'op-5'}]}]};
+      const e=env(stored);const m=createManager(e.d);await m.ready;await m.drain();
+      const l=await m.list();assert.deepEqual(counts(l.batches[0]),{saved:1,failed:3,cancelled:0,skipped:2,remaining:0},'the preparation, the interrupted transfer and the failed slot are failed; the unstarted two are skipped');
+      assert.equal(l.jobs[0].state,'failed');assert.equal(l.jobs[0].error,'WORKER_RESTARTED');assert.equal(e.stages,0,'nothing was resumed');assert.equal(e.exports,0);
+    }
+    // clear/removal: no orphan summary, no resurrected row
+    {
+      const e=env({jobs:[],paused:false});const m=createManager(e.d);await m.ready;
+      const id=await m.openBatch('x',3);await item(m,{id,i:0},'op-1','https://media.test/1','1.png');await item(m,{id,i:1},'op-2','https://media.test/2','2.png');await m.bindSlot({id,i:2},'op-never');await m.settleSlot({id,i:2},'failed');await m.drain();
+      assert.equal((await m.pruneBatches(new Set())).length,1,'rows still exist');
+      const jobs=(await m.list()).jobs;assert.deepEqual(jobs.map(j=>j.batch),[id,id]);
+      await m.command('remove',jobs[0].id);assert.equal((await m.pruneBatches(new Set())).length,1,'one member row remains');
+      assert.equal((await m.list()).jobs.length,1);await m.command('remove',jobs[1].id);
+      assert.equal((await m.pruneBatches(new Set(['op-never']))).length,1,'a listed failed-preparation row keeps the summary');
+      assert.deepEqual(await m.pruneBatches(new Set()),[],'no row left: the summary is deleted');
+      assert.deepEqual(e.data.batches,[],'and removed from the stored record');
+      assert.deepEqual((await createManager(e.d).list()).batches,[]);
+      const open=await m.openBatch('reddit',2);assert.equal((await m.pruneBatches(new Set())).length,1,'a batch with an unfinished slot is never pruned');void open;
+      for(let i=0;i<25;i++){const b=await m.openBatch('x',1);await m.settleSlot({id:b,i:0},'skipped');}assert((await m.list()).batches.length<=21,'finished batches are bounded');
+    }
+    // a failed write leaves the previous state
+    {
+      const e=env({jobs:[],paused:false});const m=createManager(e.d);await m.ready;const id=await m.openBatch('x',2);
+      e.failWrite=()=>true;await assert.rejects(m.settleSlot({id,i:0},'failed'),/STORAGE_FAILED/);await assert.rejects(m.openBatch('x',2),/STORAGE_FAILED/);e.failWrite=null;
+      const b=(await m.list()).batches;assert.equal(b.length,1);assert.deepEqual(counts(b[0]),{saved:0,failed:0,cancelled:0,skipped:0,remaining:2},'a rejected write is not reported as a result');
+    }
+    // A rejected job patch must restore its batch slot as well as the row, both now and on the next successful write.
+    for (const [action,state,slotState] of [['retry','failed','failed'],['cancel','queued','active']]) {
+      const id='batch-rollback', jobId='job-rollback';
+      const e=env({paused:true,jobs:[{id:jobId,op:'op-rollback',source:'https://media.test/rollback.png',filename:'rollback.png',state,received:0,total:null,speed:0,prepared:false,error:state==='failed'?'DOWNLOAD_FAILED':'',batch:{id,i:0}}],batches:[{id,site:'x',createdAt:1,slots:[{s:slotState,op:'op-rollback',job:jobId}]}]});
+      e.d.newAttempt=async()=> 'op-retry';
+      const m=createManager(e.d);await m.ready;const before=await m.list();
+      e.failWrite=()=>true;await assert.rejects(m.command(action,jobId),/STORAGE_FAILED/);
+      const rejected=await m.list();
+      assert.equal(rejected.jobs[0].state,state,'a rejected '+action+' restores the file state');
+      assert.equal(rejected.jobs[0].op,'op-rollback','a rejected retry restores the operation');
+      assert.deepEqual(rejected.batches,before.batches,'a rejected '+action+' restores the summary');
+      e.failWrite=null;await m.openBatch('reddit',1);
+      assert.equal(e.data.jobs[0].state,state);
+      assert.deepEqual(e.data.batches.find(b=>b.id===id).slots,[{s:slotState,op:'op-rollback',job:jobId}],'a later write must not persist a rejected '+action);
+    }
+    // Two batch item workers: failed binding replaces batches, then a failed enqueue must restore the live slot, not a stale object.
+    {
+      const e=env({jobs:[],paused:true}),m=createManager(e.d);await m.ready;const id=await m.openBatch('x',2);
+      await m.bindSlot({id,i:0},'op-zero');let rejectWrites=2;e.failWrite=()=>rejectWrites-->0;
+      const rejected=await Promise.allSettled([m.bindSlot({id,i:1},'op-one'),m.enqueue({url:'https://media.test/ghost.png',filename:'ghost.png'},{op:'op-zero'})]);
+      assert(rejected.every(r=>r.status==='rejected' && r.reason.message==='STORAGE_FAILED'));
+      e.failWrite=null;await m.settleSlot({id,i:0},'failed');await m.settleSlot({id,i:1},'failed');await m.closeBatch(id);
+      const snapshot=await m.list();assert.deepEqual(snapshot.jobs,[]);
+      assert.deepEqual(counts(snapshot.batches[0]),{saved:0,failed:2,cancelled:0,skipped:0,remaining:0},'failed concurrent writes cannot leave a nonexistent active job');
+      assert(e.data.batches[0].slots.every(s=>!s.job),'the durable record must contain no ghost job');
+      assert.deepEqual(await m.pruneBatches(new Set()),[],'the finished batch can be removed without restarting');
+      assert.deepEqual(e.data.batches,[]);
+    }
+  }
+  // 6c. Batch change announcements (MANAGER-BATCH-NOTICES-01): one call per saved change of a batch's canonical counts, nothing else.
+  {
+    const key=b=>[b.saved,b.failed,b.cancelled,b.skipped,b.remaining].join('/');
+    const seen=[];const e=env({jobs:[],paused:false});e.d.batchChanged=b=>seen.push(key(b));e.d.newAttempt=async()=>'op-retry-1';
+    let fail=true;const stage=e.d.stage;e.d.stage=async(...a)=>{if(fail)throw Error('NETWORK_FAILED');return stage(...a);};
+    const m=createManager(e.d);await m.ready;assert.deepEqual(seen,[],'a manager with no batches announces nothing');
+    const id=await m.openBatch('x',4);assert.deepEqual(seen,['0/0/0/0/4'],'a new batch is announced once with every slot remaining');
+    await m.bindSlot({id,i:0},'op-0');assert.deepEqual(seen,['0/0/0/0/4'],'binding an operation does not change the counts: no announcement');
+    await assert.rejects(m.enqueue({url:'https://media.test/0',filename:'0.png'},{op:'op-0'}),/NETWORK_FAILED/);
+    assert.deepEqual(seen.slice(1),['0/1/0/0/3'],'a failed job is announced once (queued, receiving and failed saves around it do not repeat the same counts)');
+    await m.settleSlot({id,i:1},'skipped');await m.settleSlot({id,i:1},'skipped');await m.settleSlot({id,i:1},'failed');
+    assert.deepEqual(seen.slice(2),['0/1/0/1/2'],'a settled slot announces once; repeated or conflicting settles announce nothing');
+    await m.command('pause');await m.command('pause');assert.equal(seen.length,3,'saves that do not change the counts announce nothing');
+    const sum=await m.batchSummary(id);assert.deepEqual([key(sum),sum.ops],['0/1/0/1/2',['op-0']],'batchSummary is the canonical view: counts and the operations that have a result');
+    assert.equal(await m.batchSummary('batch-missing'),null);
+    // the retry gives the slot a newer operation: still the batch's, and the failure becomes active, then saved
+    fail=false;const job=(await m.list()).jobs[0];await m.command('retry',job.id);await m.drain();
+    assert.deepEqual(seen.slice(3),['0/0/0/1/3','1/0/0/1/2'],'the retry is announced as active again and then as saved, never as a second success');
+    assert(m.isBatchOp('op-0') && m.isBatchOp('op-retry-1') && !m.isBatchOp('op-unrelated') && !m.isBatchOp(undefined),'an operation that served a slot stays a batch member after the slot got a newer one');
+    // a failed write is not announced
+    const before=seen.length;e.failWrite=()=>true;await assert.rejects(m.settleSlot({id,i:2},'failed'),/STORAGE_FAILED/);e.failWrite=null;assert.equal(seen.length,before,'a rejected write announces nothing');
+    await m.settleSlot({id,i:2},'failed');await m.closeBatch(id);assert.deepEqual(seen.slice(before),['1/1/0/1/1','1/1/0/2/0'],'close ends the never-started slot as skipped, announced once');
+    // a throwing hook never breaks the queue
+    const bad=env({jobs:[],paused:false});bad.d.batchChanged=()=>{throw Error('HOOK');};const bm=createManager(bad.d);await bm.ready;await bm.openBatch('x',2);await bm.enqueue({url:'https://media.test/h',filename:'h.png'});await bm.drain();assert.equal((await bm.list()).jobs[0].state,'complete','a failing hook does not touch a save');
+    // a new manager over the same record: unchanged batches are not announced again; a restart announces only what its reconciliation changed
+    const again=[];const r=createManager({...e.d,batchChanged:b=>again.push(key(b))});await r.ready;assert.deepEqual(again,[],'reopening finished batches announces nothing');
+    const stored={jobs:[],paused:false,batches:[{id:'batch-r1',site:'x',createdAt:1,slots:[{s:'saved',op:'op-a'},{s:'active',op:'op-b'},{s:'pending'}]},{id:'batch-r2',site:'reddit',createdAt:2,slots:[{s:'saved',op:'op-c'},{s:'skipped'}]}]};
+    const restart=[];const rm=createManager({...env(stored).d,batchChanged:b=>restart.push([b.id,key(b)])});await rm.ready;
+    assert.deepEqual(restart,[['batch-r1','1/1/0/1/0']],'a restart announces the batch it changed (the dead preparation failed, the unstarted slot skipped), not the finished one');
+    assert(rm.isBatchOp('op-a') && rm.isBatchOp('op-b') && rm.isBatchOp('op-c'),'restored slot operations are batch members before any reconciliation can replace them');
+  }
+  // Notice snapshots and membership must describe committed batch state even while a write is pending or rejected.
+  {
+    const e=env({jobs:[],paused:true}),m=createManager(e.d);await m.ready;const id=await m.openBatch('x',2);
+    e.failWrite=()=>true;await assert.rejects(m.bindSlot({id,i:0},'op-uncommitted'),/STORAGE_FAILED/);e.failWrite=null;
+    assert.equal(m.batchOf('op-uncommitted'),undefined);
+    assert.equal(m.isBatchOp('op-uncommitted'),false,'a rejected binding cannot suppress an ordinary operation notice');
+    const store=e.d.store.set;let entered,release;const writing=new Promise(r=>entered=r),gate=new Promise(r=>release=r);
+    e.d.store.set=async value=>{entered();await gate;throw Error('STORAGE_FAILED');};
+    const change=m.settleSlot({id,i:0},'failed').catch(e=>e.message);await writing;
+    let readFinished=false;const reading=Promise.resolve(m.batchSummary(id)).then(value=>{readFinished=true;return value;});
+    await wait();const readBeforeCommit=readFinished;release();assert.equal(await change,'STORAGE_FAILED');
+    const summary=await reading;
+    assert.equal(readBeforeCommit,false,'a notification snapshot must wait for the pending write');
+    assert.equal(summary.failed,0,'a rejected result cannot enter a notification');assert.equal(summary.remaining,2);
+    e.d.store.set=store;
+  }
   // 7. Background adapter expectedMime fallback: executes actual background.js adapter for newAttempt AND recoverAttempt (background.js:9411-9419).
   {
     const vm = require('node:vm');

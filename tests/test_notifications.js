@@ -83,10 +83,115 @@ const visibility=value=>{hidden=value;w.document.dispatchEvent(new w.Event('visi
   advance(10000);for(let i=14;i<17;i++)show(n('op-0000'+i));assert.equal(cards().length,1,'A fresh series retires old exit ghosts');
   retired();await new Promise(r=>setImmediate(r));assert.equal(cards().length,1,'Late exit completion cannot remove the new card');
   w.matchMedia=()=>({matches:true});cards()[0].querySelector('.close').click();assert.equal(cards().length,0,'Reduced motion dismisses immediately');
+  // MANAGER-BATCH-NOTICES-01: one card per post batch, named by the worker; ordinary notices keep their own grouped card.
+  {
+    const b=(batch,op,message,over={})=>({...n(op),batch,final:false,title:'x.com post',message,...over});
+    const BA='batch-aaaaaa-01',BB='batch-bbbbbb-02',BC='batch-cccccc-03',BD='batch-dddddd-04';
+    const msg=card=>card.querySelector('.message').textContent;
+    advance(10000);page.focus(); // a new ordinary series: the one before was dismissed
+    // arrival: one card, text, no focus theft, never an alert
+    assert.equal(show(b(BA,'op-100001','Saved 1 of 8 · 7 remaining')).success,true);
+    assert.equal(cards().length,1);const a=cards()[0],aOpen=a.querySelector('.open'),aResult=a.querySelector('[role=status]');
+    assert.equal(a.querySelector('.title').textContent,'x.com post');assert.equal(msg(a),'Saved 1 of 8 · 7 remaining');assert.equal(a.getAttribute('data-closing'),null);
+    assert.equal(w.document.activeElement,page,'A batch card does not take focus');assert(!root().querySelector('[role=alert]'),'A batch card is a polite status, never an alert');
+    // results arriving: coalesced, the same card, the same Open manager button and its focus
+    aOpen.focus();show(b(BA,'op-100002','Saved 2 of 8 · 6 remaining'));show(b(BA,'op-100003','Saved 3 of 8 · 5 remaining'));
+    assert.equal(msg(a),'Saved 1 of 8 · 7 remaining','Burst updates are coalesced');advance(500);
+    assert.equal(cards().length,1);assert.equal(cards()[0],a);assert.equal(msg(a),'Saved 3 of 8 · 5 remaining');assert.equal(a.querySelector('.open'),aOpen);assert.equal(root().activeElement,aOpen,'Updates keep the card, its action and focus');
+    assert.equal(aResult.getAttribute('aria-live'),'off','Counts changing in the middle of a batch are not announced');
+    // an unrelated single save and a second post are separate cards; neither merges into the batch
+    show(n('op-200001'));show(b(BB,'op-100101','Saved 1 of 2 · 1 remaining'));advance(500);
+    const all=cards();assert.equal(all.length,3,'Batch A, the ordinary grouped card and batch B');
+    assert.equal(msg(a),'Saved 3 of 8 · 5 remaining');assert.deepEqual(all.map(msg).sort(),['Result: image .png','Saved 1 of 2 · 1 remaining','Saved 3 of 8 · 5 remaining'].sort());
+    show(n('op-200002','error'));advance(500);assert.equal(cards().length,3,'Another ordinary result joins the ordinary card, not a batch');assert.equal(msg(a),'Saved 3 of 8 · 5 remaining');
+    // an active batch is kept while results keep arriving (30 s idle), then it is dismissed like any card
+    page.focus();advance(29999);assert(cards().includes(a),'An active batch card is kept while work is in progress');
+    // a finished batch: final text, one polite announcement, the usual lifetime (success 6 s, with failures 12 s)
+    show(b(BA,'op-100009','All 8 files saved',{final:true}));assert.equal(aResult.getAttribute('aria-live'),'polite');advance(500);
+    assert.equal(msg(a),'All 8 files saved');assert.equal(cards()[0]===a||cards().includes(a),true);advance(5499);assert(cards().includes(a));advance(1);assert(!cards().includes(a),'A finished all-saved batch card expires after the usual time');
+    // a mixed result stays longer, is an error card and lists what did not save
+    show(b(BB,'op-100102','Saved 1 of 2 · 1 failed',{final:true,kind:'error'}));advance(500);
+    const bb=cards().find(c=>msg(c).startsWith('Saved 1 of 2'));assert(bb.classList.contains('error'));assert.equal(bb.querySelector('.status').textContent,'!');assert.equal(bb.querySelector('[role=status]').getAttribute('role'),'status');
+    advance(11499);assert(cards().includes(bb));advance(1);assert(!cards().includes(bb));
+    // Close mutes that batch on this page; another batch and ordinary notices stay eligible
+    show(b(BC,'op-100201','Saved 1 of 3 · 2 remaining'));show(b(BD,'op-100301','Saved 1 of 4 · 3 remaining'));advance(500);
+    const c=cards().find(x=>msg(x).includes('of 3')),d=cards().find(x=>msg(x).includes('of 4'));
+    c.querySelector('.close').click();assert(!cards().includes(c));
+    show(b(BC,'op-100202','Saved 2 of 3 · 1 remaining'));advance(500);assert(!cards().some(x=>msg(x).includes('of 3')),'A closed batch does not reopen for its later results');
+    show(b(BD,'op-100302','Saved 2 of 4 · 2 remaining'));advance(500);assert.equal(msg(d),'Saved 2 of 4 · 2 remaining','Other batches are still updated');
+    show(n('op-200003'));advance(500);assert(cards().some(x=>msg(x)==='Saved: 1 · Failed: 0'||msg(x).startsWith('Result')||msg(x).startsWith('Saved: ')),'Ordinary notices still appear');
+    // Escape also mutes the batch
+    d.querySelector('.close').focus();d.querySelector('.close').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert(!cards().includes(d));
+    show(b(BD,'op-100303','Saved 3 of 4 · 1 remaining'));advance(500);assert(!cards().some(x=>msg(x).includes('of 4')),'Escape mutes the batch');
+    // expiry or Open manager does not mute; the latest operation is the one named
+    const E='batch-eeeeee-05';openOK=false;sent.length=0;
+    show(b(E,'op-100401','Saved 1 of 2 · 1 remaining'));const e=cards().find(x=>msg(x).includes('of 2'));const eOpen=e.querySelector('.open');
+    show(b(E,'op-100402','Saved 2 of 2 · 0 remaining'));advance(500);eOpen.click();await new Promise(r=>setImmediate(r));
+    assert.equal(sent.at(-1).action,'MEDIALATCH_NOTICE_OPEN');assert.equal(sent.at(-1).id,'op-100402','Open manager names the latest operation of the batch, never the batch id');assert(cards().includes(e),'A refused opening keeps the card');
+    openOK=true;eOpen.click();await new Promise(r=>setImmediate(r));assert(!cards().includes(e),'A successful opening retires the card');
+    show(b(E,'op-100403','All 2 files saved',{final:true}));advance(500);assert(cards().some(x=>msg(x)==='All 2 files saved'),'Opening the manager does not mute the batch');advance(6000);
+    // only the worker's well-formed batch notices are accepted
+    for(const x of cards())x.querySelector('.close').click();
+    for(const bad of [{batch:'BAD ID'},{batch:'a b c d e f'},{batch:'BATCH-UPPER-1'},{batch:'batch'},{batch:'x'.repeat(65)},{batch:123456},{batch:'batch-ffffff-06',final:'yes'},{batch:'batch-ffffff-06',final:undefined}])assert.equal(show({...b(BA,'op-100501','x'),...bad}).success,false,'Malformed batch notice: '+JSON.stringify(bad));
+    assert.equal(show({...b('batch-ffffff-06','op-100501','x'),origin:'https://other.example'}).success,false);assert.equal(show(b('batch-ffffff-06','op-100501','x'),{id:'testid',tab:{id:7}}).success,false);assert.equal(show(b('batch-ffffff-06','op-100501','x'),{id:'foreign'}).success,false);assert.equal(cards().length,0,'Rejected notices never mount a card');
+    // text is text; the theme follows the notice
+    show(b('batch-gggggg-07','op-100601','<img src=x onerror=alert(1)>',{theme:'light'}));assert.equal(root().querySelector('img'),null);assert.equal(root().host.style.getPropertyValue('--ml-bg'),'#ffffff');advance(500);
+    show(b('batch-gggggg-07','op-100602','Saved 2',{theme:'blue'}));advance(500);assert.equal(root().host.style.getPropertyValue('--ml-bg'),'#121b2e','A later update follows the current theme');
+    // A fifth batch must not evict the card the user is reading with keyboard or pointer.
+    for(const x of cards())x.querySelector('.close').click();
+    for(let i=0;i<4;i++)show(b('batch-focus-'+i,'op-80000'+i,'Focus batch '+i));
+    const focusedCard=cards()[0],focusedOpen=focusedCard.querySelector('.open');focusedOpen.focus();
+    show(b('batch-focus-4','op-800004','Focus batch 4'));
+    assert(cards().includes(focusedCard),'a new batch cannot remove the focused card');
+    assert.equal(root().activeElement,focusedOpen,'a new batch cannot move keyboard focus');
+    for(const x of cards())x.querySelector('.close').click();
+    // memory is bounded: at most four batch cards, and the oldest muted batches are forgotten
+    for(const id of ['batch-hhhhhh-08','batch-iiiiii-09','batch-jjjjjj-10','batch-kkkkkk-11','batch-llllll-12'])show(b(id,'op-1007'+id.slice(-2),'Saved 1 of 9'));
+    assert.equal(cards().filter(x=>msg(x)==='Saved 1 of 9').length,4,'At most four batch cards are shown at once');
+    for(const x of cards())x.querySelector('.close').click();advance(500);
+    const muted=[];for(let i=0;i<34;i++){const id='batch-m'+String(i).padStart(5,'0')+'-x';muted.push(id);show(b(id,'op-9'+String(i).padStart(5,'0'),'Saved 1 of 3'));cards().find(x=>msg(x)==='Saved 1 of 3').querySelector('.close').click();}
+    show(b(muted[0],'op-900990','Saved 2 of 3'));advance(500);assert(cards().some(x=>msg(x)==='Saved 2 of 3'),'The oldest muted batch is forgotten once the bounded list is full');
+    for(const x of cards())x.querySelector('.close').click();
+    show(b(muted.at(-1),'op-900991','Saved 3 of 3'));advance(500);assert(!cards().some(x=>msg(x)==='Saved 3 of 3'),'Recent muted batches stay muted');
+    advance(60000);
+  }
   const sb={URL};vm.createContext(sb);vm.runInContext(fs.readFileSync('lib/feedback.js','utf8'),sb);
   const raw={id:'op-000009',createdAt:clock,state:'complete',noticeTarget:{tabId:7,origin:'https://example.com'}};
   assert.deepEqual(JSON.parse(JSON.stringify(sb.ImageSaverFeedback.sanitizeRecord(raw).noticeTarget)),raw.noticeTarget);
   for(const target of [{tabId:-1,origin:'https://example.com'},{tabId:7,origin:'https://example.com/?secret=1'},{tabId:7,origin:'javascript:alert(1)'},{tabId:7,origin:'https://name:pass@example.com'}])assert(!sb.ImageSaverFeedback.sanitizeRecord({...raw,noticeTarget:target}).noticeTarget,'Unsafe route stripped');
   assert(!sb.ImageSaverFeedback.buildReport(raw).includes('noticeTarget'),'Report does not include routing metadata');
-  console.log('PASS grouped notices: trusted routing/text, stable burst card, counts/coalescing/dedup/suppression, opt-out, locale/focus/timers/motion and session-only targets');
+  // With success notices disabled, resolving an error retires its old card without showing a success card.
+  vm.runInContext(fs.readFileSync('lib/feedback_tracker.js','utf8'),sb);
+  const notifier=sb.ImageSaverFeedbackTracker.createNotifier({lang:'en',getPrefs:async()=>({notifySuccess:false}),deliver:async(record,opts)=>show({...opts,id:record.id,origin:'https://example.com',theme:'violet'}).success});
+  const batch={id:'batch-retry-disabled',site:'x',count:2,saved:1,failed:1,cancelled:0,skipped:0,remaining:0};
+  const record={id:'op-810000',state:'complete'};
+  await notifier.batch(batch,record);const oldError=cards().find(x=>x.querySelector('.message').textContent==='1 failed');assert(oldError);oldError.querySelector('.open').focus();
+  await notifier.batch({...batch,failed:0,remaining:1},record);advance(500);
+  assert(!cards().includes(oldError),'a retry that clears the last failure cannot leave its old error visible');
+  await notifier.batch({...batch,saved:2,failed:0},record);advance(500);
+  assert(!cards().some(x=>/All 2|Saved 2/.test(x.querySelector('.message').textContent)),'success opt-out still prevents a new success card');
+  // Retrying the only failed member leaves no terminal slot: update an existing card, but never create an initial progress card.
+  for(const enabled of [true,false]) {
+    for(const card of cards())card.querySelector('.close').click();
+    const notify=sb.ImageSaverFeedbackTracker.createNotifier({lang:'en',getPrefs:async()=>({notifySuccess:enabled}),deliver:async(record,opts)=>show({...opts,id:record.id,origin:'https://example.com',theme:'violet'}).success});
+    const pending={id:'batch-retry-empty-'+enabled,site:'x',count:2,saved:0,failed:0,cancelled:0,skipped:0,remaining:2};
+    const rec={id:'op-820000',state:'failed'};
+    await notify.batch(pending,rec);
+    assert.equal(cards().length,0,'no card before the first terminal result');
+    await notify.batch({...pending,failed:1,remaining:1},rec);
+    const error=cards()[0];error.querySelector('.open').focus();
+    await notify.batch(pending,rec);advance(500);
+    if(enabled)assert.equal(error.querySelector('.message').textContent,'Saved 0 of 2 · 2 remaining','retrying the only failed member clears the old error and updates progress');
+    else assert(!cards().includes(error),'retrying the only failed member retires the error even with zero settled slots');
+  }
+
+  // A page card outlives a service worker: a fresh notifier must still remove its stale error after retry succeeds.
+  for(const card of cards())card.querySelector('.close').click();
+  const freshNotifier=()=>sb.ImageSaverFeedbackTracker.createNotifier({lang:'en',getPrefs:async()=>({notifySuccess:false}),deliver:async(record,opts)=>show({...opts,id:record.id,origin:'https://example.com',theme:'violet'}).success});
+  await freshNotifier().batch(batch,record);
+  const stale=cards()[0];stale.querySelector('.open').focus();
+  await freshNotifier().batch({...batch,saved:2,failed:0},record);
+  assert(!cards().includes(stale),'a fresh worker removes the previous error without creating a success notice');
+
+  console.log('PASS grouped and batch notices: trusted routing/text, stable burst card, counts/coalescing/dedup/suppression, opt-out, locale/focus/timers/motion and session-only targets');
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>dom.window.close());

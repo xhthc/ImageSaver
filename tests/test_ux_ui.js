@@ -525,6 +525,21 @@ function makeChrome(state) {
     await c.command('retry','job-test');assert(calls.some(m=>m.action==='DOWNLOADS_COMMAND' && m.command==='retry' && m.id==='job-test'),'manager-ui-3: retry sends exactly the selected job');
     fail=true;await c.command('pause');assert(c.store.getState().error==='downloads.commandFailed' && !c.store.getState().busy,'manager-ui-4: a refused action is truthful and releases buttons');
     fail=false;listeners[0]({action:'DOWNLOADS_CHANGED'});await settle();
+    // MANAGER-BATCH-PROGRESS-01: batch summaries come from the worker snapshot; an older worker or storage has none
+    {
+      const kept=replies,cb=createDownloads({chrome});
+      const batch={id:'batch-1',site:'x',count:3,saved:1,failed:1,cancelled:0,skipped:0,remaining:1,createdAt:5};
+      replies={success:true,jobs:[{id:'j1',filename:'a.png',state:'complete',received:1,total:1,batch:'batch-1'},{id:'j2',filename:'b.png',state:'failed',received:0,total:null,batch:'batch-1',error:'X'},{id:'j3',filename:'c.png',state:'complete',received:1,total:1}],paused:false,batches:[batch]};
+      await cb.load();
+      assert(cb.store.getState().batches.length===1 && cb.store.getState().batches[0].remaining===1 && cb.store.getState().jobs[0].batch==='batch-1' && cb.store.getState().jobs[2].batch===undefined,'manager-batch-1: the controller keeps the batch summaries and each job\'s batch id');
+      replies={success:true,jobs:[{id:'old',filename:'old.png',state:'complete',received:1,total:1}],paused:false};await cb.load();
+      assert(Array.isArray(cb.store.getState().batches) && cb.store.getState().batches.length===0,'manager-batch-2: an older worker reply without batches loads as none');
+      replies={success:true,jobs:[],paused:false,batches:'junk'};await cb.load();assert(cb.store.getState().batches.length===0,'manager-batch-3: a malformed batch list is ignored');
+      replies={success:true,jobs:[{id:'j1',filename:'a.png',state:'complete',received:1,total:1,batch:'batch-1'}],paused:false,batches:[{...batch,remaining:0,saved:3,failed:0}]};await cb.load();
+      await cb.command('clearFinished');
+      assert(calls.filter(m=>m.action==='DOWNLOADS_COMMAND' && m.command==='remove' && m.id==='j1').length===1 && !calls.some(m=>m.id==='batch-1'),'manager-batch-4: clearing sends the existing per-job remove only, never a batch command');
+      cb.dispose();replies=kept;
+    }
     // UI-COMPLETION-01 follow-up: a load() during an automatic read waits for the queued read it caused, not the old one
     {
       let gates=[];const ov={runtime:{onMessage:{addListener(){},removeListener(){}},sendMessage:async m=>{const g=gates.shift();const r=g?await g:'ok';if(r==='fail')throw Error('DOWN');return {success:true,jobs:[],paused:false};}}};

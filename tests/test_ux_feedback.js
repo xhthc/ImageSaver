@@ -26,8 +26,11 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 // ---------------------------------------------------------------------------------------------------
 // Environment: production background.js + mocked Chrome
 // ---------------------------------------------------------------------------------------------------
-function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications = false, captureManager = false, indexedDB = idbDouble() } = {}) {
+// realManager: the production download manager (IndexedDB double) instead of direct browser downloads. Offscreen staging answers
+// through env.staging; the browser's own downloads stay in env.downloadsDb until a test finishes them (MANAGER-BATCH-PROGRESS-01).
+function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications = false, captureManager = false, realManager = false, indexedDB = idbDouble() } = {}) {
   const env = {
+    uuid: 0,
     downloadCalls: [],
     searchCalls: [],
     notifications: [],
@@ -79,6 +82,7 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
       onMessage: { addListener: (cb) => env.messageListeners.push(cb) },
       getContexts: async () => [],
       sendMessage: async (msg) => {
+        if (msg && typeof msg.action === 'string' && msg.action.startsWith('STAGING_') && env.staging) return env.staging(msg);
         if (msg && (msg.action === 'CONVERT_X_TWEET_VIDEO_TO_GIF' || msg.action === 'CONVERT_REDDIT_VIDEO_TO_GIF')) {
           env.lastConvertMessage = msg;
           if (env.convertGate) await env.convertGate;
@@ -124,7 +128,7 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
           throw new Error('Download failed: NETWORK_FAILED');
         }
         const id = env.nextId++;
-        if (!env.downloadsDb.has(id)) env.downloadsDb.set(id, { id, state: 'in_progress', fileSize: 0, totalBytes: 0, bytesReceived: 0, exists: true });
+        if (!env.downloadsDb.has(id)) env.downloadsDb.set(id, { id, state: 'in_progress', fileSize: 0, totalBytes: 0, bytesReceived: 0, exists: true, byExtensionId: 'testid', url: options.url });
         if (typeof cb === 'function') cb(id);
         return Promise.resolve(id);
       },
@@ -147,7 +151,8 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
   const sandbox = {
     chrome, indexedDB, structuredClone,
     console: { log() {}, warn() {}, error() {} },
-    URL, URLSearchParams, setTimeout, clearTimeout, AbortController,
+    URL, URLSearchParams, setTimeout: realManager ? (fn, ms, ...a) => setTimeout(fn, Math.min(ms, 5), ...a) : setTimeout, clearTimeout, AbortController,
+    ...(realManager ? { crypto: { randomUUID: () => `uuid-${++env.uuid}` } } : {}),
     fetch: async (url) => {
       if (env.fetchImpl) return env.fetchImpl(String(url));
       const u = String(url);
@@ -159,6 +164,7 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
   // This suite isolates feedback/statistics from the separately tested disk acquisition queue.
   sandbox.importScripts = (file) => {
     if(file !== 'lib/download_manager.js') vm.runInContext(read(file), sandbox);
+    else if(realManager) vm.runInContext(read(file), sandbox);
     else if(captureManager) sandbox.MediaLatchDownloads={database:()=>({}),createManager:deps=>{env.managerDeps=deps;return {ready:Promise.resolve(),list:async()=>({jobs:[]})};}};
   };
   vm.createContext(sandbox);
@@ -2403,6 +2409,356 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       await recreated.ready();
       assert((await recreated.list()).length === 0, '28j4: recreated tracker has 0 records');
     }
+  }
+
+  // =================================================================================================
+  console.log('\n--- 29. Post batches: X "Save all" through the production handlers and the production download manager ---');
+  {
+    // Fixtures: the document's answers, offscreen staging, the browser's own downloads and the media pipeline tail (resolution and
+    // verification have their own suites). Everything else is production: the Save all handler, the one-shot sender gate, the item
+    // run into the shared save path, the operation tracker, the durable queue and the DOWNLOADS_LIST snapshot.
+    const idb = idbDouble();
+    const post = (id) => `https://x.com/someone/status/${id}`;
+    const POPUP = { id: 'testid', url: 'chrome-extension://testid/popup/quick.html' };
+    const sleep = (ms = 15) => new Promise((r) => setTimeout(r, ms));
+    async function until(fn, what) { for (let i = 0; i < 800; i++) { if (await fn()) return; await sleep(5); } throw new Error('TEST_TIMEOUT ' + what); }
+    function worker(opts = {}) {
+      const env = makeEnv({ realManager: true, indexedDB: idb, ...opts });
+      env.plan = [];
+      env.gates = new Map();            // url fragment -> promise the pipeline tail waits for before it enqueues
+      env.stagingFails = new Set();     // url fragments whose staging fails
+      env.staging = async (msg) => {
+        if (msg.action === 'STAGING_PREPARE') return [...env.stagingFails].some((f) => msg.job.source.includes(f)) ? { success: false, error: 'INVALID_MEDIA' } : { success: true, size: 2048, mime: 'image/jpeg' };
+        if (msg.action === 'STAGING_URL') return { success: true, url: 'blob:chrome-extension://testid/' + msg.id };
+        return { success: true, valid: true };
+      };
+      const sb = env.sandbox;
+      sb.resolveOriginalMediaPlan = async ({ srcUrl }) => ({ primaryUrl: srcUrl });
+      sb.executeMediaDownload = async ({ targetImageUrl, feedbackOp, pageUrl }) => {
+        env.plan.push(targetImageUrl);
+        for (const [fragment, gate] of env.gates) if (targetImageUrl.includes(fragment)) await gate;
+        try { await sb.managedDownload({ url: targetImageUrl, filename: 'file.jpg', saveAs: false }, feedbackOp, 'image/jpeg', 0, pageUrl); } catch (_) { /* the queue already failed the operation */ }
+      };
+      env.manager = vm.runInContext('downloadManager', sb);
+      env.sender = (tab, id) => ({ id: 'testid', tab: { id: tab, active: true, url: post(id) }, frameId: 0, documentId: 'doc-' + tab, url: post(id) });
+      // the page proves a list of `items` (url or 'STALE'), answers each item by index
+      env.docs = new Map();
+      env.document = (id, items) => env.docs.set(id, items);
+      env.tabsMsgHandler = async (tabId, msg) => {
+        const id = tabId === 7 ? '2090' : '2091', items = env.docs.get(id);
+        if (msg.action === 'X_INLINE_BATCH') return { ok: true, count: items.length, ownerId: id, sig: 'abcdef01' };
+        if (msg.action === 'X_INLINE_OWNER_ITEM') {
+          const it = items[msg.index];
+          if (it === 'STALE') return { ok: false, reason: 'STALE_ITEM' };
+          const url = typeof it === 'string' ? it : it.url;
+          return { ok: true, media: { type: 'image', url, src: url, sourceType: 'image', tweetId: typeof it === 'string' ? id : it.tweet, postUrl: post(id), mediaIndex: msg.index, pageUrl: post(id) } };
+        }
+        return null;
+      };
+      env.saveAll = (tab, id) => { for (const cb of env.messageListeners) cb({ action: 'X_INLINE_SAVE_ALL', token: 'a'.repeat(32) }, env.sender(tab, id), () => {}); };
+      env.snapshot = () => new Promise((resolve) => { for (const cb of env.messageListeners) { if (cb({ action: 'DOWNLOADS_LIST' }, POPUP, resolve) === true) return; } });
+      env.command = (command, id) => new Promise((resolve) => { for (const cb of env.messageListeners) { if (cb({ action: 'DOWNLOADS_COMMAND', command, id }, POPUP, resolve) === true) return; } });
+      return env;
+    }
+    const counts = (b) => [b.saved, b.failed, b.cancelled, b.skipped, b.remaining].join('/');
+    const img = (n) => `https://pbs.twimg.com/media/IMG${n}.jpg`;
+    const finishAll = async (env) => { for (const [id, item] of env.downloadsDb) if (item.state === 'in_progress') await env.finish(id); };
+    const batchOf = (snap, site = 'x') => snap.batches.filter((b) => b.site === site);
+
+    const env = worker();
+    await env.ready(); await env.manager.ready;
+    // A: 6 proven items. 0 held in the pipeline, 1 saved, 2 fails in staging, 3 refused by the document, 4 repeats item 0 (the busy guard) and
+    // 5 repeats its address as another post's item (the in-flight guard discards its operation) while item 0 runs.
+    env.gates.set('IMG0', new Promise((resolve) => { env.openGate = resolve; }));
+    env.stagingFails.add('IMG2');
+    env.document('2090', [img(0), img(1), img(2), 'STALE', img(0), { url: img(0), tweet: '2092' }]);
+    env.saveAll(7, '2090');
+    await until(async () => { const b = batchOf(await env.snapshot())[0]; return b && b.failed === 2 && b.skipped === 2; }, 'items 1..5 settled');
+    let snap = await env.snapshot();
+    let a = snap.batches[0];
+    assert(snap.batches.length === 1 && a.count === 6 && counts(a) === '0/2/0/2/2', `29a: while item 0 is still preparing and item 1 is exporting: 0 saved, 2 failed (staging, refusal), 2 skipped duplicates (busy and discarded), 2 remaining (${counts(a)})`);
+    assert(snap.jobs.filter((j) => j.batch === a.id).length === 4 && snap.jobs.every((j) => j.batch === a.id), '29b: the rows of the batch carry its id: the preparing item, the exporting and the failed job, and the refused operation (the duplicates have no row)');
+    env.openGate();
+    await until(async () => (await env.snapshot()).jobs.filter((j) => j.state === 'exporting').length === 2, 'both exports accepted');
+    snap = await env.snapshot(); a = snap.batches[0];
+    assert(counts(a) === '0/2/0/2/2' && env.downloadCalls.length === 2, `29c: both files are with the browser but unfinished: still 0 saved, 2 remaining (${counts(a)})`);
+    assert(env.plan.filter((u) => u.includes('IMG0')).length === 1, '29d: the repeated item was not requested a second time');
+    // the browser finishes both files; repeated completion events change nothing
+    const [first, second] = [...env.downloadsDb.keys()];
+    await env.finish(first); await env.finish(first); await env.emitDownload({ id: first, state: { current: 'complete', previous: 'in_progress' } });
+    await until(async () => counts((await env.snapshot()).batches[0]).startsWith('1/'), 'first saved');
+    await env.finish(second); await env.finish(second);
+    await until(async () => counts((await env.snapshot()).batches[0]) === '2/2/0/2/0', 'second saved');
+    snap = await env.snapshot(); a = snap.batches[0];
+    assert(counts(a) === '2/2/0/2/0' && a.saved + a.failed + a.cancelled + a.skipped + a.remaining === a.count, `29e: every proven item is counted once; only the two finished files are saved (${counts(a)}); finished is not "all saved"`);
+    assert(!JSON.stringify(snap).includes('twimg') && !JSON.stringify(snap.batches).includes('http'), '29f: no media address in the batch summary');
+    // retry of the failed staging updates its slot: one more saved, failed goes down, never above the count
+    const failedJob = snap.jobs.find((j) => j.batch === a.id && j.state === 'failed' && j.managed !== false);
+    env.stagingFails.clear();
+    assert((await env.command('retry', failedJob.id)).success === true, '29g: retry is accepted through the existing command');
+    await until(async () => (await env.snapshot()).jobs.find((j) => j.id === failedJob.id).state === 'exporting', 'retry exporting');
+    assert(counts((await env.snapshot()).batches[0]) === '2/1/0/2/1', '29h: the retried slot is active again (not failed, not saved)');
+    await env.finish([...env.downloadsDb.keys()].pop());
+    await until(async () => counts((await env.snapshot()).batches[0]) === '3/1/0/2/0', 'retry saved');
+    assert((await env.snapshot()).jobs.filter((j) => j.batch === a.id).length === 4, '29i: a retry is the same row, not a second one');
+
+    // B: a second post at the same time is a separate batch with its own counts
+    env.document('2091', [img(10), img(11)]);
+    env.saveAll(8, '2091');
+    await until(async () => { const s = await env.snapshot(); return s.batches.length === 2 && s.jobs.filter((j) => j.state === 'exporting').length === 2; }, 'second batch exporting');
+    snap = await env.snapshot();
+    const bB = snap.batches.find((b) => b.count === 2), bA = snap.batches.find((b) => b.count === 6);
+    assert(counts(bB) === '0/0/0/0/2' && counts(bA) === '3/1/0/2/0', `29j: two batches stay separate (${counts(bA)} and ${counts(bB)})`);
+    await finishAll(env);
+    await until(async () => counts((await env.snapshot()).batches.find((b) => b.count === 2)) === '2/0/0/0/0', 'B saved');
+
+    // Clearing: each row goes through the existing remove command; the summary disappears with its last row and nothing comes back
+    const rows = (await env.snapshot()).jobs.filter((j) => j.batch === bA.id);
+    for (const j of rows.slice(0, -1)) assert((await env.command('remove', j.id)).success === true, '29k: a finished row is removed');
+    assert((await env.snapshot()).batches.some((b) => b.id === bA.id), '29l: the summary stays while one of its rows is listed');
+    const last = await env.command('remove', rows.at(-1).id);
+    assert(last.success === true && !last.batches.some((b) => b.id === bA.id) && last.batches.some((b) => b.id === bB.id), '29m: the last row removed: the summary is gone, the other batch is untouched');
+    const again = await env.snapshot();
+    assert(!again.batches.some((b) => b.id === bA.id) && !again.jobs.some((j) => j.batch === bA.id), '29n: removed rows and their summary are not resurrected by the next list');
+
+    // Restart: a worker dies with a batch in progress (own queue storage; the dead worker is frozen). The browser's export is reconciled,
+    // the preparations that died are failed, the never-started slot is skipped, and nothing is requested or resumed.
+    const idb2 = idbDouble();
+    const env2 = worker({ indexedDB: idb2 });
+    await env2.ready(); await env2.manager.ready;
+    env2.gates.set('IMG21', new Promise(() => {})); env2.gates.set('IMG22', new Promise(() => {}));   // items 1 and 2 never finish preparing
+    env2.document('2090', [img(20), img(21), img(22), img(23)]);
+    env2.saveAll(7, '2090');
+    await until(async () => { const s = await env2.snapshot(); return s.batches[0] && s.jobs.some((j) => j.state === 'exporting') && s.batches[0].remaining === 4 && env2.plan.length === 3; }, 'batch C in progress');
+    let s0 = await env2.snapshot();
+    assert(counts(s0.batches[0]) === '0/0/0/0/4', `29o: before the restart: three slots preparing or exporting, one never started: 0 saved, 4 remaining (${counts(s0.batches[0])})`);
+    const exporting = [...env2.downloadsDb.entries()].filter(([, item]) => item.state === 'in_progress').map(([id]) => id);
+    env2.chrome.downloads.search = () => new Promise(() => {}); env2.sandbox.setTimeout = () => 0;   // the old worker is gone
+    const restarted = worker({ indexedDB: idb2, session: env2.session, local: env2.local, downloadsDb: env2.downloadsDb });
+    await restarted.ready(); await restarted.manager.ready; await sleep(80);
+    let s2 = await restarted.snapshot();
+    const c = s2.batches[0];
+    assert(counts(c) === '0/2/0/1/1', `29p: after the restart the two dead preparations are failed, the never-started slot is skipped, the browser's export is still active (${counts(c)})`);
+    assert(s2.jobs.some((j) => j.batch === c.id && j.state === 'exporting') && s2.jobs.filter((j) => j.batch === c.id && j.managed === false && j.state === 'failed').length === 2, '29q: the export is reconciled (not repeated) and the two dead preparations are listed as failed rows of the batch');
+    assert(restarted.downloadCalls.length === 0 && restarted.plan.length === 0, '29r: the restart requests, downloads and exports nothing');
+    for (const id of exporting) await restarted.finish(id);
+    await until(async () => (await restarted.snapshot()).batches[0].remaining === 0, 'restart batch settled');
+    s2 = await restarted.snapshot();
+    assert(counts(s2.batches[0]) === '1/2/0/1/0', `29s: the finished export is saved exactly once and every slot is accounted for (${counts(s2.batches[0])})`);
+    const again2 = worker({ indexedDB: idb2, session: restarted.session, local: restarted.local, downloadsDb: restarted.downloadsDb });
+    await again2.ready(); await again2.manager.ready;
+    assert(counts((await again2.snapshot()).batches[0]) === '1/2/0/1/0', '29t: a second restart and reopen keep the same summary');
+
+    // ---- 30. Page notices of a post batch (MANAGER-BATCH-NOTICES-01): the same harness, the notice transport and the content-script payload ----
+    console.log('\n--- 30. One page notice per post batch: canonical counts, event ordering, delivery checks ---');
+    const nworker = (opts = {}) => {
+      const e = worker({ indexedDB: idbDouble(), local: { uiLanguage: 'en', ...(opts.local || {}) }, ...Object.fromEntries(Object.entries(opts).filter(([k]) => k !== 'local')) });
+      e.tabUrls.set(7, post('2090')); e.tabUrls.set(8, post('2091'));
+      const inner = e.tabsMsgHandler;
+      e.single = null;
+      e.tabsMsgHandler = async (tabId, msg) => {
+        if (msg.action === 'X_INLINE_OWNER') return e.single ? { ok: true, media: { type: 'image', url: e.single.url, src: e.single.url, sourceType: 'image', tweetId: e.single.tweet, postUrl: post('2090'), pageUrl: post('2090') } } : null;
+        return inner(tabId, msg);
+      };
+      e.saveOne = (tab, id) => { for (const cb of e.messageListeners) cb({ action: 'X_INLINE_SAVE', token: 'b'.repeat(32) }, e.sender(tab, id), () => {}); };
+      e.open = (id, sender = { id: 'testid', frameId: 0, tab: { id: 7 }, url: post('2090') }) => new Promise((resolve) => { for (const cb of e.messageListeners) { if (cb({ action: 'MEDIALATCH_NOTICE_OPEN', id }, sender, resolve) === true) return; } });
+      e.batchNotes = () => e.notifications.filter((x) => x.opts.batch);
+      return e;
+    };
+    const waitFinal = (e, id, text) => until(() => e.batchNotes().filter((x) => !id || x.opts.batch === id).some((x) => x.opts.final && x.opts.message === text), 'final notice ' + text);
+    // the manager keeps at most two transfers per source host in flight: finish the browser's downloads as they appear
+    const finishLoop = async (e, cond, what) => { for (let i = 0; i < 1200; i++) { for (const [id, item] of e.downloadsDb) if (item.state === 'in_progress') await e.finish(id); if (await cond()) return; await sleep(5); } throw new Error('TEST_TIMEOUT ' + what); };
+    const batchId = async (e) => (await e.snapshot()).batches[0].id;
+    const ALLOWED = ['kind', 'title', 'message', 'actionLabel', 'dismissLabel', 'successEnabled', 'summaryTitle', 'savedLabel', 'failedLabel', 'batch', 'final', 'id', 'origin', 'theme'].sort().join();
+
+    // N1: one batch, mixed outcomes, a refusal before any job, a busy and a discarded duplicate, repeated completion events
+    {
+      const e = nworker();
+      await e.ready(); await e.manager.ready;
+      e.gates.set('IMG0', new Promise((resolve) => { e.openGate = resolve; }));
+      e.stagingFails.add('IMG2');
+      e.document('2090', [img(0), img(1), img(2), 'STALE', img(0), { url: img(0), tweet: '2092' }]);
+      e.saveAll(7, '2090');
+      await until(async () => { const b = (await e.snapshot()).batches[0]; return b && b.failed === 2 && b.skipped === 2; }, 'N1 settled items');
+      const id = await batchId(e);
+      await until(() => e.batchNotes().length > 0, 'first notice');
+      const early = e.batchNotes().at(-1).opts;
+      assert(/^Saved 0 of 6 · .*remaining$/.test(early.message), `30a: the first card appears once an item has a result, with the canonical counts (${early.message})`);
+      assert(early.kind === 'error' && early.final === false && early.batch === id && early.title === 'x.com post', '30b: a failing batch is an error card, not final while items remain, with the batch id of the worker');
+      assert(e.notifications.every((x) => x.opts.batch), '30c: no operation of the batch gets a card of its own: the refusal and the staging failure ended before any count was settled');
+      e.openGate();
+      await until(async () => (await e.snapshot()).jobs.filter((j) => j.state === 'exporting').length === 2, 'N1 exports accepted');
+      const before = e.batchNotes().length;
+      assert(!e.batchNotes().some((x) => /Saved [12] of 6/.test(x.opts.message)), '30d: accepted exports are not saved: no notice counts them');
+      const [first, second] = [...e.downloadsDb.keys()];
+      await e.finish(first); await e.finish(first); await e.emitDownload({ id: first, state: { current: 'complete', previous: 'in_progress' } });
+      await until(() => e.batchNotes().some((x) => /^Saved 1 of 6/.test(x.opts.message)), 'first saved notice');
+      await e.finish(second); await e.finish(second);
+      await waitFinal(e, id, 'Saved 2 of 6 · 2 failed · 2 skipped');
+      const notes = e.batchNotes();
+      assert(new Set(notes.map((x) => x.opts.batch)).size === 1 && notes.length >= 2, `30e: one batch, one card identity (${notes.length} updates, one batch id)`);
+      assert(notes.every((x, i) => i === 0 || x.opts.message !== notes[i - 1].opts.message), '30f: repeated completion events deliver nothing: consecutive updates always differ');
+      const last = notes.at(-1).opts, snap = (await e.snapshot()).batches[0];
+      assert(last.final === true && last.kind === 'error' && last.message === `Saved ${snap.saved} of ${snap.count} · ${snap.failed} failed · ${snap.skipped} skipped`, `30g: the final card equals the manager's canonical counts (${last.message})`);
+      assert(notes.every((x) => Object.keys(x.opts).sort().join() === ALLOWED && x.opts.origin === 'https://x.com' && x.tabId === 7), '30h: only the notice fields, for the original tab and origin');
+      assert(!JSON.stringify(notes).match(/twimg|IMG\d|\.jpg|file\.jpg|someone|status\/2090|Downloads|C:\\|blob:/), '30i: no file name, source address, author, page path or local path in any notice');
+      assert(notes.every((x) => x.opts.successEnabled === true && x.opts.actionLabel === 'Open manager' && x.opts.dismissLabel === 'Dismiss notification'), '30j: the existing Open manager and dismiss labels');
+      // the card's Open manager names a finished operation of this batch; the existing sender, record, tab and origin checks apply
+      const ops = new Set((await e.tracker.list()).filter((r) => FBLib.isTerminal(r.state)).map((r) => r.id));
+      assert(notes.every((x) => ops.has(x.opts.id)), '30k: every card names a finished operation that still has its record');
+      const tabsBefore = e.createdTabs.length;
+      const ok = await e.open(last.id);
+      assert(ok.success === true && e.createdTabs.length === tabsBefore + 1 && e.createdTabs.at(-1).url.endsWith(`?op=${encodeURIComponent(last.id)}#downloads`), '30l: Open manager opens the existing deep link of that operation');
+      assert((await e.open(last.id, { id: 'testid', frameId: 0, tab: { id: 8 }, url: post('2090') })).success === false && (await e.open(last.id, { id: 'testid', frameId: 0, tab: { id: 7 }, url: 'https://evil.example/' })).success === false && (await e.open(last.id, { id: 'other', frameId: 0, tab: { id: 7 }, url: post('2090') })).success === false && (await e.open(snap.id)).success === false && e.createdTabs.length === tabsBefore + 1, '30m: another tab, another origin, another extension and a batch id are refused; there is no batch command');
+      // an unrelated single save from the same page while the batch card exists: its own ordinary notice, no batch field, counts untouched
+      e.single = { url: img(90), tweet: '2093' };
+      const batchNow = e.batchNotes().length;
+      e.saveOne(7, '2090');
+      await until(() => [...e.downloadsDb.keys()].length === 3, 'single export');
+      await e.finish([...e.downloadsDb.keys()].pop());
+      await until(() => e.notifications.some((x) => !x.opts.batch), 'single notice');
+      const single = e.notifications.find((x) => !x.opts.batch);
+      assert(single.opts.kind === 'success' && single.opts.title === 'x.com: saved' && single.opts.batch === undefined && e.batchNotes().length === batchNow && (await e.snapshot()).batches[0].saved === 2, '30n: an unrelated single save gets the ordinary notice and does not change the batch');
+      // retry of the failed staging updates the same card identity with the new canonical counts
+      const failedJob = (await e.snapshot()).jobs.find((j) => j.batch === id && j.state === 'failed' && j.managed !== false);
+      e.stagingFails.clear();
+      await e.command('retry', failedJob.id);
+      await until(async () => (await e.snapshot()).jobs.find((j) => j.id === failedJob.id).state === 'exporting', 'retry exporting');
+      await e.finish([...e.downloadsDb.keys()].pop());
+      await waitFinal(e, id, 'Saved 3 of 6 · 1 failed · 2 skipped');
+      assert(new Set(e.batchNotes().map((x) => x.opts.batch)).size === 1, '30o: the retry updates the same batch card, never a second one');
+    }
+
+    // N2: two posts at the same time are two cards with their own counts; neither counts the other's items
+    {
+      const e = nworker();
+      await e.ready(); await e.manager.ready;
+      e.stagingFails.add('IMGB1');
+      e.document('2090', [img('A0'), img('A1'), img('A2')]); e.document('2091', [img('B0'), img('B1')]);
+      e.saveAll(7, '2090'); e.saveAll(8, '2091');
+      await finishLoop(e, async () => { const s = await e.snapshot(); return s.batches.length === 2 && s.batches.every((b) => b.remaining === 0); }, 'both batches settled');
+      const snap = await e.snapshot(), A = snap.batches.find((b) => b.count === 3), B = snap.batches.find((b) => b.count === 2);
+      await waitFinal(e, A.id, 'All 3 files saved'); await waitFinal(e, B.id, 'Saved 1 of 2 · 1 failed');
+      const own = (b) => e.batchNotes().filter((x) => x.opts.batch === b.id);
+      assert(A.id !== B.id && own(A).every((x) => x.tabId === 7 && /of 3|All 3/.test(x.opts.message)) && own(B).every((x) => x.tabId === 8 && /of 2/.test(x.opts.message)), '30p: two simultaneous posts have separate batch ids, tabs and counts');
+      assert(own(A).at(-1).opts.kind === 'success' && own(B).at(-1).opts.kind === 'error', '30q: all saved is a success card; a failure makes only its own batch an error card');
+    }
+
+    // N3: successful-save notices off: an all-saved batch is silent, a failing batch shows only its failures
+    {
+      const e = nworker({ local: { notifySuccess: false } });
+      await e.ready(); await e.manager.ready;
+      e.document('2090', [img('C0'), img('C1')]);
+      e.saveAll(7, '2090');
+      await finishLoop(e, async () => (await e.snapshot()).batches[0]?.saved === 2, 'quiet batch saved');
+      await sleep(120);
+      assert(e.notifications.every(x=>x.opts.dismissBatch===true), '30r: with success notices off an all-saved batch sends only quiet removals, never a card');
+      const f = nworker({ local: { notifySuccess: false } });
+      await f.ready(); await f.manager.ready;
+      f.stagingFails.add('IMGD1');
+      f.document('2090', [img('D0'), img('D1'), img('D2')]);
+      f.saveAll(7, '2090');
+      await finishLoop(f, async () => (await f.snapshot()).batches[0]?.remaining === 0, 'failing batch settled');
+      await waitFinal(f, null, '1 failed');
+      assert(f.batchNotes().every((x) => x.opts.successEnabled === false && !/Saved|All/.test(x.opts.message) && x.opts.kind === 'error'), '30s: with success notices off the card lists only what failed, as an error card');
+    }
+
+    // N4: the page navigated or closed: nothing is sent to another origin or tab; the batch and the manager are unaffected; the card returns on the next result
+    {
+      const e = nworker();
+      await e.ready(); await e.manager.ready;
+      e.gates.set('IMGE1', new Promise((resolve) => { e.openGate = resolve; }));
+      e.document('2090', [img('E0'), img('E1'), img('E2')]);
+      e.tabUrls.set(7, 'https://other.example/elsewhere');          // the tab navigated away from the post's origin
+      e.saveAll(7, '2090');
+      await finishLoop(e, async () => (await e.snapshot()).batches[0]?.saved === 2, 'navigated batch counts');
+      await sleep(120);
+      assert(e.notifications.length === 0, '30t: after the tab navigated to another origin no notice is sent anywhere');
+      e.closedTab = 7;                                               // the tab was closed
+      e.openGate();
+      await finishLoop(e, async () => (await e.snapshot()).batches[0].saved === 3, 'closed tab batch counts');
+      await sleep(120);
+      assert(e.notifications.length === 0 && (await e.snapshot()).batches[0].remaining === 0, '30u: a closed tab gets nothing and the batch still settles in the manager');
+    }
+    {
+      const e = nworker();
+      await e.ready(); await e.manager.ready;
+      e.gates.set('IMGF2', new Promise((resolve) => { e.openGate = resolve; }));
+      e.document('2090', [img('F0'), img('F1'), img('F2')]);
+      e.saveAll(7, '2090');                                           // no popup read at all: only the worker's own API is used
+      await until(async () => (await e.manager.list()).jobs.filter((j) => j.state === 'exporting').length === 2, 'popup-free batch exporting');
+      await finishLoop(e, async () => e.batchNotes().length > 0, 'notice without a popup');
+      e.openGate();
+      await finishLoop(e, async () => (await e.manager.list()).batches[0].remaining === 0, 'popup-free batch settled');
+      await waitFinal(e, null, 'All 3 files saved');
+      assert(e.batchNotes().length >= 2 && e.notifications.every((x) => x.opts.batch) && !e.messageCalls, '30v: with the popup never opened the notices still follow the worker-owned counts');
+    }
+
+    // N5: a worker restart: the reconciliation of an unfinished batch is one batch notice, never a card per operation
+    {
+      const idb3 = idbDouble();
+      const a = nworker({ indexedDB: idb3 });
+      await a.ready(); await a.manager.ready;
+      a.gates.set('IMGG1', new Promise(() => {}));
+      a.document('2090', [img('G0'), img('G1'), img('G2')]);
+      a.saveAll(7, '2090');
+      await until(async () => { const s = await a.snapshot(); return s.jobs.some((j) => j.state === 'exporting') && a.plan.length === 3; }, 'restart batch in progress');
+      a.chrome.downloads.search = () => new Promise(() => {}); a.sandbox.setTimeout = () => 0;
+      const restarted = nworker({ indexedDB: idb3, session: a.session, local: a.local, downloadsDb: a.downloadsDb });
+      await restarted.ready(); await restarted.manager.ready;
+      await until(() => restarted.batchNotes().length > 0, 'restart notice');
+      await sleep(80);
+      const last = restarted.batchNotes().at(-1).opts;
+      assert(restarted.notifications.every((x) => x.opts.batch) && /failed/.test(last.message) && new Set(restarted.batchNotes().map((x) => x.opts.batch)).size === 1, `30w: the restart reconciliation is one batch notice and no per-operation card (${last.message})`);
+    }
+
+    // N6: event ordering. A refused item's operation fails (and would notify) BEFORE the loop settles its slot: the operation never gets a
+    // card of its own, and the batch card appears only with the canonical counts once the slot is settled.
+    {
+      const e = nworker();
+      await e.ready(); await e.manager.ready;
+      const settle = e.sandbox.batchSettle; let release; const gate = new Promise((resolve) => { release = resolve; });
+      e.sandbox.batchSettle = async (...a) => { await gate; return settle(...a); };
+      e.document('2090', ['STALE', img('H1')]);
+      e.saveAll(7, '2090');
+      await until(async () => (await e.tracker.list()).some((r) => r.state === 'failed'), 'the refused operation failed');
+      await e.tracker.flush(); await sleep(120);
+      assert(e.notifications.length === 0 && (await e.snapshot()).batches[0].failed === 0, '30x: the failed operation produced no card of its own and the unsettled slot is not counted yet');
+      release();
+      await until(() => e.batchNotes().length > 0, 'batch card after the settlement');
+      assert(e.batchNotes().every((x) => /^Saved 0 of 2 · 1 failed/.test(x.opts.message)) && e.notifications.every((x) => x.opts.batch), '30y: after the settlement the batch card shows the failure with the canonical counts');
+      await finishLoop(e, async () => (await e.snapshot()).batches[0].remaining === 0, 'ordering batch settled');
+      await waitFinal(e, null, 'Saved 1 of 2 · 1 failed');
+    }
+  }
+
+  // 31. A manager-polled completion/failure must notify after the feedback record becomes terminal.
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  for (const outcome of ['complete', 'failed']) {
+    const s = {console, setTimeout, clearTimeout, URL, AbortController}; vm.createContext(s);
+    for (const file of ['lib/feedback.js', 'lib/feedback_tracker.js', 'lib/download_manager.js']) vm.runInContext(read(file), s);
+    s.FeedbackLib = s.ImageSaverFeedback;
+    const bg = read('background.js');
+    const a = bg.indexOf('async function feedbackNotifyRecord('), b = bg.indexOf('var feedbackNotifier =');
+    const c = bg.indexOf('async function batchMemberOp('), d = bg.indexOf('async function downloadManagerSnapshot(');
+    if (a < 0 || b < a || c < 0 || d < c) throw Error('Missing production notification helpers');
+    vm.runInContext('var downloadManager=null,feedbackTracker=null,feedbackNotifier=null;' + bg.slice(a,b) + bg.slice(c,d), s);
+    let sequence = 0; const notices = [];
+    s.feedbackNotifier = s.ImageSaverFeedbackTracker.createNotifier({lang:'en',getPrefs:async()=>({notifySuccess:true}),deliver:async(record,opts)=>{notices.push(opts);return true;}});
+    s.feedbackTracker = s.ImageSaverFeedbackTracker.createTracker({storage:{get:async()=>null,set:async()=>{}},genId:()=>'op-order-'+(++sequence),getDownloadItem:async()=>({id:99,state:'in_progress'}),notify:record=>s.feedbackNotifyRecord(record)});
+    await s.feedbackTracker.ready;
+    s.downloadManager = s.MediaLatchDownloads.createManager({
+      store:{get:async()=>({jobs:[],paused:false}),set:async()=>{}},id:()=>'id-order-'+(++sequence),sleep:()=>sleep(1),batchChanged:value=>s.batchNoticeChanged(value),
+      stage:async()=>{if(outcome==='failed')throw Error('NETWORK_FAILED');return {size:8,mime:'image/png'};},fileUrl:async()=>'blob:test',export:async()=>99,
+      search:async()=>({id:99,state:'complete',filename:'polled.png',fileSize:8}),attach:async(job,id)=>s.feedbackTracker.attachDownload(job.op,id),
+      complete:async job=>s.feedbackTracker.downloadTerminal(job.downloadId,'complete'),failed:async job=>s.feedbackTracker.fail(job.op,{stage:'download',code:job.error}),remove:async()=>{}
+    });
+    await s.downloadManager.ready;
+    const batch = await s.downloadManager.openBatch('x',2), op = await s.feedbackTracker.begin({noticeTarget:{tabId:7,origin:'https://x.com'}});
+    await s.downloadManager.bindSlot({id:batch,i:0},op);
+    await s.downloadManager.enqueue({url:'https://media.test/polled',filename:'polled.png'},{op}).catch(()=>{});
+    await s.downloadManager.drain(); await s.feedbackTracker.flush(); await sleep(30);
+    assert(notices.length===1 && notices[0].message.includes(outcome==='complete'?'Saved 1 of 2':'1 failed'), `31 ${outcome}: the first terminal result is delivered once without an onChanged event or another slot change`);
   }
 
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);

@@ -11,7 +11,6 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PENDING_STATES, formatDateTime, formatTime, rowParts, summarize } from "@/core/present.js"
 import { useI18n } from "@/hooks/use-i18n"
 import { cn } from "@/lib/utils"
@@ -41,6 +40,7 @@ export function ResultRow({
   onOpenFull,
   children,
   actions,
+  detailsActions,
   jobId,
 }: {
   record: any
@@ -52,6 +52,7 @@ export function ResultRow({
   onOpenFull?: (record: any) => void
   children?: ReactNode
   actions?: ReactNode
+  detailsActions?: ReactNode
   jobId?: string
 }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -89,10 +90,8 @@ export function ResultRow({
     >
       <Collapsible open={open} onOpenChange={setOpen}>
         <div className="flex items-center gap-1 pr-2">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <CollapsibleTrigger
-              className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl py-3 pl-3 text-left hover:bg-accent/50 focus-visible:-outline-offset-2"
+          <CollapsibleTrigger
+              className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl py-3 pl-3 text-left focus-visible:-outline-offset-2"
               aria-label={`${summary.title}: ${full}`}
             >
               <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted" aria-hidden="true"><StateIcon state={record.state} /></span>
@@ -124,17 +123,15 @@ export function ResultRow({
                 className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none"
                 aria-hidden="true"
               />
-            </CollapsibleTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="start" className="max-w-[320px]">
-            {full}
-          </TooltipContent>
-        </Tooltip>
+          </CollapsibleTrigger>
         {actions}
         </div>
         {children}
         <CollapsibleContent>
-          <div className="px-3 pb-3 sm:pl-14"><ResultDetails record={record} env={env} showPost={showPost} onOpenFull={onOpenFull} /></div>
+          <div className="px-3 pb-3 sm:pl-14">
+            <ResultDetails record={record} env={env} showPost={showPost} onOpenFull={onOpenFull} />
+            {detailsActions ? <div className="flex justify-end pt-2">{detailsActions}</div> : null}
+          </div>
         </CollapsibleContent>
       </Collapsible>
     </li>

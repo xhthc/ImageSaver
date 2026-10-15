@@ -986,6 +986,13 @@ function feedbackStorageArea() {
 }
 
 async function feedbackNotifyRecord(record) {
+  // an operation of a post batch is announced by its batch's one card, never by a card of its own (MANAGER-BATCH-NOTICES-01)
+  if (await batchMemberOp(record && record.id)) {
+    // Manager settlement can precede the feedback terminal event. Retry delivery when that record becomes available.
+    const id = downloadManager.batchOf(record.id);
+    if (id) batchNoticeChanged({id});
+    return false;
+  }
   return feedbackNotifier(record);
 }
 
@@ -1070,6 +1077,8 @@ async function fbBegin(info, tab) {
   try { if (Number.isSafeInteger(tab?.id) && tab.id >= 0) noticeTarget = { tabId: tab.id, origin: new URL(tab.url).origin }; } catch (_) {}
   try { op = feedbackTracker ? await feedbackTracker.begin({ ...info, noticeTarget }) : null; } catch (_) { op = null; }
   dbg('op', 'begin', op ? 'start' : 'failed', op ? undefined : 'NO_RECORD', () => ({ site: info && info.site, pageHost: info && info.pageUrl, srcHost: info && info.sourceUrl }), { op: op || undefined, cid: info && info.cid });
+  // a post batch item names its slot (info.slot, set only by the Save all handlers); the binding is stored before the queue sees the job
+  if (op && info && info.slot) await batchBind(info.slot, op);
   return op;
 }
 async function fbSetPost(op, url) {
@@ -1118,6 +1127,7 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
     store:MediaLatchDownloads.database(indexedDB), id:()=>crypto.randomUUID(), sleep:ms=>new Promise(r=>setTimeout(r,ms)),
     activity:on=>{downloadManagerBusy=on;void restoreOrClearBadge();if(!on)void closeOffscreenDocument().catch(()=>{});},
     changed:()=>{void restoreOrClearBadge();try{chrome.runtime.sendMessage({action:'DOWNLOADS_CHANGED'}).catch(()=>{});}catch(_){}},
+    batchChanged:summary=>batchNoticeChanged(summary),
     stage:async (job,signal)=>{
       await ensureOffscreenDocument();
       if(signal.aborted)throw Error('CANCELLED');
@@ -1157,6 +1167,8 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
     forget:j=>directoryStore?.forget('file:'+j.id),
     newAttempt:async j=>{
       const old=await feedbackTracker?.get(j.op).catch(()=>null);
+      // Keep the previous terminal target before replacing this slot's operation, including after a worker restart.
+      if(j.batch && old?.noticeTarget && FeedbackLib.isTerminal(old.state) && !batchNoticeDelivered.has(j.batch.id))batchNoticeRemember(j.batch.id,{record:old});
       const m = j.mime || j.expectedMime || '';
       return fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
     },
@@ -1184,11 +1196,82 @@ async function managedDownload(options, feedbackOp=null, mime='', maxBytes=0, se
   let selectedOrigin='';try{selectedOrigin=new URL(selectedPage).origin;}catch(_){}
   return downloadManager.enqueue(options,{op:feedbackOp,mime,maxBytes,selectedPage:selectedOrigin,directoryId:saveDirectoryId});
 }
+// Post batches (MANAGER-BATCH-PROGRESS-01; model in lib/download_manager.js). Best effort: a batch that cannot be recorded never stops,
+// delays or changes a save, and batch data never reaches a fetch decision.
+async function batchOpen(site, count) {
+  try { const id = downloadManager ? await downloadManager.openBatch(site, count) : null; return id ? { id } : null; } catch (_) { return null; }
+}
+const batchRef = (batch, i) => (batch ? { id: batch.id, i } : undefined);
+async function batchBind(ref, op) {
+  try { await downloadManager?.bindSlot(ref, op); } catch (_) {}
+}
+// After a slot's item ended: a slot with a job is decided by the job (saved only when the browser or the chosen folder confirmed the
+// file). Otherwise its operation tells: failed/interrupted -> failed, cancelled -> cancelled; no operation, or one that was discarded as
+// a duplicate request (no record left), is `none` (skipped for an item, failed for a refusal). An operation still in progress stays open
+// until its job or a restart settles it.
+async function batchSettle(ref, none = 'skipped') {
+  if (!ref || !downloadManager) return;
+  try {
+    const slot = downloadManager.slotInfo(ref);
+    if (!slot || slot.job || !['pending', 'active'].includes(slot.state)) return;
+    const rec = slot.op ? await feedbackTracker?.get(slot.op) : null;
+    const state = !slot.op || !rec ? none : rec.state === 'complete' ? 'saved' : rec.state === 'cancelled' ? 'cancelled' : rec.state === 'failed' || rec.state === 'interrupted' ? 'failed' : null;
+    if (state) await downloadManager.settleSlot(ref, state);
+  } catch (_) {}
+}
+async function batchClose(batch) {
+  try { if (batch) await downloadManager?.closeBatch(batch.id); } catch (_) {}
+}
+// Page notice of a post batch (MANAGER-BATCH-NOTICES-01): ONE card per batch, whose text is the manager's canonical slot counts. The manager
+// calls batchNoticeChanged after every saved change of a batch's counts (a confirmed save, a failure, a cancellation, a skipped duplicate, a
+// restart reconciliation), so the notice follows the same state as the popup, never a timer, a page URL or a count of its own. Delivery
+// reuses the one-card transport and its checks (the original tab and origin of a record of the batch); nothing is read from the page.
+async function batchMemberOp(op) {
+  try {
+    if (!downloadManager || typeof op !== 'string') return false;
+    await downloadManager.ready;
+    return Boolean(downloadManager.isBatchOp?.(op));
+  } catch (_) { return false; }
+}
+// One delivery at a time per batch: a newer count is read when the running one ends, so a card never goes back to an older count.
+const batchNoticeRuns = new Map();
+// Last delivered count/target also lets retry progress retire an error when no slot currently has a terminal operation.
+const batchNoticeDelivered = new Map();
+function batchNoticeRemember(id, value) {
+  batchNoticeDelivered.set(id, value);
+  if (batchNoticeDelivered.size > 100) batchNoticeDelivered.delete(batchNoticeDelivered.keys().next().value);
+}
+function batchNoticeChanged(summary) {
+  if (!summary || typeof summary.id !== 'string') return;
+  const run = batchNoticeRuns.get(summary.id);
+  if (run) { run.again = true; return; }
+  const state = { again: false };
+  batchNoticeRuns.set(summary.id, state);
+  (async () => {
+    try { do { state.again = false; await batchNoticeDeliver(summary.id); } while (state.again); }
+    catch (_) { /* a notice is best effort: the manager and the badge keep the result */ }
+    finally { batchNoticeRuns.delete(summary.id); }
+  })();
+}
+async function batchNoticeDeliver(id) {
+  const batch = await downloadManager?.batchSummary(id);
+  if (!batch || !feedbackTracker || typeof feedbackNotifier.batch !== 'function') return;
+  const previous = batchNoticeDelivered.get(id);
+  const key = [batch.saved, batch.failed, batch.cancelled, batch.skipped, batch.remaining].join('/');
+  if (previous?.key === key) return;
+  const ops = new Set(batch.ops);
+  // The newest finished member supplies the original tab/origin; a retry can retain the last delivered target.
+  const record = (await feedbackTracker.list()).filter((r) => ops.has(r.id) && FeedbackLib.isTerminal(r.state) && r.noticeTarget).sort((a, b) => b.updatedAt - a.updatedAt)[0] || previous?.record;
+  if (record && await feedbackNotifier.batch(batch, record)) {
+    batchNoticeRemember(id, {key, record});
+  }
+}
 async function downloadManagerSnapshot() {
   const snapshot=await downloadManager.list();
   const owned=new Set(snapshot.jobs.map(j=>j.op));
   const preparations=(await feedbackTracker.list()).filter(r=>!owned.has(r.id) && ['resolving','converting','failed','interrupted'].includes(r.state));
-  for(const r of preparations)snapshot.jobs.push({id:r.id,op:r.id,managed:false,filename:r.filename || '',state:r.state==='interrupted'?'failed':r.state,received:0,total:null,speed:0,error:r.failure?.code || '',createdAt:r.createdAt});
+  for(const r of preparations){const batch=downloadManager.batchOf?.(r.id);snapshot.jobs.push({id:r.id,op:r.id,managed:false,filename:r.filename || '',state:r.state==='interrupted'?'failed':r.state,received:0,total:null,speed:0,error:r.failure?.code || '',createdAt:r.createdAt,...(batch?{batch}:{})});}
+  if(downloadManager.pruneBatches)snapshot.batches=await downloadManager.pruneBatches(new Set(preparations.map(r=>r.id)));
   snapshot.jobs.sort((a,b)=>b.createdAt-a.createdAt);return snapshot;
 }
 if(chrome.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListener((m,sender,respond)=>{
@@ -1627,7 +1710,7 @@ async function onContextMenuClicked(info, tab) {
       console.warn(owner === 'preview'
         ? '[MediaLatch] The selected video is a seek preview, not the media of the post: save refused without requests'
         : '[MediaLatch] Владелец выбранной цели удалён, заменён или изменён после жеста — сохранение отклонено без запросов');
-      const staleOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, ''), cid: info.dbgCid }, tab);
+      const staleOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, ''), cid: info.dbgCid, slot: info.batchSlot }, tab);
       await fbFail(staleOp, { stage: 'resolve', code: 'NO_MEDIA' });
       await fbBadgeReporter(staleOp)('ERR', '#ef4444');
       return;
@@ -1725,7 +1808,7 @@ async function onContextMenuClicked(info, tab) {
       // link (the only way the image entry is reached without media) is refused visibly, not silently.
       if (info.menuItemId === CSS_MEDIA_MENU_ID || info.menuItemId === 'save-image-item' || rawLinkUrl) {
         dbg('menu', 'click', 'refused', 'NO_MEDIA_ASSOCIATION', null, { cid: info.dbgCid, tab: tab && tab.id });
-        const noMediaOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, ''), cid: info.dbgCid }, tab);
+        const noMediaOp = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: '', site: fbSiteOf(info.pageUrl || tab?.url, ''), cid: info.dbgCid, slot: info.batchSlot }, tab);
         await fbFail(noMediaOp, { stage: 'resolve', code: 'NO_MEDIA' });
         await fbBadgeReporter(noMediaOp)('ERR', '#ef4444');
       }
@@ -1745,7 +1828,7 @@ async function onContextMenuClicked(info, tab) {
     inFlightRequests.add(dedupeKey);
     activeResolvingCount++;
 
-    const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: rawImageUrl || rawLinkUrl, site: fbSiteOf(info.pageUrl || tab?.url, rawImageUrl || rawLinkUrl), cid: info.dbgCid }, tab);
+    const op = await fbBegin({ pageUrl: info.pageUrl || tab?.url || '', sourceUrl: rawImageUrl || rawLinkUrl, site: fbSiteOf(info.pageUrl || tab?.url, rawImageUrl || rawLinkUrl), cid: info.dbgCid, slot: info.batchSlot }, tab);
     const flashBadge = fbBadgeReporter(op);
 
     // Declared before the try so the catch block below can read it (it was try-scoped, which made the
@@ -2060,7 +2143,7 @@ async function onContextMenuClicked(info, tab) {
       return;
     }
 
-    const op = await fbBegin({ pageUrl: tab.url || info.pageUrl || '', sourceUrl: '', site: fbSiteOf(tab.url || info.pageUrl, ''), cid: info.dbgCid }, tab);
+    const op = await fbBegin({ pageUrl: tab.url || info.pageUrl || '', sourceUrl: '', site: fbSiteOf(tab.url || info.pageUrl, ''), cid: info.dbgCid, slot: info.batchSlot }, tab);
     const flashBadge = fbBadgeReporter(op);
 
     try {
@@ -2417,20 +2500,21 @@ async function xInlineAsk(tab, sender, payload) {
 }
 
 // A refused owner is visible: a failed operation and an ERR badge, never silence and never a request.
-async function xInlineRefuse(sender, cid) {
-  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid }, sender.tab);
+async function xInlineRefuse(sender, cid, slot) {
+  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid, slot }, sender.tab);
   await fbFail(op, { stage: 'resolve', code: 'NO_MEDIA' });
   await fbBadgeReporter(op)('ERR', '#ef4444');
+  await batchSettle(slot, 'failed');
 }
 
 // One proven descriptor through the shared save-x-media-item pipeline, unless the same item is already running.
-async function xInlineRun(tab, sender, media, cid) {
+async function xInlineRun(tab, sender, media, cid, slot) {
   const key = `${tab.id}:${sender.frameId}:${media.recoveredMp4Url || media.url || media.poster || ''}|${media.tweetId || ''}`;
   if (xInlineBusy.has(key)) { dbg('x.inline', 'run', 'skipped', 'BUSY', null, { cid, tab: tab.id, frame: sender.frameId }); return false; }
   xInlineBusy.add(key);
   try {
     dbg('x.inline', 'run', 'start', undefined, () => ({ type: media.type, blob: media.isBlobPlayer, hls: media.isHlsOnly, isQuote: media.isQuoteTweet, postId: media.tweetId || undefined, mediaId: media.mediaIdHint || undefined, index: media.mediaIndex }), { cid, tab: tab.id, frame: sender.frameId });
-    const info = { menuItemId: 'save-x-media-item', pageUrl: sender.url, frameId: sender.frameId, xInlineMedia: media, dbgCid: cid };
+    const info = { menuItemId: 'save-x-media-item', pageUrl: sender.url, frameId: sender.frameId, xInlineMedia: media, dbgCid: cid, batchSlot: slot };
     xInlineInfos.add(info);
     await onContextMenuClicked(info, tab);
     return true;
@@ -2476,12 +2560,14 @@ async function handleXInlineSaveAll(message, sender) {
   if (xInlineBusy.has(batchKey)) { dbg('x.inline', 'batch', 'skipped', 'BUSY', null, { cid, tab: tab.id }); return; }
   xInlineBusy.add(batchKey);
   const tally = { started: 0, refused: 0, duplicate: 0 };
+  let batch = null; // the progress record of this list (one slot per proven item); null when it cannot be recorded
   let next = 0;
   let lost = false;
   const worker = async () => {
     while (!lost) {
       const index = next++;
       if (index >= count) return;
+      const slot = batchRef(batch, index);
       const answer = await xInlineAsk(tab, sender, { action: 'X_INLINE_OWNER_ITEM', token: message.token, index });
       const media = answer && answer.ok === true ? sanitizeXInlineMedia(answer.media) : null;
       if (!media) {
@@ -2489,22 +2575,25 @@ async function handleXInlineSaveAll(message, sender) {
         // an item that changed on its own is skipped; an owner that is gone, replaced, navigated or unknown ends the batch
         if (!answer || answer.ok !== false || answer.reason !== 'STALE_ITEM') lost = true;
         dbg('x.inline', 'item', 'refused', (answer && answer.ok === false ? (dbgCode(answer.reason) || 'REFUSED') : (answer ? 'INVALID_DESCRIPTOR' : 'NO_ANSWER')), { index, batch: !lost }, { cid, tab: tab.id });
-        await xInlineRefuse(sender, cid);
+        await xInlineRefuse(sender, cid, slot);
         continue;
       }
-      if (await xInlineRun(tab, sender, media, cid)) tally.started++;
+      if (await xInlineRun(tab, sender, media, cid, slot)) tally.started++;
       else tally.duplicate++;
+      await batchSettle(slot);
     }
   };
   try {
+    batch = await batchOpen('x', count);
     await Promise.all(Array.from({ length: Math.min(X_INLINE_BATCH_CONCURRENCY, count) }, worker));
     for (let i = Math.min(next, count); i < count; i++) {
       tally.refused++;
-      await xInlineRefuse(sender, cid);
+      await xInlineRefuse(sender, cid, batchRef(batch, i));
     }
     console.info('[MediaLatch] Inline X Save all:', { items: count, ...tally });
     dbg('x.inline', 'batch', 'ok', undefined, { items: count, started: tally.started, refused: tally.refused, duplicate: tally.duplicate }, { cid, tab: tab.id });
   } finally {
+    await batchClose(batch);
     xInlineBusy.delete(batchKey);
   }
 }
@@ -2666,14 +2755,15 @@ function redditInlineSenderOk(message, sender) {
 }
 
 // A refused owner or item is visible: a failed operation and an ERR badge, never silence and never a request.
-async function redditInlineRefuse(sender, code = 'NO_MEDIA', cid) {
-  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid }, sender.tab);
+async function redditInlineRefuse(sender, code = 'NO_MEDIA', cid, slot) {
+  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid, slot }, sender.tab);
   await fbFail(op, { stage: 'resolve', code });
   await fbBadgeReporter(op)('ERR', '#ef4444');
+  await batchSettle(slot, 'failed');
 }
 
 // One proven descriptor through the shared save-image-item pipeline, unless the same asset is already running.
-async function redditInlineRun(tab, sender, media, cid) {
+async function redditInlineRun(tab, sender, media, cid, slot) {
   const embed = media.redgifsEmbedClip || '';
   const key = `${tab.id}:${sender.frameId}:${embed ? `${media.ownerId}:` : ''}${media.url}`;
   if (redditInlineBusy.has(key)) { dbg('reddit.inline', 'run', 'skipped', 'BUSY', null, { cid, tab: tab.id }); return false; }
@@ -2681,14 +2771,14 @@ async function redditInlineRun(tab, sender, media, cid) {
   try {
     dbg('reddit.inline', 'run', 'start', undefined, () => ({ kind: media.kind, host: media.url, ownerId: media.ownerId, clipId: embed || undefined, hls: media.redditHls, blob: media.blobPlayer, index: media.index }), { cid, tab: tab.id, frame: sender.frameId });
     // `kind` is only the menu's mediaType hint: the shared pipeline recognises an animation (.gif with format=mp4), a direct video and a native .gif from the address itself
-    const info = { menuItemId: 'save-image-item', srcUrl: media.url, pageUrl: sender.url, frameId: sender.frameId, mediaType: media.kind, redditInlineMedia: media, dbgCid: cid };
+    const info = { menuItemId: 'save-image-item', srcUrl: media.url, pageUrl: sender.url, frameId: sender.frameId, mediaType: media.kind, redditInlineMedia: media, dbgCid: cid, batchSlot: slot };
     if (embed) {
       // RD-10: the click runs in the frame of the proven clip, pinned to the document found now, through the same resolver as the context menu
       const frame = await redditInlineFindRedGifsFrame(tab.id, sender, embed);
       dbg('reddit.inline', 'frame', frame ? 'ok' : 'refused', frame ? undefined : 'NO_SINGLE_EMBED_FRAME', () => ({ clipId: embed, frame: frame ? frame.frameId : undefined }), { cid, tab: tab.id });
       if (!frame) {
         console.warn('[MediaLatch] Inline Reddit Save refused: no single frame shows the embedded RedGIFs clip');
-        await redditInlineRefuse(sender, 'UNRESOLVED_BLOB_MEDIA', cid);
+        await redditInlineRefuse(sender, 'UNRESOLVED_BLOB_MEDIA', cid, slot);
         return false;
       }
       info.frameId = frame.frameId;
@@ -2741,12 +2831,14 @@ async function handleRedditInlineSaveAll(message, sender) {
   redditInlineBusy.add(batchKey);
   const tally = { started: 0, refused: 0, duplicate: 0 };
   const seen = new Set();
+  let batch = null; // the progress record of this list (one slot per proven item); null when it cannot be recorded
   let next = 0;
   let lost = false;
   const worker = async () => {
     while (!lost) {
       const index = next++;
       if (index >= count) return;
+      const slot = batchRef(batch, index);
       const answer = await xInlineAsk(tab, sender, { action: 'REDDIT_INLINE_OWNER_ITEM', token: message.token, index });
       const media = answer && answer.ok === true ? sanitizeRedditInlineMedia(answer.media, { ownerId, count, index, sig }) : null;
       if (!media) {
@@ -2757,24 +2849,27 @@ async function handleRedditInlineSaveAll(message, sender) {
         if (!itemLevel) lost = true;
         console.warn('[MediaLatch] Inline Reddit Save all item refused:', index, redditInlineWhy(answer));
         dbg('reddit.inline', 'item', 'refused', dbgCode(redditInlineWhy(answer)), { index, batch: !lost }, { cid, tab: tab.id });
-        await redditInlineRefuse(sender, redditInlineRefusalCode(answer), cid);
+        await redditInlineRefuse(sender, redditInlineRefusalCode(answer), cid, slot);
         continue;
       }
-      if (seen.has(media.url)) { tally.duplicate++; dbg('reddit.inline', 'item', 'skipped', 'DUPLICATE_ASSET', { index }, { cid, tab: tab.id }); continue; }
+      if (seen.has(media.url)) { tally.duplicate++; dbg('reddit.inline', 'item', 'skipped', 'DUPLICATE_ASSET', { index }, { cid, tab: tab.id }); await batchSettle(slot); continue; }
       seen.add(media.url);
-      if (await redditInlineRun(tab, sender, media, cid)) tally.started++;
+      if (await redditInlineRun(tab, sender, media, cid, slot)) tally.started++;
       else tally.duplicate++;
+      await batchSettle(slot);
     }
   };
   try {
+    batch = await batchOpen('reddit', count);
     await Promise.all(Array.from({ length: Math.min(REDDIT_INLINE_BATCH_CONCURRENCY, count) }, worker));
     for (let i = Math.min(next, count); i < count; i++) {
       tally.refused++;
-      await redditInlineRefuse(sender, undefined, cid);
+      await redditInlineRefuse(sender, undefined, cid, batchRef(batch, i));
     }
     console.info('[MediaLatch] Inline Reddit Save all:', { items: count, ...tally });
     dbg('reddit.inline', 'batch', 'ok', undefined, { items: count, started: tally.started, refused: tally.refused, duplicate: tally.duplicate }, { cid, tab: tab.id });
   } finally {
+    await batchClose(batch);
     redditInlineBusy.delete(batchKey);
   }
 }

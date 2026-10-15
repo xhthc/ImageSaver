@@ -2,7 +2,7 @@
 import { createStore } from './store.js';
 /** @param {{chrome: import('../../../lib/download_contracts').DownloadsChrome}} dependencies */
 export function createDownloads({ chrome }) {
-    const store = createStore(/** @type {import('../../../lib/download_contracts').DownloadsViewState} */ ({ jobs: [], paused: false, status: 'loading', error: '', busy: false, removingIds: [], dismissedIds: [] }));
+    const store = createStore(/** @type {import('../../../lib/download_contracts').DownloadsViewState} */ ({ jobs: [], batches: [], paused: false, status: 'loading', error: '', busy: false, removingIds: [], dismissedIds: [] }));
     let disposed = false;
     /** @type {Promise<void> | null} */
     let current = null;
@@ -36,7 +36,7 @@ export function createDownloads({ chrome }) {
                 if (!r.jobs.some(j => j.id === id))
                     removed.delete(id);
             if (!disposed)
-                store.setState({ jobs: r.jobs.filter(j => !removed.has(j.id) && !store.getState().removingIds.includes(j.id)), paused: r.paused, status: 'ready', error: store.getState().error === 'downloads.unavailable' ? '' : store.getState().error });
+                store.setState({ jobs: r.jobs.filter(j => !removed.has(j.id) && !store.getState().removingIds.includes(j.id)), paused: r.paused, batches: Array.isArray(r.batches) ? r.batches : [], status: 'ready', error: store.getState().error === 'downloads.unavailable' ? '' : store.getState().error });
         }
         catch (_) {
             if (!disposed)

@@ -72,7 +72,7 @@ function makeChrome(state) {
         if (state.failMessages) throw new Error('MESSAGING_DOWN');
         if(msg.action === 'DOWNLOADS_LIST' || msg.action === 'DOWNLOADS_COMMAND') {
           if(msg.command==='remove'){if(state.failRemoval)return {success:false};const op=state.jobs?.find(j=>j.id===msg.id)?.op || msg.id;if(state.jobs)state.jobs=state.jobs.filter(j=>j.id!==msg.id);state.session=state.session.filter(r=>r.id!==op);}
-          return {success:true,jobs:state.jobs || state.session.map(r=>({id:r.id,op:r.id,managed:false,filename:r.filename || 'media',state:r.state==='saving'?'receiving':r.state==='interrupted'?'failed':r.state,received:1024,total:r.state==='saving'?null:2048,speed:0,error:'',ready:false})).reverse(),paused:false};
+          return {success:true,jobs:state.jobs || state.session.map(r=>({id:r.id,op:r.id,managed:false,filename:r.filename || 'media',state:r.state==='saving'?'receiving':r.state==='interrupted'?'failed':r.state,received:1024,total:r.state==='saving'?null:2048,speed:0,error:'',ready:false})).reverse(),paused:false,...(state.batches?{batches:state.batches}:{})};
         }
         if (msg.action === 'FEEDBACK_LIST') {
           const snapshot = state.session.slice().reverse();
@@ -247,7 +247,12 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
       const state={session:[],history:[],jobs,local:{uiLanguage:lang,saveDirectoryId:'directory-saved'}};
       const p=await page(kind,state,{hash:'#downloads'});
       assert(p.qa('[data-job]').length===2 && !p.q('button[aria-label="Show file location"]') && !p.q('button[aria-label="Показать расположение файла"]'),'location-rollback: existing completed browser/directory cards remain without folder actions in '+kind+' '+lang);
-      assert(p.qa('[data-job] button').length===(kind==='quick'?0:2),'popup-bulk-clear: completed cards have no per-file trash in popup; full manager retains it in '+lang);
+      assert(p.qa('[data-job] button').length===(kind==='quick'?0:2),'manager-disclosure: completed cards have no trash while collapsed; full manager offers details in '+lang);
+      assert(!p.q('[data-job] svg.lucide-trash-2'),'manager-disclosure: no trash in a collapsed row in '+kind+' '+lang);
+      if(kind==='full'){
+        await p.click(p.q('[data-job] [data-slot="collapsible-trigger"]'));
+        assert(p.qa('[data-job] svg.lucide-trash-2').length===1 && p.q('[data-job] [data-slot="collapsible-content"] svg.lucide-trash-2'),'manager-disclosure: only the expanded row offers removal in '+lang);
+      }
       await p.unmount();
       if(kind==='full'){
         const saving=await page(kind,state,{hash:'#saving'});
@@ -262,6 +267,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
       const failed=unnamedFailure(), state={session:[failed],history:[],local:{uiLanguage:lang,uiTheme:theme},failRemoval:true};
       const p=await page(kind,state,{hash:'#downloads'});
       const label=kind==='quick'?(lang==='ru'?'Очистить завершённые записи (файлы и статистика останутся)':'Clear finished records (files and statistics stay)'):(lang==='ru'?'Удалить запись':'Remove record');
+      if(kind==='full')await p.click(p.q('[data-job] [data-slot="collapsible-trigger"]'));
       const remove=p.q('button[aria-label="'+label+'"]');
       assert(remove,'unmanaged-dismiss: supported removal is labelled in '+kind+' '+lang+' '+theme);
       if(kind==='quick')assert(!p.q('[data-job] button'),'popup-bulk-clear: failed feedback-only cards have no individual trash');
@@ -298,8 +304,11 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const card=p.q('[data-job="job-one"]');
     assert(card.textContent.includes('2.0 KB / 2.0 KB') && card.querySelector('[data-slot="name"]').textContent===saved.filename,'manager-unified-2: byte progress and result summary share one card');
     assert(!card.querySelector('button button'),'manager-unified-3: action buttons are siblings of the details trigger');
+    assert(!card.querySelector('svg.lucide-trash-2') && !card.querySelector('[data-slot="collapsible-trigger"]').className.includes('hover:bg'),'manager-row-hover: collapsed header has no trash or broad hover background');
+    assert(!card.querySelector('[data-slot="tooltip-trigger"]'),'manager-row-hover: no duplicate filename tooltip');
     await p.click(card.querySelector('button[aria-expanded]'));
     assert(card.querySelector('[data-slot="result-details"]') && card.querySelector('[data-slot="filename-line"]'),'manager-unified-4: expanding the download retains complete result details');
+    assert(card.querySelector('[data-slot="collapsible-content"] svg.lucide-trash-2') && !card.querySelector('[data-slot="collapsible-trigger"] svg.lucide-trash-2'),'manager-row-remove: trash is inside expanded details and outside the trigger');
     await p.click(p.q('[data-job="job-failed"] button[aria-expanded]'));
     assert(p.q('[data-job="job-failed"] [data-slot="report"]'),'manager-unified-5: failed download retains the copyable report');
     await p.click(card.querySelector('button[aria-label="Удалить запись и временный файл"]'));
@@ -1304,6 +1313,68 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(state.local.igShareHost === 'kkclip.com' && state.local.xShareHost === 'fixupx.com' && state.local.ttShareHost === 'tnktok.com' && state.local.youtubeShareHost === 'koutube.com', `R26e ${lang}: explicit Save persists kkclip without changing other defaults`);
     await p.unmount(); const again = await page('full', state, { hash: '#embed' });
     assert(again.q('#igShareHostSelect').textContent === 'kkclip.com', `R26f ${lang}: reopened settings show the saved kkclip choice`); await again.unmount();
+  }
+
+  // MANAGER-BATCH-PROGRESS-01: one compact summary per post batch in the shared download panel, rows keep their own actions.
+  {
+    const T = {
+      en: { title: 'x.com post', saved: (s, c) => `Saved ${s} of ${c}`, all: (c) => `All ${c} files saved`, failed: (n) => `${n} failed`, remaining: (n) => `${n} in progress`, skipped: (n) => `${n} skipped`, cancelled: (n) => `${n} cancelled`, retry: 'Retry download', cancel: 'Cancel download' },
+      ru: { title: 'Пост x.com', saved: (s, c) => `Сохранено ${s} из ${c}`, all: (c) => `Все файлы сохранены (${c})`, failed: (n) => `ошибок: ${n}`, remaining: (n) => `в работе: ${n}`, skipped: (n) => `пропущено: ${n}`, cancelled: (n) => `отменено: ${n}`, retry: 'Повторить загрузку', cancel: 'Отменить загрузку' }
+    };
+    const job = (id, state, over = {}) => ({ id, filename: id + '.png', state, received: state === 'complete' ? 2048 : 1024, total: state === 'receiving' ? 4096 : 2048, speed: state === 'receiving' ? 512 : 0, error: state === 'failed' ? 'NETWORK_FAILED' : '', ...over });
+    const batch = (over = {}) => ({ id: 'batch-1', site: 'x', count: 4, saved: 2, failed: 1, cancelled: 0, skipped: 0, remaining: 1, createdAt: 5, ...over });
+    for (const lang of ['en', 'ru']) for (const kind of ['quick', 'full']) {
+      const t = T[lang];
+      const mk = (state) => page(kind, { session: [], history: [], local: { uiLanguage: lang }, ...state }, kind === 'full' ? { hash: '#downloads' } : {});
+      // mixed, still running: counts, member rows after the summary, an unrelated row elsewhere, row actions intact
+      {
+        const p = await mk({ jobs: [job('single', 'complete'), job('m1', 'complete', { batch: 'batch-1' }), job('m2', 'failed', { batch: 'batch-1' }), job('m3', 'receiving', { batch: 'batch-1' })], batches: [batch()] });
+        const summaries = p.qa('[data-slot="batch-summary"]');
+        assert(summaries.length === 1 && summaries[0].textContent.replace(/\s+/g, ' ').trim() === `${t.title} · ${t.saved(2, 4)} · ${t.failed(1)} · ${t.remaining(1)}`, `R27a ${kind}/${lang}: one localized summary with distinct saved / failed / in-progress counts (${summaries[0] && summaries[0].textContent})`);
+        const order = p.qa('[data-slot="download-jobs"] > li').map((li) => li.getAttribute('data-batch') ? 'S' : li.getAttribute('data-job'));
+        assert(order.join(',') === 'single,S,m1,m2,m3' || order.join(',') === 'S,m1,m2,m3,single', `R27b ${kind}/${lang}: the summary heads its own rows and the unrelated row stays outside (${order.join(',')})`);
+        assert(p.qa('[data-job]').length === 4 && p.q('[data-job="m2"] button[aria-label="' + t.retry + '"]') && p.q('[data-job="m3"] button[aria-label="' + t.cancel + '"]') && p.q('progress[value="1024"]'), `R27c ${kind}/${lang}: individual rows keep their progress and Cancel / Retry`);
+        assert(!/\/s|%|MB|KB|[0-9] s\b/.test(summaries[0].textContent) && summaries[0].querySelector('[role="status"]') && !summaries[0].querySelector('progress, button, a'), `R27d ${kind}/${lang}: the summary has no byte, speed, percentage or ETA and no control`);
+        await p.unmount();
+      }
+      // finished: all saved is only said when every file is saved; a mixed result is a count, not "complete"
+      {
+        const all = await mk({ jobs: [job('a', 'complete', { batch: 'batch-1' }), job('b', 'complete', { batch: 'batch-1' }), job('c', 'complete', { batch: 'batch-1' })], batches: [batch({ count: 3, saved: 3, failed: 0, remaining: 0 })] });
+        assert(all.q('[data-slot="batch-summary"]').textContent.replace(/\s+/g, ' ').trim() === `${t.title} · ${t.all(3)}`, `R27e ${kind}/${lang}: every file saved`);
+        await all.unmount();
+        const mixed = await mk({ jobs: [job('a', 'complete', { batch: 'batch-1' }), job('b', 'failed', { batch: 'batch-1' }), job('c', 'cancelled', { batch: 'batch-1', error: 'CANCELLED' })], batches: [batch({ count: 5, saved: 1, failed: 2, cancelled: 1, skipped: 1, remaining: 0 })] });
+        const text = mixed.q('[data-slot="batch-summary"]').textContent.replace(/\s+/g, ' ').trim();
+        assert(text === `${t.title} · ${t.saved(1, 5)} · ${t.failed(2)} · ${t.cancelled(1)} · ${t.skipped(1)}` && !text.includes(t.all(5)), `R27f ${kind}/${lang}: finished with failures says what was saved, never "all saved" (${text})`);
+        await mixed.unmount();
+      }
+      // no summary without a batch (older worker), without a member row once finished (no orphan), but one while a slot is unfinished
+      {
+        const none = await mk({ jobs: [job('a', 'complete')] });
+        assert(!none.q('[data-slot="batch-summary"]') && none.qa('[data-job]').length === 1, `R27g ${kind}/${lang}: a reply without batches shows rows only`);
+        await none.unmount();
+        const orphan = await mk({ jobs: [job('a', 'complete')], batches: [batch({ saved: 4, failed: 0, remaining: 0 })] });
+        assert(!orphan.q('[data-slot="batch-summary"]'), `R27h ${kind}/${lang}: a finished batch whose rows are gone has no summary`);
+        await orphan.unmount();
+        const early = await mk({ jobs: [], batches: [batch({ saved: 0, failed: 0, remaining: 4 })] });
+        assert(early.q('[data-slot="batch-summary"]') && !early.q('[data-slot="empty"]') && early.q('[data-slot="batch-summary"]').textContent.includes(t.remaining(4)), `R27i ${kind}/${lang}: a batch with only proven, unstarted slots is shown, not an empty list`);
+        await early.unmount();
+      }
+      // site text is rendered as text; two batches are two summaries
+      {
+        const two = await mk({ jobs: [job('a', 'complete', { batch: 'batch-1' }), job('b', 'receiving', { batch: 'batch-2' })], batches: [batch({ saved: 1, failed: 0, remaining: 0, count: 1 }), batch({ id: 'batch-2', site: '<img src=x onerror=alert(1)>', count: 1, saved: 0, failed: 0, remaining: 1 })] });
+        assert(two.qa('[data-slot="batch-summary"]').length === 2 && !two.q('[data-slot="batch-summary"] img') && two.text().includes('<img src=x onerror=alert(1)>'), `R27j ${kind}/${lang}: separate batches have separate summaries; page-derived text stays text`);
+        await two.unmount();
+      }
+    }
+    // clearing finished rows removes the summary with its last row (full manager has per-row removal and clearing)
+    for (const lang of ['en', 'ru']) {
+      const state = { session: [], history: [], local: { uiLanguage: lang }, jobs: [{ ...job('a', 'complete', { batch: 'batch-1' }) }, { ...job('b', 'complete', { batch: 'batch-1' }) }], batches: [batch({ count: 2, saved: 2, failed: 0, remaining: 0 })] };
+      const p = await page('full', state, { hash: '#downloads' });
+      assert(p.q('[data-slot="batch-summary"]'), `R27k ${lang}: the summary is listed with its rows`);
+      await p.click(p.q(`button[aria-label="${lang === 'en' ? 'Clear finished records (files and statistics stay)' : 'Очистить завершённые записи (файлы и статистика останутся)'}"]`)); await p.settle(6);
+      assert(!p.q('[data-slot="batch-summary"]') && p.qa('[data-job]').length === 0 && p.q('[data-slot="empty"]'), `R27l ${lang}: after clearing, neither the rows nor the summary come back`);
+      await p.unmount();
+    }
   }
 
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);
