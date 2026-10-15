@@ -72,6 +72,17 @@
     },
     {
       "matches": [
+        "https://www.pixiv.net/*"
+      ],
+      "js": [
+        "lib/debug_journal.js",
+        "lib/i18n.js",
+        "content/content_pixiv.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
         "https://*.reddit.com/*",
         "https://reddit.com/*"
       ],

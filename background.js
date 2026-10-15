@@ -429,6 +429,11 @@ function isXPageUrl(url) {
   return /^https:\/\/(?:x|twitter)\.com\//i.test(String(url || ''));
 }
 
+// The one origin of the Pixiv inline content script (manifest.json): https://www.pixiv.net, no credentials, no port.
+function isPixivPageUrl(url) {
+  try { const u = new URL(String(url || '')); return u.protocol === 'https:' && u.hostname === 'www.pixiv.net' && !u.username && !u.password && !u.port; } catch (_) { return false; }
+}
+
 // Selected-target hint. Chrome has no event before the native menu opens (no onShown, no refresh), so the page's
 // gesture sends one small message (content/content_context_target.js) and the one shared entry is shown or hidden from it: outside
 // selected media it is absent from the menu (never a disabled item). That is only a best-effort hint: the menu may already
@@ -1699,7 +1704,7 @@ async function onContextMenuClicked(info, tab) {
   dbg('menu', 'click', 'start', undefined, () => ({
     menu: info.menuItemId, hasSrc: Boolean(info.srcUrl), hasLink: Boolean(info.linkUrl), srcHost: info.srcUrl, linkHost: info.linkUrl,
     pageHost: info.pageUrl || (tab && tab.url), frame: info.frameId, kind: info.mediaType,
-    inline: xInlineInfos.has(info) || redditInlineInfos.has(info) || redgifsInlineInfos.has(info), batch: postMediaItemInfos.has(info)
+    inline: xInlineInfos.has(info) || redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || pixivInlineInfos.has(info), batch: postMediaItemInfos.has(info)
   }), { cid: info.dbgCid, tab: tab && tab.id });
   // A page/overlay click on X uses its existing selected-player path. Native sources and direct media links
   // retain the generic entry path (including X images); old IDs remain accepted for in-flight menu callbacks.
@@ -1721,7 +1726,9 @@ async function onContextMenuClicked(info, tab) {
     // the admitted gesture carries a proof token: the selected post's author is later read for this gesture only (selectedAuthorFolder)
     const ownerProof = `${Date.now()}-${++contextOwnerProofs}`;
     const ownerClaim = { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '', proof: ownerProof };
-    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || postMediaItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, ownerClaim);
+    // An inline Pixiv click (PIXIV-INLINE-01) was proven by its own document right before this call, bound to that document id.
+    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || postMediaItemInfos.has(info) || pixivInlineInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, ownerClaim);
+    if (pixivInlineInfos.has(info)) ownerClaim.documentId = info.pixivInline.documentId;
     if (owner === 'proven' && !redditInlineInfos.has(info)) Object.assign(info, { authorProof: ownerProof, authorDocumentId: ownerClaim.documentId || '' });
     dbg('menu', 'owner', owner === 'refused' || owner === 'preview' ? 'refused' : 'ok', owner === 'preview' ? 'SEEK_PREVIEW' : (owner === 'refused' ? 'STALE_OWNER' : undefined), { owner }, { cid: info.dbgCid, tab: tab && tab.id });
     if (owner === 'refused' || owner === 'preview') {
@@ -1835,7 +1842,8 @@ async function onContextMenuClicked(info, tab) {
 
     // 2. Prevent duplicate in-flight resolution/download pipelines for the same normalized source media
     // an inline Save is keyed by the document and the very player it came from: another player's save is a request of its own, a repeat of the same player is a duplicate
-    const dedupeKey = rawImageUrl || rawLinkUrl || (inlineRedGifs
+    // a Pixiv inline Save this and Save all of the same artwork are requests of their own (a repeat of the same one is the duplicate)
+    const dedupeKey = pixivInlineInfos.has(info) ? `pixiv-inline:${info.pixivInline.mode}:${tab.id}:${rawImageUrl}` : rawImageUrl || rawLinkUrl || (inlineRedGifs
       ? `gesture-player:${tab.id}:${info.frameId ?? 0}:${inlineRedGifs.documentId}:${inlineRedGifs.player}`
       : `gesture-player:${tab.id}:${info.frameId ?? 0}`);
     if (inFlightRequests.has(dedupeKey)) {
@@ -1852,6 +1860,7 @@ async function onContextMenuClicked(info, tab) {
     // Declared before the try so the catch block below can read it (it was try-scoped, which made the
     // catch itself throw a ReferenceError and skip the failure badge/feedback).
     let mediaPlan = null;
+    let pixivPageClaim = '';
     try {
       await setBadge('...', '#9333ea');
 
@@ -1992,12 +2001,16 @@ async function onContextMenuClicked(info, tab) {
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
             frameId: info.frameId,
-            allowPostMedia: true
+            allowPostMedia: true,
+            // the explicit inline scope of a proven Pixiv control; only this trusted route sets it
+            pixivInline: pixivInlineInfos.has(info) ? { mode: info.pixivInline.mode, count: info.pixivInline.count } : undefined
           });
           targetMediaUrl = mediaPlan?.primaryUrl;
         }
       }
 
+      // the inline mode decides the shape of the answer: Save this is one exact page, Save all the whole declared list; the other shape is a mismatch, never the other scope
+      if(pixivInlineInfos.has(info) && !mediaPlan?.error && (info.pixivInline.mode==='all')!==Boolean(mediaPlan?.pixivPostMedia))mediaPlan={error:'POST_MEDIA_MISMATCH'};
       if(mediaPlan?.pixivPostMedia){
         // admitted at entry for this exact preview; resolvePixivPostMedia bound the artwork id to that proven source and validated the complete list.
         // The preview may scroll away or be recycled during /pages: only a replaced (documentId) or navigated admitting document cancels the batch.
@@ -2067,6 +2080,19 @@ async function onContextMenuClicked(info, tab) {
           await flashBadge('ERR', '#ef4444');
           return;
         }
+      }
+
+      // PIXIV-INLINE-01: a single Pixiv page claims its exact original while it runs, in the set that the items of a batch key their address by. An overlapping Save this / Save all of
+      // the same page is therefore saved once: the batch skips that page as a duplicate (its slot is settled skipped, never saved), the other pages are untouched, and the claim is
+      // released below, so a later explicit save of the page works.
+      if (mediaPlan?.transport === 'pixiv' && !postMediaItemInfos.has(info) && targetMediaUrl !== dedupeKey) {
+        if (inFlightRequests.has(targetMediaUrl)) {
+          dbg('menu', 'click', 'skipped', 'DUPLICATE_IN_FLIGHT', null, { cid: info.dbgCid, tab: tab && tab.id });
+          await fbDiscard(op);
+          return;
+        }
+        inFlightRequests.add(targetMediaUrl);
+        pixivPageClaim = targetMediaUrl;
       }
 
       const isProtected = Boolean(getProtectedHostInfo(targetMediaUrl) || mediaPlan?.transport === 'protectedBlob' || mediaPlan?.transport === 'protected');
@@ -2151,6 +2177,7 @@ async function onContextMenuClicked(info, tab) {
     } finally {
       activeResolvingCount--;
       inFlightRequests.delete(dedupeKey);
+      if (pixivPageClaim) inFlightRequests.delete(pixivPageClaim);
       if (!toolbarBadge.flashing) {
         await restoreOrClearBadge();
       }
@@ -2626,6 +2653,68 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
     } else if (message.action === 'X_INLINE_SAVE_ALL') {
       handleXInlineSaveAll(message, sender).catch((e) => console.warn('[MediaLatch] Inline X Save all failed:', e?.message || e));
     }
+  });
+}
+
+// PIXIV-INLINE-01: the inline Save controls over Pixiv artwork images, on feed/search/profile previews and on the opened artwork: "Save this" (exactly the selected page, a
+// proven page index included) and, for an artwork whose page count the card or page shows, "Save all (N)" (the artwork's declared pages). Same shape as the X entry above, own
+// message set (PIXIV_INLINE_*): the content script sends only a one-shot token. This handler validates the sender (the extension's own content script in the top frame of a
+// www.pixiv.net page, the active tab), asks the same frame and document to prove the selected image again (its asset, its own card link or the opened page, and the action the
+// token was minted for), re-validates every field that comes back, and runs the existing save-image-item pipeline with an explicit inline mode: the resolver (the artwork's declared
+// list, exact signed URLs), batches, folders, pacing, notices, statistics and cancellation are the context menu's. The inline entry skips only the gesture-captured owner gate:
+// the fresh proof replaces it, and a stale context-menu capture never decides an inline click.
+const pixivInlineInfos = new WeakSet();
+const pixivInlineBusy = new Set();
+
+function pixivInlineSenderOk(message, sender) {
+  return isContentScriptSender(sender) && sender.frameId === 0 && isPixivPageUrl(sender.url) && sender.tab.active === true &&
+    typeof message.token === 'string' && X_INLINE_TOKEN.test(message.token);
+}
+
+// Only the fields this route needs, the asset checked again here; anything else in the answer is ignored.
+function sanitizePixivInline(raw, mode) {
+  if (!raw || typeof raw !== 'object' || raw.mode !== mode) return null;
+  const text = (v) => (typeof v === 'string' && v.length <= 2048 ? v : '');
+  let src;
+  try { src = new URL(text(raw.src)); } catch (_) { return null; }
+  if (src.protocol !== 'https:' || src.hostname !== 'i.pximg.net' || src.username || src.password || src.port) return null;
+  const asset = src.pathname.match(/\/(\d{1,12})_p(\d{1,3})_(?:master|square|custom)\d+\.[a-z0-9]+$/i);
+  if (!asset) return null;
+  // the card link and the shown page count are decided by the resolver, which compares them with the artwork's own declared list before anything is requested
+  return { mode, src: text(raw.src), link: text(raw.link), id: asset[1], index: Number(asset[2]), count: mode === 'all' ? raw.count : 0 };
+}
+
+async function handlePixivInlineSave(message, sender, mode) {
+  const cid = dbgCidOf(message);
+  if (!pixivInlineSenderOk(message, sender)) { dbg('pixiv.inline', mode, 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
+  const tab = sender.tab;
+  dbg('pixiv.inline', mode, 'start', undefined, null, { cid, tab: tab.id, frame: sender.frameId });
+  const answer = await xInlineAsk(tab, sender, { action: 'PIXIV_INLINE_OWNER', token: message.token, mode });
+  const media = answer && answer.ok === true ? sanitizePixivInline(answer.media, mode) : null;
+  dbg('pixiv.inline', 'owner', media ? 'ok' : 'refused', media ? undefined : (answer && answer.ok === false ? (dbgCode(answer.reason) || 'REFUSED') : (answer ? 'INVALID_DESCRIPTOR' : 'NO_ANSWER')), media ? { count: media.count || undefined } : null, { cid, tab: tab.id, frame: sender.frameId });
+  if (!media) {
+    console.warn('[MediaLatch] Inline Pixiv Save refused: the selected image was not proven again');
+    await xInlineRefuse(sender, cid);
+    return;
+  }
+  const key = `${tab.id}:${sender.frameId}:${mode}:${media.id}:${mode === 'one' ? media.index : 'all'}`;
+  if (pixivInlineBusy.has(key)) { dbg('pixiv.inline', mode, 'skipped', 'BUSY', null, { cid, tab: tab.id }); return; }
+  pixivInlineBusy.add(key);
+  try {
+    const info = { menuItemId: 'save-image-item', srcUrl: media.src, linkUrl: media.link, pageUrl: sender.url, frameId: sender.frameId, mediaType: 'image', dbgCid: cid,
+      pixivInline: { mode, count: media.count, documentId: typeof sender.documentId === 'string' ? sender.documentId : '' } };
+    pixivInlineInfos.add(info);
+    await onContextMenuClicked(info, tab);
+  } finally {
+    pixivInlineBusy.delete(key);
+  }
+}
+
+if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
+  chrome.runtime.onMessage.addListener((message, sender) => {
+    if (!message) return;
+    const mode = message.action === 'PIXIV_INLINE_SAVE' ? 'one' : message.action === 'PIXIV_INLINE_SAVE_ALL' ? 'all' : '';
+    if (mode) handlePixivInlineSave(message, sender, mode).catch((e) => console.warn('[MediaLatch] Inline Pixiv Save failed:', e?.message || e));
   });
 }
 
