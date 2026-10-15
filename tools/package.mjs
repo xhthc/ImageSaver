@@ -11,7 +11,7 @@ const git = (...args) => execFileSync('git', args, { cwd: root, maxBuffer: 64 * 
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const fixed = new Set(['manifest.json', 'background.js', 'offscreen.js', 'offscreen.html', 'LICENSE', 'THIRD_PARTY_NOTICES.txt']);
 const runtimeFile = file => fixed.has(file) || /^content\/content_[a-z_]+\.js$/.test(file) ||
-  /^lib\/.+\.(?:js|mjs)$/.test(file) || /^lib\/vendor\/.+\/(?:LICENSE|PROVENANCE\.json)$/.test(file) ||
+  /^(?:lib|worker|offscreen)\/.+\.(?:js|mjs)$/.test(file) || /^(?:lib|offscreen)\/vendor\/.+\/(?:LICENSE|PROVENANCE\.json)$/.test(file) ||
   /^popup\/(?:[^/]+\.html|THIRD_PARTY_NOTICES\.txt|assets\/[^/]+\.(?:js|css|png|svg|woff2?))$/.test(file) ||
   /^icons\/[^/]+\.png$/.test(file);
 
@@ -44,7 +44,8 @@ try {
       assert(files.has(target), `Missing worker import: ${ref[1]}`);
     }
   }
-  for (const file of ['lib/gifenc.js', 'popup/THIRD_PARTY_NOTICES.txt']) assert(files.has(file), `Missing bundled dependency/notice: ${file}`);
+  assert(['lib/gifenc.js', 'offscreen/gifenc.js'].some(file => files.has(file)), 'Missing bundled dependency: gifenc.js');
+  for (const file of ['popup/THIRD_PARTY_NOTICES.txt']) assert(files.has(file), `Missing bundled dependency/notice: ${file}`);
   for (const [file, bytes] of files) {
     if (file.endsWith('.html')) {
       for (const match of bytes.toString().matchAll(/(?:src|href)="([^"]+)"/g)) {

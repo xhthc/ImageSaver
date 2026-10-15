@@ -198,11 +198,11 @@
   }
 }
 
-/* Hidden rails, native wheel and keyboard scrolling: the compact popup list and the horizontal section row. */
-#quickMain, [data-slot="tabs-list"] {
+/* Keep the horizontal section row scrollable without a visible rail. */
+[data-slot="tabs-list"] {
   scrollbar-width: none;
 }
-#quickMain::-webkit-scrollbar, [data-slot="tabs-list"]::-webkit-scrollbar {
+[data-slot="tabs-list"]::-webkit-scrollbar {
   display: none;
 }
 

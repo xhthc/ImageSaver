@@ -5,8 +5,8 @@
 'use strict';
 const assert = require('node:assert/strict'), vm = require('node:vm'), fs = require('node:fs'), path = require('node:path');
 require('../lib/media_sources.js');
-require('../lib/staging.js');
-require('../lib/download_manager.js');
+require('../offscreen/staging.js');
+require('../worker/download_manager.js');
 require('../lib/folder_path.js');
 const { sniffMediaMagicBytes, isMalformedMediaContainer } = require('../offscreen.js');
 const { createTestEnv } = require('./test_context_target_avatar');
@@ -23,7 +23,7 @@ const MASTER = `https://i.pximg.net/img-master/img/2026/10/13/18/32/13/${ID}_p0_
 const THUMB = `https://i.pximg.net/c/250x250_80_a2/custom-thumb/img/2026/10/13/18/32/13/${ID}_p0_custom1200.jpg`;
 const ART = `https://www.pixiv.net/en/artworks/${ID}`;
 
-// ---- the manager's production staging (lib/staging.js) with a memory directory ----------------------------------------------------
+// ---- the manager's production staging (offscreen/staging.js) with a memory directory ----------------------------------------------------
 function disk(fetcher) {
   const files = new Map(), requests = [];
   const dir = { getDirectoryHandle: async () => dir, getFileHandle: async (id, { create } = {}) => {

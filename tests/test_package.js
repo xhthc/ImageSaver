@@ -37,11 +37,11 @@ try {
   const manifest = { manifest_version: 3, version: '2.0.0.25', background: { service_worker: 'background.js' },
     action: { default_popup: 'popup/quick.html' }, icons: { 128: 'icons/128.png' }, content_scripts: [{ js: ['lib/i18n.js', 'content/content_x.js'] }] };
   write('manifest.json', JSON.stringify(manifest));
-  write('lib/media_format.js', '// worker module');
+  write('worker/media_format.js', '// worker module');
   write('tests/test_example.js', '// development check');
-  for (const file of ['background.js', 'content/content_x.js', 'offscreen.js', 'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'lib/gifenc.js', 'lib/i18n.js',
+  for (const file of ['background.js', 'content/content_x.js', 'offscreen.js', 'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'offscreen/gifenc.js', 'lib/i18n.js',
     'popup/THIRD_PARTY_NOTICES.txt', 'popup/assets/app.js', 'icons/128.png']) write(file, 'committed');
-  write('background.js', "importScripts('lib/media_format.js');\n// committed\n// second line\n");
+  write('background.js', "importScripts('worker/media_format.js');\n// committed\n// second line\n");
   write('offscreen.html', '<script src="offscreen.js"></script>');
   write('popup/quick.html', '<script src="./assets/app.js"></script>');
   for (const file of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'local-notes/secret.txt', 'recovery/old.js', 'ui/src/dev.tsx', 'test_example.js']) write(file, 'local/development');
@@ -51,7 +51,7 @@ try {
   git('config', 'core.autocrlf', 'true');
   write('background.js', 'dirty working bytes');
   write('icons/private.png', 'uncommitted');
-  const run = () => spawnSync(process.execPath, ['tools/package.mjs', 'HEAD'], { cwd: root, encoding: 'utf8' });
+  const run = (ref = 'HEAD') => spawnSync(process.execPath, ['tools/package.mjs', ref], { cwd: root, encoding: 'utf8' });
   const ok = run(); assert.equal(ok.status, 0, ok.stderr);
   const output = JSON.parse(ok.stdout);
   assert.equal(path.basename(output.archive), `MediaLatch-${manifest.version}-${source.slice(0, 12)}.zip`);
@@ -59,9 +59,9 @@ try {
   assert.equal(metadata.source_commit, source);
   assert.equal(metadata.sha256, sha(fs.readFileSync(output.archive)));
   const entries = metadata.files.map(f => f.path);
-  assert(entries.includes('manifest.json') && entries.includes('lib/gifenc.js'));
+  assert(entries.includes('manifest.json') && entries.includes('offscreen/gifenc.js'));
   assert(entries.includes('lib/i18n.js'), 'the interface catalogue referenced by the manifest ships in the runtime ZIP');
-  assert(entries.includes('content/content_x.js') && entries.includes('lib/media_format.js'), 'relocated scripts and worker imports ship');
+  assert(entries.includes('content/content_x.js') && entries.includes('worker/media_format.js'), 'relocated scripts and worker imports ship');
   assert(!entries.includes('tests/test_example.js'), 'test directory is excluded');
   assert(!entries.some(f => /AGENTS|CLAUDE|GEMINI|local-notes|recovery|^ui\/|^test_|private\.png/.test(f)));
   const zip = fs.readFileSync(output.archive);
@@ -72,10 +72,29 @@ try {
     assert.equal(entry.sha256, sha(packaged));
     assert.equal(entry.bytes, packaged.length);
   }
+  // The accepted-commit API must also rebuild the pre-refactor encoder/vendor layout.
+  for (const file of ['LICENSE', 'PROVENANCE.json', 'mp4box.all.js']) write('lib/vendor/mp4box/2.4.1/' + file, 'legacy-' + file);
+  fs.mkdirSync(path.join(root, 'lib'), { recursive: true });
+  fs.renameSync(path.join(root, 'offscreen/gifenc.js'), path.join(root, 'lib/gifenc.js'));
+  write('background.js', "importScripts('worker/media_format.js');\n");
+  write('offscreen.html', '<script src="lib/gifenc.js"></script><script src="offscreen.js"></script>');
+  git('add', '-A'); git('-c', 'user.name=Package test', '-c', 'user.email=test@localhost', 'commit', '-qm', 'Legacy runtime layout fixture');
+  const legacySource = git('rev-parse', 'HEAD');
+  // Dirty files deliberately point at the other layout: only the requested commit may decide.
+  write('offscreen.html', '<script src="offscreen/gifenc.js"></script>');
+  const legacy = run(legacySource); assert.equal(legacy.status, 0, legacy.stderr);
+  const legacyOutput = JSON.parse(legacy.stdout);
+  const legacyMetadata = JSON.parse(fs.readFileSync(legacyOutput.archive.replace(/\.zip$/, '.json')));
+  const legacyZip = fs.readFileSync(legacyOutput.archive);
+  for (const file of ['lib/gifenc.js', 'lib/vendor/mp4box/2.4.1/LICENSE', 'lib/vendor/mp4box/2.4.1/PROVENANCE.json', 'lib/vendor/mp4box/2.4.1/mp4box.all.js']) {
+    assert(legacyMetadata.files.some(f => f.path === file), file + ' ships from the selected legacy commit');
+    assert.deepEqual(zipFile(legacyZip, file), execFileSync('git', ['cat-file', 'blob', legacySource + ':' + file], { cwd: root }));
+  }
+  assert.equal(run(source).status, 0, 'explicit modern commit still packages from the legacy working tree');
   write('background.js', "importScripts('lib/missing.js');\n");
   git('add', 'background.js'); git('-c', 'user.name=Package test', '-c', 'user.email=test@localhost', 'commit', '-qm', 'Missing worker module');
   const missingModule = run(); assert.equal(missingModule.status, 1); assert.match(missingModule.stderr, /Missing worker import: lib\/missing\.js/);
-  write('background.js', "importScripts('lib/media_format.js');\n");
+  write('background.js', "importScripts('worker/media_format.js');\n");
   // A manifest reference absent from the admitted commit must fail before producing a package.
   manifest.icons[128] = 'icons/missing.png'; write('manifest.json', JSON.stringify(manifest));
   git('add', 'manifest.json', 'background.js'); git('-c', 'user.name=Package test', '-c', 'user.email=test@localhost', 'commit', '-qm', 'Missing icon');

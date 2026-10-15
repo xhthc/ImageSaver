@@ -9,14 +9,7 @@
   const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {} };
   DBG.log('tiktok', 'init', 'info');
   'use strict';
-  const isI18n = globalThis.ImageSaverI18n;
-  const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
-  const isLabel = (element, field, key, fallback, vars) => {
-    if (isLabels) isLabels.label(element, field, key, vars, fallback);
-    else if (field === 'textContent') element.textContent = fallback;
-    else if (fallback === null) element.removeAttribute(field);
-    else element.setAttribute(field, fallback);
-  };
+  const isLabel = globalThis.MediaLatchCopyKit.labeler();
 
   const TT_BUTTON_STYLES = `
 .image-saver-tt-copy-wrap {
@@ -107,34 +100,7 @@
 
   const ALLOWED_TT_SHARE_HOSTS = ['tiktok.com', 'tnktok.com', 'd.tnktok.com'];
   const DEFAULT_TT_SHARE_HOST = 'tnktok.com';
-  let cachedTtShareHost = DEFAULT_TT_SHARE_HOST;
-
-  // Initialize and synchronize cachedTtShareHost from storage
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    try {
-      chrome.storage.local.get({ ttShareHost: DEFAULT_TT_SHARE_HOST }, (res) => {
-        if (chrome.runtime && chrome.runtime.lastError) return;
-        if (res && ALLOWED_TT_SHARE_HOSTS.includes(res.ttShareHost)) {
-          cachedTtShareHost = res.ttShareHost;
-        } else {
-          cachedTtShareHost = DEFAULT_TT_SHARE_HOST;
-        }
-      });
-    } catch (_) {}
-  }
-
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-    try {
-      chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === 'local' && changes && changes.ttShareHost) {
-          const nextHost = changes.ttShareHost.newValue;
-          if (ALLOWED_TT_SHARE_HOSTS.includes(nextHost)) {
-            cachedTtShareHost = nextHost;
-          }
-        }
-      });
-    } catch (_) {}
-  }
+  const ttShare = globalThis.MediaLatchCopyKit.shareHost('ttShareHost', ALLOWED_TT_SHARE_HOSTS, DEFAULT_TT_SHARE_HOST);
 
   /**
    * Constructs an embed-friendly or canonical share URL for a TikTok video.
@@ -142,7 +108,7 @@
    * Input must be HTTPS tiktok.com URL with valid /@user/video/id path.
    * Suffixes, query string, and hash are omitted.
    */
-  function formatTikTokShareUrl(rawUrl, targetHost = cachedTtShareHost) {
+  function formatTikTokShareUrl(rawUrl, targetHost = ttShare.get()) {
     if (!rawUrl || typeof rawUrl !== 'string') return null;
 
     const host = ALLOWED_TT_SHARE_HOSTS.includes(targetHost) ? targetHost : DEFAULT_TT_SHARE_HOST;
@@ -596,7 +562,7 @@
       wrap.setAttribute('data-diagnostic-id-source', idSource);
 
       const rawUrl = extractTikTokUrl(owningCard);
-      const shareUrl = rawUrl ? formatTikTokShareUrl(rawUrl, cachedTtShareHost) : null;
+      const shareUrl = rawUrl ? formatTikTokShareUrl(rawUrl, ttShare.get()) : null;
 
       if (!shareUrl) {
         wrap.setAttribute('data-diagnostic-clipboard', 'skipped');
@@ -643,7 +609,7 @@
 
         if (typeof console !== 'undefined' && typeof console.debug === 'function') {
           console.debug('[MediaLatch TikTok] Link copied successfully:', {
-            shareHost: cachedTtShareHost,
+            shareHost: ttShare.get(),
             idSource
           });
         }
@@ -664,7 +630,7 @@
 
         if (typeof console !== 'undefined' && typeof console.debug === 'function') {
           console.debug('[MediaLatch TikTok] Clipboard write failed for URL:', {
-            shareHost: cachedTtShareHost
+            shareHost: ttShare.get()
           });
         }
 
@@ -707,7 +673,6 @@
     return true;
   }
 
-  let isScanPending = false;
 
   function scanAndInjectTikTokCopyButtons(root = (typeof document !== 'undefined' ? document : null)) {
     if (!root || typeof root.querySelectorAll !== 'function') return 0;
@@ -770,86 +735,13 @@
     return count;
   }
 
-  function requestThrottledScan() {
-    if (isScanPending) return;
-    isScanPending = true;
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => {
-        isScanPending = false;
-        scanAndInjectTikTokCopyButtons();
-      });
-    } else {
-      setTimeout(() => {
-        isScanPending = false;
-        scanAndInjectTikTokCopyButtons();
-      }, 50);
-    }
-  }
+  const requestThrottledScan = globalThis.MediaLatchCopyKit.scheduler((root) => scanAndInjectTikTokCopyButtons(root));
 
-  let ttCopyObserver = null;
+  const initTikTokCopyButtonObserver = globalThis.MediaLatchCopyKit.observer({ prepare: ensureTtButtonStyles, scan: scanAndInjectTikTokCopyButtons, request: requestThrottledScan });
 
-  function initTikTokCopyButtonObserver() {
-    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return null;
+  globalThis.MediaLatchCopyKit.navigation(requestThrottledScan);
 
-    ensureTtButtonStyles();
-    scanAndInjectTikTokCopyButtons();
-
-    if (ttCopyObserver) {
-      try { ttCopyObserver.disconnect(); } catch (_) {}
-    }
-
-    ttCopyObserver = new MutationObserver((mutations) => {
-      let hasAdded = false;
-      for (const m of mutations) {
-        if (m.addedNodes && m.addedNodes.length > 0) {
-          hasAdded = true;
-          break;
-        }
-      }
-      if (hasAdded) {
-        requestThrottledScan();
-      }
-    });
-
-    const target = document.body || document.documentElement;
-    if (target) {
-      ttCopyObserver.observe(target, { childList: true, subtree: true });
-    }
-
-    return ttCopyObserver;
-  }
-
-  if (typeof window !== 'undefined') {
-    window.addEventListener('popstate', () => requestThrottledScan());
-    if (typeof history !== 'undefined') {
-      if (typeof history.pushState === 'function') {
-        const origPush = history.pushState;
-        history.pushState = function (...args) {
-          const res = origPush.apply(this, args);
-          requestThrottledScan();
-          return res;
-        };
-      }
-      if (typeof history.replaceState === 'function') {
-        const origReplace = history.replaceState;
-        history.replaceState = function (...args) {
-          const res = origReplace.apply(this, args);
-          requestThrottledScan();
-          return res;
-        };
-      }
-    }
-  }
-
-  if (typeof document !== 'undefined') {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
-        initTikTokCopyButtonObserver();
-      }, { once: true });
-    } else {
-      initTikTokCopyButtonObserver();
-    }
-  }
+  globalThis.MediaLatchCopyKit.whenReady(initTikTokCopyButtonObserver);
 
   // Export functions to global scope for unit testing in Node/vm if applicable
   if (typeof globalThis !== 'undefined') {
@@ -859,8 +751,8 @@
     globalThis.__scanAndInjectTikTokCopyButtons = scanAndInjectTikTokCopyButtons;
     globalThis.__initTikTokCopyButtonObserver = initTikTokCopyButtonObserver;
     globalThis.__ensureTtButtonStyles = ensureTtButtonStyles;
-    globalThis.__setCachedTtShareHost = (h) => { cachedTtShareHost = h; };
-    globalThis.__getCachedTtShareHost = () => cachedTtShareHost;
+    globalThis.__setCachedTtShareHost = (h) => ttShare.set(h);
+    globalThis.__getCachedTtShareHost = () => ttShare.get();
     globalThis.__isValidTikTokVideoId = isValidTikTokVideoId;
     globalThis.__isValidTikTokUsername = isValidTikTokUsername;
     globalThis.__copyTextToClipboard = copyTextToClipboard;

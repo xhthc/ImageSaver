@@ -1,4 +1,4 @@
-// Classic worker module; loaded by background.js where this code used to be (before lib/site_resolvers.js).
+// Classic worker module; loaded by background.js where this code used to be (before worker/site_resolvers.js).
 // Candidate addresses: normalization, thumbnail detection, scoring, the image probe and the generic CDN/CMS derivatives.
 // ============================================================================
 // 2. Candidate Normalization, Scoring & Verification
@@ -38,13 +38,13 @@ function isThumbnailUrl(url) {
     const search = parsed.search.toLowerCase();
 
     // Known thumbnail hostnames / subpaths
-    if (host.includes('gstatic.com') && pathname.includes('/images') && search.includes('q=tbn:')) {
+    if (isSameOrSubdomain(host, 'gstatic.com') && pathname.includes('/images') && search.includes('q=tbn:')) {
       return true;
     }
-    if (host.includes('avatars.mds.yandex.net') && pathname.includes('/get-images-thumbs/')) {
+    if (isSameOrSubdomain(host, 'avatars.mds.yandex.net') && pathname.includes('/get-images-thumbs/')) {
       return true;
     }
-    if (host.includes('preview.redd.it') || host.includes('external-preview.redd.it')) {
+    if (isSameOrSubdomain(host, 'preview.redd.it') || isSameOrSubdomain(host, 'external-preview.redd.it')) {
       return true;
     }
 
@@ -69,13 +69,13 @@ function isThumbnailUrl(url) {
     }
 
     // Dimension prefix (e.g. Anime-Pictures 1500x3187-hash) — scoped to anime-pictures.net CDN only
-    if (host.includes('anime-pictures.net') && /\/\d{2,4}x\d{2,4}-[a-f0-9]{20,}/i.test(pathname)) {
+    if (isSameOrSubdomain(host, 'anime-pictures.net') && /\/\d{2,4}x\d{2,4}-[a-f0-9]{20,}/i.test(pathname)) {
       return true;
     }
 
     // Zerochan previews/thumbnails (e.g. .240.4728645.avif, .600.4728645.jpg, .1024.4728645.webp, /240/45/22/4728645.avif)
     // Scoped strictly to zerochan.net hosts; genuine original .full. (including .full.*.avif) is NOT a thumbnail
-    if (host.includes('zerochan.net')) {
+    if (isSameOrSubdomain(host, 'zerochan.net')) {
       if (/\.(?:75|240|600|1024)\.\d+\.[a-z0-9]+$/i.test(pathname)) {
         return true;
       }
@@ -85,17 +85,17 @@ function isThumbnailUrl(url) {
     }
 
     // GIPHY preview suffixes
-    if ((host.includes('giphy.com') || host === 'i.giphy.com') && (/\/(?:200|200w|100|100w|giphy_s)\.[a-z0-9]+$/i.test(pathname) || /_s\.[a-z0-9]+$/i.test(pathname))) {
+    if (isSameOrSubdomain(host, 'giphy.com') && (/\/(?:200|200w|100|100w|giphy_s)\.[a-z0-9]+$/i.test(pathname) || /_s\.[a-z0-9]+$/i.test(pathname))) {
       return true;
     }
 
     // e-shuushuu preview/medium images (not fullsize)
-    if (host.includes('e-shuushuu.net') && pathname.includes('/medium/')) {
+    if (isSameOrSubdomain(host, 'e-shuushuu.net') && pathname.includes('/medium/')) {
       return true;
     }
 
     // Pixiv preview/master variants on pximg.net (img-master, custom-thumb)
-    if ((host === 'i.pximg.net' || host.includes('pximg.net') || host.includes('pixiv.net')) && (pathname.includes('/img-master/') || pathname.includes('/custom-thumb/'))) {
+    if ((isSameOrSubdomain(host, 'pximg.net') || isSameOrSubdomain(host, 'pixiv.net')) && (pathname.includes('/img-master/') || pathname.includes('/custom-thumb/'))) {
       return true;
     }
 
@@ -138,7 +138,7 @@ function isOriginalPath(url) {
     const parsed = new URL(url);
     const p = parsed.pathname.toLowerCase();
     if (parsed.hostname.toLowerCase() === 'i.redd.it') return true;
-    if (p.includes('/original/') || p.includes('/img-original/') || p.includes('/full/') || p.includes('/_images/') || p.includes('/pictures/get_image/') || (parsed.hostname.includes('tenor.com') && p.includes('aaaac')) || (parsed.hostname.includes('giphy.com') && p.endsWith('/giphy.gif')) || (parsed.hostname.includes('yande.re') && p.includes('/image/')) || (parsed.hostname.includes('gelbooru.com') && p.includes('/images/')) || (parsed.hostname.includes('e-shuushuu.net') && p.includes('/fullsize/')) || (parsed.hostname.includes('zerochan.net') && p.includes('.full.'))) {
+    if (p.includes('/original/') || p.includes('/img-original/') || p.includes('/full/') || p.includes('/_images/') || p.includes('/pictures/get_image/') || (isSameOrSubdomain(parsed.hostname, 'tenor.com') && p.includes('aaaac')) || (isSameOrSubdomain(parsed.hostname, 'giphy.com') && p.endsWith('/giphy.gif')) || (isSameOrSubdomain(parsed.hostname, 'yande.re') && p.includes('/image/')) || (isSameOrSubdomain(parsed.hostname, 'gelbooru.com') && p.includes('/images/')) || (isSameOrSubdomain(parsed.hostname, 'e-shuushuu.net') && p.includes('/fullsize/')) || (isSameOrSubdomain(parsed.hostname, 'zerochan.net') && p.includes('.full.'))) {
       return !isThumbnailUrl(url);
     }
   } catch (e) {}
@@ -497,9 +497,7 @@ function getGenericCdnCandidates(urlObj) {
         file = file.replace(/^(sample[-_]|thumb(nail)?[-_]|small[-_]|medium[-_])/i, '');
         file = file.replace(/([ _-]sample[ _-]|%20sample%20)/gi, ' ');
 
-        const dotIdx = file.lastIndexOf('.');
-        const baseName = dotIdx !== -1 ? file.substring(0, dotIdx) : file;
-        const ext = dotIdx !== -1 ? file.substring(dotIdx).toLowerCase() : '.jpg';
+        const { base: baseName, ext } = splitExtension(file, { lower: true });
 
         // generateExtensionCandidates serves provider resolvers too and drops the query; a generic derivative keeps the selected one
         candidates.push(...generateExtensionCandidates(urlObj, `${dir}${baseName}`, ext).map((c) => withSearch(c, keepSearch)));
@@ -516,7 +514,9 @@ function getGenericCdnCandidates(urlObj) {
  */
 function inferTransportForUrl(url) {
   if (!url || typeof url !== 'string') return 'direct';
-  if (url.includes('pximg.net')) return 'pixiv';
+  let host = '';
+  try { host = new URL(url).hostname; } catch (_) { /* not an absolute address: no site transport */ }
+  if (isSameOrSubdomain(host, 'pximg.net')) return 'pixiv';
   if (isProtectedImageHost(url)) return 'protectedBlob';
   return 'direct';
 }

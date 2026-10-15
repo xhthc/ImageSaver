@@ -17,6 +17,7 @@ const assert = require('assert/strict');
 const { webcrypto } = require('crypto');
 
 const CONTENT_CODE = fs.readFileSync(path.join(REPO_ROOT, 'content/content_redgifs.js'), 'utf8');
+const INLINE_CODE = fs.readFileSync(path.join(REPO_ROOT, 'content/content_inline.js'), 'utf8');
 const BG_CODE = fs.readFileSync(path.join(REPO_ROOT, 'background.js'), 'utf8');
 
 let passed = 0;
@@ -132,7 +133,7 @@ function makeWorld({ url = 'https://www.redgifs.com/niches/ecchi-anime', docId =
     innerWidth: 1280,
     innerHeight: 800,
     addEventListener: (t, fn) => { (world.listeners[t] ||= []).push(fn); },
-    removeEventListener() {}
+    removeEventListener: (t, fn) => { world.listeners[t] = (world.listeners[t] || []).filter((f) => f !== fn); }
   };
   win.top = top ? win : {};
   const doc = {
@@ -192,7 +193,7 @@ function makeWorld({ url = 'https://www.redgifs.com/niches/ecchi-anime', docId =
   });
   world.win = win;
   world.doc = doc;
-  world.run = () => vm.runInContext(CONTENT_CODE, world.ctx);
+  world.run = () => { vm.runInContext(CONTENT_CODE, world.ctx); vm.runInContext(INLINE_CODE, world.ctx); };
   world.advance = (ms) => {
     const end = world.now + ms;
     for (;;) {
@@ -206,7 +207,7 @@ function makeWorld({ url = 'https://www.redgifs.com/niches/ecchi-anime', docId =
   };
   world.fire = (type, event) => { for (const l of world.listeners[type] || []) l(event); };
   world.move = (x, y) => { world.fire('pointermove', { clientX: x, clientY: y, pointerType: 'mouse', isTrusted: true }); world.advance(70); };
-  world.state = () => world.ctx.redgifsInlineState;
+  world.state = () => world.ctx.__medialatchInline.redgifs.state;
   world.hosts = () => world.html.querySelectorAll('div').filter((d) => d.getAttribute('data-image-saver-inline') === 'redgifs');
   world.hostOf = (card) => card.player._kids.find((k) => k.getAttribute('data-image-saver-inline') === 'redgifs') || null;
   world.btnOf = (card) => { const h = world.hostOf(card); return h ? h._kids[0] : null; };
@@ -341,7 +342,7 @@ function makeBackground() {
     window: { location: { href: '', host: '', pathname: '/' }, addEventListener() {} },
     document: { elementsFromPoint: () => [], querySelectorAll: () => [], querySelector: () => null, getElementById: () => null, createElement: () => ({ addEventListener() {}, removeAttribute() {}, load() {} }) }
   };
-  sandbox.importScripts = (file) => vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'), sandbox);
+  require('./helpers/worker.cjs').importScripts(sandbox);
   vm.createContext(sandbox);
   vm.runInContext(BG_CODE, sandbox);
   env.sandbox = sandbox;
@@ -495,6 +496,47 @@ test('keyboard: every eligible player is reachable in the native tab order witho
   assert.equal(world.sent.length, 1, 'nothing else was sent');
   assert.equal(world.state().pending.size, 1);
   assert.equal([...world.state().pending.values()][0].video, b.video, 'the focused control names its own player');
+});
+
+test('keyboard: persisted restoration re-proves the retained focused control without provider work', async () => {
+  const { world } = pageAndWorker();
+  const a = world.addCard('ClipAlpha');
+  world.scan();
+  const btn = world.btnOf(a);
+  btn.focus();
+  assert.equal(world.visible(a), true);
+  world.fire('pagehide', { persisted: true });
+  assert.equal(world.visible(a), false);
+  assert.equal(world.state().pending.size, 0);
+  world.fire('pageshow', { persisted: true });
+  assert.equal(world.doc.activeElement, btn, 'focus is retained; no new focus event');
+  assert.equal(world.visible(a), true, 'the focused control is visible again');
+  assert.equal(world.fetchCalls.length, 0, 'restoration does not fetch provider metadata');
+  assert.equal(world.sent.length, 0, 'restoration does not save');
+  world.press(btn, true);
+  assert.equal(sentInline(world).length, 1, 'the first trusted keyboard activation works');
+  assert.equal([...world.state().pending.values()][0].video, a.video);
+  // A player recycled after restoration cannot borrow the restored proof.
+  world.advance(1600); // beyond CLICK_GAP: refusal must come from stale proof, not throttling
+  a.video.setAttribute('src', 'blob:https://www.redgifs.com/recycled');
+  world.press(btn, true);
+  assert.equal(sentInline(world).length, 1, 'a stale restored selection is refused');
+  assert.equal(world.visible(a), false, 'the stale proof conceals the control');
+});
+
+test('keyboard: persisted restoration drops a focused player that is no longer eligible', async () => {
+  const { world } = pageAndWorker();
+  const a = world.addCard('ClipAlpha');
+  world.scan();
+  const btn = world.btnOf(a);
+  btn.focus();
+  world.fire('pagehide', { persisted: true });
+  a.player.appendChild(new El('video', { src: 'blob:https://www.redgifs.com/extra' }, a.player.rect));
+  world.fire('pageshow', { persisted: true });
+  assert.equal(world.hostOf(a), null, 'ambiguous player loses its focused control');
+  world.press(btn, true);
+  assert.equal(world.sent.length, 0, 'no stale activation or provider work');
+  assert.equal(world.fetchCalls.length, 0);
 });
 
 test('keyboard and dynamic pages: a recycled player loses its stop, a new one gains it; reinjection adds nothing', async () => {

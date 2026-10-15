@@ -164,7 +164,7 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
   };
   // This suite isolates feedback/statistics from the separately tested disk acquisition queue.
   sandbox.importScripts = (file) => {
-    if(file !== 'lib/download_manager.js') vm.runInContext(read(file), sandbox);
+    if(file !== 'worker/download_manager.js') vm.runInContext(read(file), sandbox);
     else if(realManager) vm.runInContext(read(file), sandbox);
     else if(captureManager) sandbox.MediaLatchDownloads={database:()=>({}),createManager:deps=>{env.managerDeps=deps;return {ready:Promise.resolve(),list:async()=>({jobs:[]})};}};
   };
@@ -582,7 +582,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     const FB = FBLib;
     let t = 1000;
     const store = {};
-    const tr = vm.runInContext('globalThis', (() => { const s = { console }; vm.createContext(s); vm.runInContext(read('lib/feedback.js'), s); vm.runInContext(read('lib/feedback_tracker.js'), s); return s; })());
+    const tr = vm.runInContext('globalThis', (() => { const s = { console }; vm.createContext(s); vm.runInContext(read('lib/feedback.js'), s); vm.runInContext(read('worker/feedback_tracker.js'), s); return s; })());
     const mk = (now) => tr.ImageSaverFeedbackTracker.createTracker({
       storage: { get: async (k) => store[k], set: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); } },
       now: () => now.v, genId: (() => { let n = 0; return () => 'op-' + (++n) + 'abcde'; })(),
@@ -742,7 +742,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     assert(/<script src="\.\.\/lib\/feedback\.js"><\/script>/.test(popupHtml) && /id="root"/.test(popupHtml) && /type="module"/.test(popupHtml), '14d: the compact popup loads the shared feedback library and its bundle and has its mount point');
     assert(/id="root"/.test(detailsHtml) && /<DownloadsPanel full/.test(read('ui/src/components/app/full-app.tsx')) && !/<script[^>]+src="https?:/.test(popupHtml + detailsHtml) && !/\son\w+=/.test(popupHtml + detailsHtml), '14e: the full page exists; no remote scripts or inline handlers (MV3 CSP)');
     assert(fs.existsSync(path.resolve(ROOT, 'icons/notification.png')) && fs.readFileSync(path.resolve(ROOT, 'icons/notification.png')).slice(1, 4).toString() === 'PNG', '14f: notification icon is packaged');
-    const fbSources = read('lib/feedback.js') + read('lib/feedback_tracker.js') + read('ui/src/core/feedbackList.js') + read('ui/src/core/statistics.js');
+    const fbSources = read('lib/feedback.js') + read('worker/feedback_tracker.js') + read('ui/src/core/feedbackList.js') + read('ui/src/core/statistics.js');
     assert(!/\binnerHTML\b|\beval\(|new Function|document\.write|\bfetch\(|XMLHttpRequest|sendBeacon|\.createIssue|api\.github\.com/.test(fbSources.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')), '14g: feedback code has no innerHTML/eval and no network or issue-creation calls');
   }
 
@@ -1183,7 +1183,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   // =================================================================================================
   console.log('\n--- 22. Durable explanation of the animation duration policy (reason, measured duration, threshold) ---');
   {
-    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'worker/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
     const FB = ctx.ImageSaverFeedback;
     const REASON = 'animation_duration_limit';
     const mem = () => { const store = {}; return { store, area: { get: async (k) => store[k], set: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); } } }; };
@@ -1342,7 +1342,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   {
     // Worker start (hydrate) reads the stored list once. If that read is rejected, the first mutation used to persist only the new operation
     // over the stored list: an unseen failure and a running download (still owned, its terminal event may come later) were erased.
-    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'worker/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
     const KEY = ctx.ImageSaverFeedbackTracker.STORAGE_KEY;
     const T0 = 1700000000000;
     const stored = () => ({ v: 1, ops: [
@@ -1402,7 +1402,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     // While the start read fails nothing is written (23e). The first successful read merges the stored list with the operations of this
     // worker; that merged list must be written then, even when the recovering call only reads (list/get) and no stored record needed a
     // change, or a later worker restart loses the operations created meanwhile.
-    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'worker/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
     const API = ctx.ImageSaverFeedbackTracker;
     const KEY = API.STORAGE_KEY;
     const T0 = 1700000000000;
@@ -1473,7 +1473,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   // =================================================================================================
   console.log('\n--- 25. F08: feedback retention pruning and active operation preservation ---');
   {
-    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'worker/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
     const KEY = ctx.ImageSaverFeedbackTracker.STORAGE_KEY;
     const T0 = 1700000000000;
     const DAY = 24 * 60 * 60 * 1000;
@@ -1875,7 +1875,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   // =================================================================================================
   console.log('\n--- 27. F6: persist successful retention pruning ---');
   {
-    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
+    const ctx = (() => { const s = { console }; vm.createContext(s); for (const f of ['lib/feedback.js', 'worker/feedback_tracker.js']) vm.runInContext(read(f), s); return vm.runInContext('globalThis', s); })();
     const STORAGE_KEY = ctx.ImageSaverFeedbackTracker.STORAGE_KEY;
     const DAY = 24 * 60 * 60 * 1000;
     const T0 = 1700000000000;
@@ -2229,7 +2229,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       const tCtx = (() => {
         const s = { URL, console, setTimeout, clearTimeout };
         vm.createContext(s);
-        for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) {
+        for (const f of ['lib/feedback.js', 'worker/feedback_tracker.js']) {
           vm.runInContext(read(f), s);
         }
         return vm.runInContext('globalThis', s);
@@ -2305,7 +2305,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     // A removed download must not reappear from its terminal feedback record; keep other results and statistics.
     {
       const context={URL,console,setTimeout,clearTimeout};vm.createContext(context);
-      for(const file of ['lib/feedback.js','lib/feedback_tracker.js'])vm.runInContext(read(file),context);
+      for(const file of ['lib/feedback.js','worker/feedback_tracker.js'])vm.runInContext(read(file),context);
       const store={};let sequence=0,failWrite=false,failRead=false;
       const make=()=>context.ImageSaverFeedbackTracker.createTracker({ genId:()=>`op-remove-${++sequence}`,storage:{get:async key=>{if(failRead)throw Error('READ_FAILED');return store[key] || null},set:async(key,value)=>{if(failWrite)throw Error('WRITE_FAILED');store[key]=JSON.parse(JSON.stringify(value))}},getDownloadItem:async()=>null });
       const tracker=make();
@@ -2326,7 +2326,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     }
     {
       const context={URL,console,setTimeout,clearTimeout};vm.createContext(context);
-      for(const file of ['lib/feedback.js','lib/feedback_tracker.js'])vm.runInContext(read(file),context);
+      for(const file of ['lib/feedback.js','worker/feedback_tracker.js'])vm.runInContext(read(file),context);
       const store={};let release,sequence=0;
       const deps={genId:()=>`op-pending-remove-${++sequence}`,storage:{get:async key=>store[key] || null,set:async(key,value)=>{store[key]=JSON.parse(JSON.stringify(value))}},getDownloadItem:async()=>null};
       const tracker=context.ImageSaverFeedbackTracker.createTracker({...deps,onFinished:()=>new Promise((_,reject)=>{release=()=>reject(Error('STATISTICS_COMMIT_FAILED'))})});
@@ -2353,7 +2353,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       const tCtx = (() => {
         const s = { URL, console, setTimeout, clearTimeout };
         vm.createContext(s);
-        for (const f of ['lib/feedback.js', 'lib/feedback_tracker.js']) {
+        for (const f of ['lib/feedback.js', 'worker/feedback_tracker.js']) {
           vm.runInContext(read(f), s);
         }
         return vm.runInContext('globalThis', s);
@@ -3277,7 +3277,7 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   for (const outcome of ['complete', 'failed']) {
     const s = {console, setTimeout, clearTimeout, URL, AbortController}; vm.createContext(s);
-    for (const file of ['lib/feedback.js', 'lib/feedback_tracker.js', 'lib/download_manager.js']) vm.runInContext(read(file), s);
+    for (const file of ['lib/feedback.js', 'worker/feedback_tracker.js', 'worker/download_manager.js']) vm.runInContext(read(file), s);
     s.FeedbackLib = s.ImageSaverFeedback;
     const bg = read('background.js');
     const a = bg.indexOf('async function feedbackNotifyRecord('), b = bg.indexOf('var feedbackNotifier =');

@@ -9,14 +9,7 @@
   const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {} };
   DBG.log('instagram', 'init', 'info');
   'use strict';
-  const isI18n = globalThis.ImageSaverI18n;
-  const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
-  const isLabel = (element, field, key, fallback, vars) => {
-    if (isLabels) isLabels.label(element, field, key, vars, fallback);
-    else if (field === 'textContent') element.textContent = fallback;
-    else if (fallback === null) element.removeAttribute(field);
-    else element.setAttribute(field, fallback);
-  };
+  const isLabel = globalThis.MediaLatchCopyKit.labeler();
 
   const IG_BUTTON_STYLES = `
 .image-saver-ig-copy-wrap {
@@ -100,34 +93,7 @@
 
   const ALLOWED_IG_SHARE_HOSTS = ['instagram.com', 'oginstagram.com', 'kirkstagram.com', 'kkclip.com'];
   const DEFAULT_IG_SHARE_HOST = 'oginstagram.com';
-  let cachedIgShareHost = DEFAULT_IG_SHARE_HOST;
-
-  // Initialize and synchronize cachedIgShareHost from storage
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    try {
-      chrome.storage.local.get({ igShareHost: DEFAULT_IG_SHARE_HOST }, (res) => {
-        if (chrome.runtime && chrome.runtime.lastError) return;
-        if (res && ALLOWED_IG_SHARE_HOSTS.includes(res.igShareHost)) {
-          cachedIgShareHost = res.igShareHost;
-        } else {
-          cachedIgShareHost = DEFAULT_IG_SHARE_HOST;
-        }
-      });
-    } catch (_) {}
-  }
-
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-    try {
-      chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === 'local' && changes && changes.igShareHost) {
-          const nextHost = changes.igShareHost.newValue;
-          if (ALLOWED_IG_SHARE_HOSTS.includes(nextHost)) {
-            cachedIgShareHost = nextHost;
-          }
-        }
-      });
-    } catch (_) {}
-  }
+  const igShare = globalThis.MediaLatchCopyKit.shareHost('igShareHost', ALLOWED_IG_SHARE_HOSTS, DEFAULT_IG_SHARE_HOST);
 
   const RESERVED_IG_ROUTES = new Set([
     'audio', 'videos', 'tagged', 'explore', 'feed', 'reels', 'reel',
@@ -172,7 +138,7 @@
    * Input must be HTTPS instagram.com URL with valid /p/ or /reel/ shortcode.
    * Suffixes, query string, and hash are omitted. Rejects non-post routes such as /reel/audio/.
    */
-  function formatInstagramShareUrl(rawUrl, targetHost = cachedIgShareHost) {
+  function formatInstagramShareUrl(rawUrl, targetHost = igShare.get()) {
     if (!rawUrl || typeof rawUrl !== 'string') return null;
 
     const host = ALLOWED_IG_SHARE_HOSTS.includes(targetHost) ? targetHost : DEFAULT_IG_SHARE_HOST;
@@ -1085,7 +1051,7 @@
 
       const rawUrl = (liveCard ? extractInstagramUrl(liveCard) : null) ||
                      (liveRail && liveRail !== liveCard ? extractInstagramUrl(liveRail) : null);
-      const shareUrl = rawUrl ? formatInstagramShareUrl(rawUrl, cachedIgShareHost) : null;
+      const shareUrl = rawUrl ? formatInstagramShareUrl(rawUrl, igShare.get()) : null;
 
       // Temporary DOM-inspectable diagnostics for live debugging without leaking sensitive data
       wrap.setAttribute('data-diagnostic-click', String(Date.now()));
@@ -1124,54 +1090,7 @@
         return;
       }
 
-      let copied = false;
-      let usedMethod = 'none';
-      const nav = (typeof window !== 'undefined' && window.navigator) ? window.navigator : (typeof navigator !== 'undefined' ? navigator : null);
-      try {
-        if (nav && nav.clipboard && typeof nav.clipboard.writeText === 'function') {
-          await nav.clipboard.writeText(shareUrl);
-          copied = true;
-          usedMethod = 'writeText';
-        }
-      } catch (_) {}
-
-      if (!copied && typeof document !== 'undefined') {
-        try {
-          const ta = document.createElement('textarea');
-          ta.value = shareUrl;
-          ta.style.position = 'fixed';
-          ta.style.opacity = '0';
-          ta.style.pointerEvents = 'none';
-
-          // Shield copy event against page-level capture/bubble interference
-          const copyShield = (ce) => {
-            if (ce && ce.clipboardData && typeof ce.clipboardData.setData === 'function') {
-              ce.clipboardData.setData('text/plain', shareUrl);
-              if (typeof ce.preventDefault === 'function') ce.preventDefault();
-            }
-            if (ce && typeof ce.stopImmediatePropagation === 'function') {
-              ce.stopImmediatePropagation();
-            } else if (ce && typeof ce.stopPropagation === 'function') {
-              ce.stopPropagation();
-            }
-          };
-          if (typeof ta.addEventListener === 'function') {
-            ta.addEventListener('copy', copyShield, { capture: true });
-          }
-
-          document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          copied = document.execCommand('copy');
-          if (typeof ta.removeEventListener === 'function') {
-            ta.removeEventListener('copy', copyShield, { capture: true });
-          }
-          document.body.removeChild(ta);
-          if (copied) {
-            usedMethod = 'execCommand_shielded';
-          }
-        } catch (_) {}
-      }
+      const { copied, method: usedMethod } = await globalThis.MediaLatchCopyKit.copyText(shareUrl);
 
       wrap.setAttribute('data-diagnostic-fail-branch', copied ? 'none' : 'clipboard_failed');
       wrap.setAttribute('data-diagnostic-clipboard', copied ? 'success' : 'failure');
@@ -1237,7 +1156,6 @@
     return true;
   }
 
-  let isScanPending = false;
 
   function scanAndInjectInstagramCopyButtons(root = (typeof document !== 'undefined' ? document : null)) {
     if (!root || typeof root.querySelectorAll !== 'function') return 0;
@@ -1322,100 +1240,19 @@
     return count;
   }
 
-  function requestThrottledScan(root = null) {
-    if (isScanPending) return;
-    isScanPending = true;
-    const targetRoot = root || (typeof document !== 'undefined' ? document : null);
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => {
-        isScanPending = false;
-        scanAndInjectInstagramCopyButtons(targetRoot);
-      });
-    } else {
-      setTimeout(() => {
-        isScanPending = false;
-        scanAndInjectInstagramCopyButtons(targetRoot);
-      }, 50);
-    }
-  }
+  const requestThrottledScan = globalThis.MediaLatchCopyKit.scheduler((root) => scanAndInjectInstagramCopyButtons(root));
 
-  let igCopyObserver = null;
-
-  function initInstagramCopyButtonObserver() {
-    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return null;
-
-    ensureIgButtonStyles();
-    scanAndInjectInstagramCopyButtons();
-
-    if (igCopyObserver) {
-      try { igCopyObserver.disconnect(); } catch (_) {}
-    }
-
-    igCopyObserver = new MutationObserver((mutations) => {
-      let shouldScan = false;
-      for (const m of mutations) {
-        if (m.addedNodes && m.addedNodes.length > 0) {
-          shouldScan = true;
-          break;
-        }
-        if (m.removedNodes && m.removedNodes.length > 0) {
-          for (const n of m.removedNodes) {
-            if (n.classList && (n.classList.contains('image-saver-ig-copy-wrap') || (n.querySelector && n.querySelector('.image-saver-ig-copy-wrap')))) {
-              shouldScan = true;
-              break;
-            }
-          }
-          if (shouldScan) break;
-        }
-      }
-      if (shouldScan) {
-        requestThrottledScan();
-      }
-    });
-
-    const target = document.body || document.documentElement;
-    if (target) {
-      igCopyObserver.observe(target, { childList: true, subtree: true });
-    }
-
-    return igCopyObserver;
-  }
+  const initInstagramCopyButtonObserver = globalThis.MediaLatchCopyKit.observer({ prepare: ensureIgButtonStyles, scan: scanAndInjectInstagramCopyButtons, request: requestThrottledScan, ownClass: 'image-saver-ig-copy-wrap' });
 
   if (typeof window !== 'undefined') {
     // Intercept scroll events in capture phase so inner overflow containers (e.g. scrollable Reel feeds) trigger re-scans
     window.addEventListener('scroll', () => requestThrottledScan(), { capture: true, passive: true });
     window.addEventListener('resize', () => requestThrottledScan(), { passive: true });
-    window.addEventListener('popstate', () => requestThrottledScan());
-    if (typeof history !== 'undefined') {
-      if (typeof history.pushState === 'function') {
-        const origPush = history.pushState;
-        history.pushState = function (...args) {
-          const res = origPush.apply(this, args);
-          requestThrottledScan();
-          return res;
-        };
-      }
-      if (typeof history.replaceState === 'function') {
-        const origReplace = history.replaceState;
-        history.replaceState = function (...args) {
-          const res = origReplace.apply(this, args);
-          requestThrottledScan();
-          return res;
-        };
-      }
-    }
   }
+  globalThis.MediaLatchCopyKit.navigation(requestThrottledScan);
 
-  if (typeof document !== 'undefined') {
-    document.addEventListener('scroll', () => requestThrottledScan(), { capture: true, passive: true });
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
-        initInstagramCopyButtonObserver();
-      }, { once: true });
-    } else {
-      initInstagramCopyButtonObserver();
-    }
-  }
+  if (typeof document !== 'undefined') document.addEventListener('scroll', () => requestThrottledScan(), { capture: true, passive: true });
+  globalThis.MediaLatchCopyKit.whenReady(initInstagramCopyButtonObserver);
 
   // Export functions to global scope for unit testing in Node/vm if applicable
   if (typeof globalThis !== 'undefined') {
@@ -1440,8 +1277,8 @@
     globalThis.__isVerticalActionRail = isVerticalActionRail;
     globalThis.__refreshInstagramButtonLayout = refreshInstagramButtonLayout;
     globalThis.__isInsideExcludedPostSection = isInsideExcludedPostSection;
-    globalThis.__setCachedIgShareHost = (h) => { cachedIgShareHost = h; };
-    globalThis.__getCachedIgShareHost = () => cachedIgShareHost;
+    globalThis.__setCachedIgShareHost = (h) => igShare.set(h);
+    globalThis.__getCachedIgShareHost = () => igShare.get();
     globalThis.__ALLOWED_IG_SHARE_HOSTS = ALLOWED_IG_SHARE_HOSTS;
     globalThis.__DEFAULT_IG_SHARE_HOST = DEFAULT_IG_SHARE_HOST;
   }

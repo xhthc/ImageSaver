@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const root = { structuredClone, console };
 vm.createContext(root);
-for (const p of ['lib/feedback.js', 'lib/statistics.js']) vm.runInContext(fs.readFileSync(p, 'utf8'), root);
+for (const p of ['lib/feedback.js', 'lib/sites.js', 'worker/statistics.js']) vm.runInContext(fs.readFileSync(p, 'utf8'), root);
 const FB = root.ImageSaverFeedback;
 function memory(initial = {}) {
   let state = initial.state, ops = new Map(initial.ops || []), deny = false;
@@ -57,6 +57,10 @@ const rec = (id, createdAt = 10, state = 'complete') => FB.sanitizeRecord({ id, 
   await resumed.record(rec('tx-operation', clock + 3)); assert.equal((await resumed.list()).stats.total, 1, 'IDB adapter survives a fresh service instance');
   // ---- STATISTICS-BY-SITE-01: site buckets ----
   const { SITES, siteOf, add } = root.MediaLatchStatistics;
+  // UA-05: the canonical site record (lib/sites.js) keeps every persisted id and its order, the Booru view group and the folder domains the three lists held separately before
+  assert.equal(JSON.stringify(SITES), JSON.stringify(['x', 'reddit', 'pixiv', 'redgifs', 'pawchive', 'zerochan', 'anime-pictures', 'danbooru', 'rule34', 'safebooru', 'gelbooru', 'realbooru', 'xbooru', 'hypnohub', 'tbib', 'curveybooru', 'inkbooru', 'mspabooru', 'scatbooru', 'yakui', 'e621', 'yande.re', 'konachan', 'e-shuushuu', 'sankaku', 'tenor', 'giphy', 'wikimedia', 'other', 'unattributed']), 'statistics bucket ids and their order');
+  assert.equal(JSON.stringify(root.MediaLatchSites.SITES.filter((site) => site.booru).map((site) => site.id)), JSON.stringify(['danbooru', 'rule34', 'safebooru', 'gelbooru', 'realbooru', 'xbooru', 'hypnohub', 'tbib', 'curveybooru', 'inkbooru', 'mspabooru', 'scatbooru', 'yakui', 'e621', 'yande.re', 'konachan', 'sankaku']), 'the Booru view group');
+  assert.equal(JSON.stringify(Object.fromEntries(root.MediaLatchSites.SITES.filter((site) => site.domains).map((site) => [site.id, site.domains]))), JSON.stringify({ x: ['x.com', 'twitter.com', 'twimg.com'], reddit: ['reddit.com', 'redd.it'], pixiv: ['pixiv.net', 'pximg.net'], redgifs: ['redgifs.com'], zerochan: ['zerochan.net'], 'anime-pictures': ['anime-pictures.net'], danbooru: ['donmai.us'], rule34: ['rule34.xxx'], safebooru: ['safebooru.org'], gelbooru: ['gelbooru.com'], realbooru: ['realbooru.com'], xbooru: ['xbooru.com'], hypnohub: ['hypnohub.net'], tbib: ['tbib.org'], curveybooru: ['curveybooru.com'], inkbooru: ['inkbooru.com'], mspabooru: ['mspabooru.com'], scatbooru: ['scatbooru.com'], yakui: ['yakui.ru'], e621: ['e621.net', 'e926.net', 'e6ai.net'], 'yande.re': ['yande.re'], konachan: ['konachan.com', 'konachan.net'], 'e-shuushuu': ['e-shuushuu.net'], sankaku: ['sankakucomplex.com'], tenor: ['tenor.com'], giphy: ['giphy.com'], wikimedia: ['wikimedia.org', 'wikipedia.org'] }), 'folder domains');
   const at = (id, site, createdAt = 10, state = 'complete') => FB.sanitizeRecord({ ...rec(id, createdAt, state), site });
   const reconciled = (state, label) => {
     let sum = FB.computeStats([]);
@@ -140,10 +144,11 @@ const rec = (id, createdAt = 10, state = 'complete') => FB.sanitizeRecord({ id, 
     await m.record(at('tx-op-2', 'reddit')); assert.equal(total(await m.list(), 'reddit'), 1, 'the retry after an abort counts exactly once');
   }
   {
-    // The category list covers every supported owning site that lib/download_paths.js knows, and RedGIFs inside Reddit is Reddit.
+    // The category list covers every supported owning site that worker/download_paths.js knows, and RedGIFs inside Reddit is Reddit.
     const ctx = { console, URL }; vm.createContext(ctx);
     vm.runInContext(fs.readFileSync('lib/folder_path.js', 'utf8'), ctx);
-    vm.runInContext('const FolderPath = globalThis.ImageSaverFolderPath; function isSameOrSubdomain(h, d) { return h === d || h.endsWith("." + d); }' + fs.readFileSync('lib/download_paths.js', 'utf8') + ';globalThis.__rules = FOLDER_SITE_RULES; globalThis.__owner = determineOwningWebsite;', ctx);
+    vm.runInContext(fs.readFileSync('lib/sites.js', 'utf8'), ctx);
+    vm.runInContext('const FolderPath = globalThis.ImageSaverFolderPath; function isSameOrSubdomain(h, d) { return h === d || h.endsWith("." + d); }' + fs.readFileSync('worker/download_paths.js', 'utf8') + ';globalThis.__rules = FOLDER_SITE_RULES; globalThis.__owner = determineOwningWebsite;', ctx);
     for (const [site] of ctx.__rules) if (site !== 'google' && site !== 'yandex') assert.notEqual(siteOf({ site }), 'other', 'the supported site ' + site + ' has a statistics category');
     const owner = (pageUrl, resolvedUrl = '') => siteOf({ site: ctx.__owner({ pageUrl, resolvedUrl }) });
     assert.equal(owner('https://www.reddit.com/r/gifs/comments/abc/', 'https://thumbs2.redgifs.com/clip.mp4'), 'reddit', 'Reddit-embedded RedGIFs belongs to Reddit');

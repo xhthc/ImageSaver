@@ -1,4 +1,4 @@
-// Classic worker module; loaded by background.js right before lib/worker/providers.js.
+// Classic worker module; loaded by background.js right before worker/providers.js.
 // X selected-player recovery: the MAIN-world reader of the owning post's declared video variants and its worker-side caller.
 
 /**

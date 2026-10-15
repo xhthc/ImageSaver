@@ -1,4 +1,4 @@
-// Storage keys the pages watch. FEEDBACK_KEY is the tracker's persistence key (lib/feedback_tracker.js STORAGE_KEY, session storage
+// Storage keys the pages watch. FEEDBACK_KEY is the tracker's persistence key (worker/feedback_tracker.js STORAGE_KEY, session storage
 // with a local fallback); its change means "the list on this page is out of date" and the page re-asks the background through
 // FEEDBACK_LIST, so the sender validation, the sanitizing and the retention rules stay in one place. HISTORY_ENABLED_KEY is the
 // recording preference of the statistics switch that the worker reads (background.js statistics). test_ux_ui.js asserts both.

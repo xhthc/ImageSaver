@@ -24,12 +24,37 @@ function run(name, args, { cwd = root, timeout = 30000 } = {}) {
 }
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+// Every load path of the runtime resolves to a file, no runtime script is left unreferenced, and every test file of tests/ is named below: a move that edits only some consumers fails here.
+function inventory(testFiles) {
+  const problems = [];
+  const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+  const referenced = new Set();
+  const need = (file, from) => { referenced.add(file); if (!fs.existsSync(path.join(root, file))) problems.push(`${from} -> missing ${file}`); };
+  need(manifest.background.service_worker, 'manifest service_worker');
+  for (const file of manifest.content_scripts.flatMap(entry => entry.js)) need(file, 'manifest content script');
+  for (const [, file] of read('background.js').matchAll(/importScripts\('([^']+)'\)/g)) need(file, 'background.js importScripts');
+  for (const [, file] of read('offscreen.html').matchAll(/<script src="([^"]+)"/g)) need(file, 'offscreen.html');
+  for (const [, file] of read('offscreen.js').matchAll(/getURL\('([^']+)'\)/g)) need(file, 'offscreen.js getURL');
+  for (const dir of ['lib', 'worker', 'offscreen']) {
+    for (const file of fs.readdirSync(path.join(root, dir)).filter(f => f.endsWith('.js') || f.endsWith('.mjs'))) {
+      if (!referenced.has(`${dir}/${file}`)) problems.push(`orphan runtime script ${dir}/${file}`);
+    }
+  }
+  for (const file of fs.readdirSync(path.join(root, 'tests')).filter(f => /^test_.*\.js$/.test(f))) {
+    if (!testFiles.includes(file)) problems.push(`test file not in the inventory: tests/${file}`);
+  }
+  for (const file of testFiles) if (!fs.existsSync(path.join(root, 'tests', file))) problems.push(`inventory names a missing test: tests/${file}`);
+  const passed = problems.length === 0;
+  results.push({ name: 'inventory', passed, exit: passed ? 0 : 1, signal: null, duration_ms: 0, error: passed ? undefined : problems.join('; ') });
+  console.log(`${passed ? 'PASS' : 'FAIL'} inventory`);
+  if (!passed) console.log(problems.join(String.fromCharCode(10)));
+}
 const syntaxFiles = new Set([
   manifest.background.service_worker,
   ...manifest.content_scripts.flatMap(entry => entry.js),
   'offscreen.js',
-  ...fs.readdirSync(path.join(root, 'lib')).filter(file => file.endsWith('.js') || file.endsWith('.mjs')).map(file => `lib/${file}`),
-  ...fs.readdirSync(path.join(root, 'lib', 'worker')).filter(file => file.endsWith('.js')).map(file => `lib/worker/${file}`),
+  // runtime scripts by execution context: shared by several contexts (lib/), the service worker (worker/), the offscreen document (offscreen/; its vendor/ is third-party)
+  ...['lib', 'worker', 'offscreen'].flatMap(dir => fs.readdirSync(path.join(root, dir)).filter(file => file.endsWith('.js') || file.endsWith('.mjs')).map(file => `${dir}/${file}`)),
   ...fs.readdirSync(path.join(root, 'tools', 'fixtures')).filter(file => file.endsWith('.js')).map(file => `tools/fixtures/${file}`),
   'tools/verify.mjs',
   'tools/package.mjs',
@@ -43,13 +68,15 @@ const tests = [
   'test_export_directory.js',
   'test_statistics.js',
   'test_sankaku_original.js',
-  'test_post_media.js', 'test_pixiv_saving.js', 'test_pixiv_inline.js',
+  'test_post_media.js', 'test_pixiv_saving.js', 'test_pixiv_inline.js', 'test_provider_routing.js',
   'test_zerochan_original.js',
   'test_suite.js', 'test_animation_duration_policy.js', 'test_context_target_avatar.js', 'test_debug_journal.js',
   'test_media_sources.js', 'test_resolver_metadata.js', 'test_booru_engines.js', 'test_generic_context_boundary.js', 'test_offscreen_resources.js', 'test_reddit_frame_lifecycle.js',
   'test_reddit_inline_diagnostic.js', 'test_reddit_inline.js', 'test_redgifs_reinjection.js', 'test_redgifs_selected_target.js', 'test_redgifs_inline.js', 'test_reddit_hls.js',
   'test_first_run.js', 'test_release_check.js', 'test_release_runtime.js', 'test_package.js', 'test_ux_feedback.js', 'test_ux_ui.js', 'test_youtube_sharing.js',
 ];
+const uiOnlyTests = ['test_ui_render.js', 'test_notifications.js']; // run by the --ui gates below
+if (!only) inventory([...tests, ...uiOnlyTests]);
 if (only && (!tests.includes(only) || withUi)) {
   console.error('--only must name an existing offline test from the list and cannot be combined with --ui.');
   process.exit(2);

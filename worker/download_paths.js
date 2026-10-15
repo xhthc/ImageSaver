@@ -24,37 +24,9 @@ function getFolderContextHost(url) {
   }
 }
 
-// Folder id -> registrable domains (exact host or subdomain; never a suffix of an unrelated name).
+// Folder id -> registrable domains (exact host or subdomain; never a suffix of an unrelated name), from the canonical site record (lib/sites.js).
 // Includes the media CDNs of X and Pixiv so a direct CDN tab is canonicalized to x/pixiv.
-const FOLDER_SITE_RULES = [
-  ['x', ['x.com', 'twitter.com', 'twimg.com']],
-  ['reddit', ['reddit.com', 'redd.it']],
-  ['pixiv', ['pixiv.net', 'pximg.net']],
-  ['zerochan', ['zerochan.net']],
-  ['anime-pictures', ['anime-pictures.net']],
-  ['redgifs', ['redgifs.com']],
-  ['danbooru', ['donmai.us']],
-  ['rule34', ['rule34.xxx']],
-  ['safebooru', ['safebooru.org']],
-  ['gelbooru', ['gelbooru.com']],
-  ['realbooru', ['realbooru.com']],
-  ['xbooru', ['xbooru.com']],
-  ['hypnohub', ['hypnohub.net']],
-  ['tbib', ['tbib.org']],
-  ['curveybooru', ['curveybooru.com']],
-  ['inkbooru', ['inkbooru.com']],
-  ['mspabooru', ['mspabooru.com']],
-  ['scatbooru', ['scatbooru.com']],
-  ['yakui', ['yakui.ru']],
-  ['e621', ['e621.net', 'e926.net', 'e6ai.net']],
-  ['yande.re', ['yande.re']],
-  ['konachan', ['konachan.com', 'konachan.net']],
-  ['e-shuushuu', ['e-shuushuu.net']],
-  ['sankaku', ['sankakucomplex.com']],
-  ['tenor', ['tenor.com']],
-  ['giphy', ['giphy.com']],
-  ['wikimedia', ['wikimedia.org', 'wikipedia.org']]
-];
+const FOLDER_SITE_RULES = MediaLatchSites.SITES.filter((site) => site.domains).map((site) => [site.id, site.domains]);
 
 const FOLDER_GROUP_PROVIDER_SITES = Object.freeze({
   twitter: 'x', x: 'x', reddit: 'reddit', pixiv: 'pixiv', zerochan: 'zerochan',
@@ -62,15 +34,18 @@ const FOLDER_GROUP_PROVIDER_SITES = Object.freeze({
   e621: 'e621', tenor: 'tenor', giphy: 'giphy', wikimedia: 'wikimedia'
 });
 
+// Search engines are country domains (google.com, google.co.uk, yandex.com.tr): explicit label boundaries and ccTLD shapes, never a substring of the host.
+function isGoogleHost(host) { return /(^|\.)google\.(com|co\.[a-z]{2}|com\.[a-z]{2}|[a-z]{2})$/.test(String(host || '').toLowerCase()); }
+function isYandexHost(host) { const h = String(host || '').toLowerCase(); return /(^|\.)yandex\.(com|com\.tr|[a-z]{2})$/.test(h) || isSameOrSubdomain(h, 'ya.ru'); }
+
 /** Known site folder for a validated hostname, or '' when the host is not a mapped site. */
 function getKnownFolderSite(host) {
   if (!host) return '';
   for (const [site, domains] of FOLDER_SITE_RULES) {
     if (domains.some((d) => isSameOrSubdomain(host, d))) return site;
   }
-  // Search engines: explicit label boundaries and ccTLD shapes, never substring matches.
-  if (/(^|\.)google\.(com|co\.[a-z]{2}|com\.[a-z]{2}|[a-z]{2})$/.test(host)) return 'google';
-  if (/(^|\.)yandex\.(com|com\.tr|[a-z]{2})$/.test(host) || isSameOrSubdomain(host, 'ya.ru')) return 'yandex';
+  if (isGoogleHost(host)) return 'google';
+  if (isYandexHost(host)) return 'yandex';
   return '';
 }
 

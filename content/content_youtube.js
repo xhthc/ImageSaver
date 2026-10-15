@@ -9,14 +9,7 @@
   const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {} };
   DBG.log('youtube', 'init', 'info');
   'use strict';
-  const isI18n = globalThis.ImageSaverI18n;
-  const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
-  const isLabel = (element, field, key, fallback, vars) => {
-    if (isLabels) isLabels.label(element, field, key, vars, fallback);
-    else if (field === 'textContent') element.textContent = fallback;
-    else if (fallback === null) element.removeAttribute(field);
-    else element.setAttribute(field, fallback);
-  };
+  const isLabel = globalThis.MediaLatchCopyKit.labeler();
 
   const YT_BUTTON_STYLES = `
 .image-saver-yt-copy-wrap {
@@ -92,32 +85,7 @@
     'youtu.be'
   ]);
 
-  let cachedYtShareHost = DEFAULT_YT_SHARE_HOST;
-
-  // Initialize cached host from chrome.storage.local
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    try {
-      chrome.storage.local.get({ youtubeShareHost: DEFAULT_YT_SHARE_HOST }, (items) => {
-        if (chrome.runtime && chrome.runtime.lastError) return;
-        if (items && ALLOWED_YT_SHARE_HOSTS.includes(items.youtubeShareHost)) {
-          cachedYtShareHost = items.youtubeShareHost;
-        }
-      });
-    } catch (_) {}
-
-    try {
-      chrome.storage.onChanged.addListener((changes, areaName) => {
-        if (areaName === 'local' && changes && changes.youtubeShareHost) {
-          const nextHost = changes.youtubeShareHost.newValue;
-          if (ALLOWED_YT_SHARE_HOSTS.includes(nextHost)) {
-            cachedYtShareHost = nextHost;
-          } else {
-            cachedYtShareHost = DEFAULT_YT_SHARE_HOST;
-          }
-        }
-      });
-    } catch (_) {}
-  }
+  const ytShare = globalThis.MediaLatchCopyKit.shareHost('youtubeShareHost', ALLOWED_YT_SHARE_HOSTS, DEFAULT_YT_SHARE_HOST, true);
 
   /**
    * Validates YouTube video ID syntax: exactly 11 characters from [a-zA-Z0-9_-].
@@ -155,7 +123,7 @@
    * Only allowed hosts: 'youtube.com', 'yfxtube.com', 'koutube.com'.
    * Query strings and tracking parameters are omitted.
    */
-  function formatYouTubeShareUrl(videoId, targetHost = cachedYtShareHost) {
+  function formatYouTubeShareUrl(videoId, targetHost = ytShare.get()) {
     if (!isValidYouTubeVideoId(videoId)) return null;
     const host = ALLOWED_YT_SHARE_HOSTS.includes(targetHost) ? targetHost : DEFAULT_YT_SHARE_HOST;
     return `https://${host}/shorts/${videoId}`;
@@ -385,7 +353,7 @@
 
       const pageHref = (typeof window !== 'undefined' && window.location) ? window.location.href : null;
       const videoId = extractShortVideoId(liveRenderer, pageHref);
-      const shareUrl = videoId ? formatYouTubeShareUrl(videoId, cachedYtShareHost) : null;
+      const shareUrl = videoId ? formatYouTubeShareUrl(videoId, ytShare.get()) : null;
 
       wrap.setAttribute('data-diagnostic-click', String(Date.now()));
       wrap.setAttribute('data-diagnostic-video-id', videoId || 'null');
@@ -404,56 +372,7 @@
         return;
       }
 
-      let copied = false;
-      let usedMethod = 'none';
-      const nav = (typeof window !== 'undefined' && window.navigator) ? window.navigator : (typeof navigator !== 'undefined' ? navigator : null);
-
-      try {
-        if (nav && nav.clipboard && typeof nav.clipboard.writeText === 'function') {
-          await nav.clipboard.writeText(shareUrl);
-          copied = true;
-          usedMethod = 'writeText';
-        }
-      } catch (_) {}
-
-      if (!copied && typeof document !== 'undefined') {
-        try {
-          const ta = document.createElement('textarea');
-          ta.value = shareUrl;
-          ta.style.position = 'fixed';
-          ta.style.opacity = '0';
-          ta.style.pointerEvents = 'none';
-
-          const copyShield = (ce) => {
-            if (ce && ce.clipboardData && typeof ce.clipboardData.setData === 'function') {
-              ce.clipboardData.setData('text/plain', shareUrl);
-              if (typeof ce.preventDefault === 'function') ce.preventDefault();
-            }
-            if (ce && typeof ce.stopImmediatePropagation === 'function') {
-              ce.stopImmediatePropagation();
-            } else if (ce && typeof ce.stopPropagation === 'function') {
-              ce.stopPropagation();
-            }
-          };
-
-          if (typeof ta.addEventListener === 'function') {
-            ta.addEventListener('copy', copyShield, { capture: true });
-          }
-
-          document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          copied = document.execCommand('copy');
-
-          if (typeof ta.removeEventListener === 'function') {
-            ta.removeEventListener('copy', copyShield, { capture: true });
-          }
-          document.body.removeChild(ta);
-          if (copied) {
-            usedMethod = 'execCommand_shielded';
-          }
-        } catch (_) {}
-      }
+      const { copied, method: usedMethod } = await globalThis.MediaLatchCopyKit.copyText(shareUrl);
 
       wrap.setAttribute('data-diagnostic-fail-branch', copied ? 'none' : 'clipboard_failed');
       wrap.setAttribute('data-diagnostic-clipboard', copied ? 'success' : 'failure');
@@ -521,8 +440,6 @@
     return true;
   }
 
-  let isScanPending = false;
-  let pendingScanRoot = null;
 
   function scanAndInjectYouTubeCopyButtons(root = undefined) {
     const targetRoot = root || (typeof document !== 'undefined' ? document : null);
@@ -571,110 +488,21 @@
     return count;
   }
 
-  function requestThrottledScan(targetRoot = null) {
-    if (isScanPending) {
-      if (!targetRoot || pendingScanRoot !== targetRoot) {
-        pendingScanRoot = null;
-      }
-      return;
-    }
-    isScanPending = true;
-    pendingScanRoot = targetRoot || null;
+  const requestThrottledScan = globalThis.MediaLatchCopyKit.scheduler((root) => scanAndInjectYouTubeCopyButtons(root));
 
-    const executeScan = () => {
-      isScanPending = false;
-      const rootToScan = pendingScanRoot || (typeof document !== 'undefined' ? document : null);
-      pendingScanRoot = null;
-      scanAndInjectYouTubeCopyButtons(rootToScan);
-    };
-
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(executeScan);
-    } else {
-      setTimeout(executeScan, 50);
-    }
-  }
-
-  let ytCopyObserver = null;
-
-  function initYouTubeCopyButtonObserver() {
-    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return null;
-
-    ensureYtButtonStyles();
-    scanAndInjectYouTubeCopyButtons();
-
-    if (ytCopyObserver) {
-      try { ytCopyObserver.disconnect(); } catch (_) {}
-    }
-
-    ytCopyObserver = new MutationObserver((mutations) => {
-      let shouldScan = false;
-      for (const m of mutations) {
-        if (m.addedNodes && m.addedNodes.length > 0) {
-          shouldScan = true;
-          break;
-        }
-        if (m.removedNodes && m.removedNodes.length > 0) {
-          for (const n of m.removedNodes) {
-            if (n.classList && (n.classList.contains('image-saver-yt-copy-wrap') || (n.querySelector && n.querySelector('.image-saver-yt-copy-wrap')))) {
-              shouldScan = true;
-              break;
-            }
-          }
-          if (shouldScan) break;
-        }
-      }
-      if (shouldScan) {
-        requestThrottledScan();
-      }
-    });
-
-    const target = document.body || document.documentElement;
-    if (target) {
-      ytCopyObserver.observe(target, { childList: true, subtree: true });
-    }
-
-    return ytCopyObserver;
-  }
+  const initYouTubeCopyButtonObserver = globalThis.MediaLatchCopyKit.observer({ prepare: ensureYtButtonStyles, scan: scanAndInjectYouTubeCopyButtons, request: requestThrottledScan, ownClass: 'image-saver-yt-copy-wrap' });
 
   // Register window and document listeners for SPA navigation and feed scroll
   if (typeof window !== 'undefined') {
     window.addEventListener('scroll', () => requestThrottledScan(), { capture: true, passive: true });
     window.addEventListener('resize', () => requestThrottledScan(), { passive: true });
-    window.addEventListener('popstate', () => requestThrottledScan());
     window.addEventListener('yt-navigate-finish', () => requestThrottledScan());
     window.addEventListener('yt-page-data-updated', () => requestThrottledScan());
-
-    if (typeof history !== 'undefined') {
-      if (typeof history.pushState === 'function') {
-        const origPush = history.pushState;
-        history.pushState = function (...args) {
-          const res = origPush.apply(this, args);
-          requestThrottledScan();
-          return res;
-        };
-      }
-      if (typeof history.replaceState === 'function') {
-        const origReplace = history.replaceState;
-        history.replaceState = function (...args) {
-          const res = origReplace.apply(this, args);
-          requestThrottledScan();
-          return res;
-        };
-      }
-    }
   }
+  globalThis.MediaLatchCopyKit.navigation(requestThrottledScan);
 
-  if (typeof document !== 'undefined') {
-    document.addEventListener('scroll', () => requestThrottledScan(), { capture: true, passive: true });
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
-        initYouTubeCopyButtonObserver();
-      }, { once: true });
-    } else {
-      initYouTubeCopyButtonObserver();
-    }
-  }
+  if (typeof document !== 'undefined') document.addEventListener('scroll', () => requestThrottledScan(), { capture: true, passive: true });
+  globalThis.MediaLatchCopyKit.whenReady(initYouTubeCopyButtonObserver);
 
   // Export functions to globalThis for unit tests in Node/vm
   if (typeof globalThis !== 'undefined') {
@@ -688,8 +516,8 @@
     globalThis.__initYouTubeCopyButtonObserver = initYouTubeCopyButtonObserver;
     globalThis.__ensureYtButtonStyles = ensureYtButtonStyles;
     globalThis.__requestThrottledScan = requestThrottledScan;
-    globalThis.__setCachedYtShareHost = (h) => { cachedYtShareHost = h; };
-    globalThis.__getCachedYtShareHost = () => cachedYtShareHost;
+    globalThis.__setCachedYtShareHost = (h) => ytShare.set(h);
+    globalThis.__getCachedYtShareHost = () => ytShare.get();
     globalThis.__ALLOWED_YT_SHARE_HOSTS = ALLOWED_YT_SHARE_HOSTS;
     globalThis.__DEFAULT_YT_SHARE_HOST = DEFAULT_YT_SHARE_HOST;
     globalThis.__APPROVED_YT_HOSTS = APPROVED_YT_HOSTS;

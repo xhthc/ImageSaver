@@ -39,8 +39,8 @@ const libFolder = read('lib/folder_path.js');
 // Records and a message-answering Chrome mock
 // ---------------------------------------------------------------------------------------------------
 const FB = (() => { const sb = { URL }; require('vm').createContext(sb); require('vm').runInContext(libFeedback, sb); return sb.ImageSaverFeedback; })();
-// The worker's own site buckets (lib/statistics.js) answer the statistics requests of the mocked Chrome.
-const ST = (() => { const sb = { URL, structuredClone }; require('vm').createContext(sb); require('vm').runInContext(libFeedback, sb); require('vm').runInContext(read('lib/statistics.js'), sb); return sb.MediaLatchStatistics; })();
+// The worker's own site buckets (worker/statistics.js) answer the statistics requests of the mocked Chrome.
+const ST = (() => { const sb = { URL, structuredClone }; require('vm').createContext(sb); require('vm').runInContext(libFeedback, sb); require('vm').runInContext(read('lib/sites.js'), sb); require('vm').runInContext(read('worker/statistics.js'), sb); return sb.MediaLatchStatistics; })();
 const siteBuckets = (records) => Object.fromEntries(ST.SITES.map((id) => [id, FB.computeStats(records.filter((r) => ST.siteOf(r) === id))]));
 let seq = 0;
 const T0 = Date.now() - 3600 * 1000;
@@ -162,6 +162,8 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
   win.HTMLElement.prototype.hasPointerCapture = () => false;
   win.HTMLElement.prototype.setPointerCapture = () => {};
   win.HTMLElement.prototype.releasePointerCapture = () => {};
+  // jsdom has no geometry; real scrollbar resizing and dragging are checked in the headless layout fixture.
+  win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
   win.MessageChannel = MessageChannel; // React schedules its tasks with it (jsdom has none)
   win.eval(bundle);
   win.IS_REACT_ACT_ENVIRONMENT = true;

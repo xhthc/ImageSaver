@@ -3,14 +3,7 @@
   // DEBUG-MENU-01: the shared journal client (lib/debug_journal.js); a no-op when it is absent. Never an authority, never sees a token.
   const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {}, cid() { return ''; }, enabled() { return false; } };
   DBG.log('x', 'init', 'info');
-  const isI18n = globalThis.ImageSaverI18n;
-  const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
-  const isLabel = (element, field, key, fallback, vars) => {
-    if (isLabels) isLabels.label(element, field, key, vars, fallback);
-    else if (field === 'textContent') element.textContent = fallback;
-    else if (fallback === null) element.removeAttribute(field);
-    else element.setAttribute(field, fallback);
-  };
+  const isLabel = globalThis.MediaLatchCopyKit.labeler();
   let lastContextmenuX = 0;
   let lastContextmenuY = 0;
   let savedMediaDescriptor = null;
@@ -1043,34 +1036,7 @@
 
   const ALLOWED_X_SHARE_HOSTS = ['x.com', 'fixupx.com', 'cunnyx.com'];
   const DEFAULT_X_SHARE_HOST = 'fixupx.com';
-  let cachedXShareHost = DEFAULT_X_SHARE_HOST;
-
-  // Initialize and synchronize cachedXShareHost from storage
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    try {
-      chrome.storage.local.get({ xShareHost: DEFAULT_X_SHARE_HOST }, (res) => {
-        if (chrome.runtime && chrome.runtime.lastError) return;
-        if (res && ALLOWED_X_SHARE_HOSTS.includes(res.xShareHost)) {
-          cachedXShareHost = res.xShareHost;
-        } else {
-          cachedXShareHost = DEFAULT_X_SHARE_HOST;
-        }
-      });
-    } catch (_) {}
-  }
-
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-    try {
-      chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === 'local' && changes && changes.xShareHost) {
-          const nextHost = changes.xShareHost.newValue;
-          if (ALLOWED_X_SHARE_HOSTS.includes(nextHost)) {
-            cachedXShareHost = nextHost;
-          }
-        }
-      });
-    } catch (_) {}
-  }
+  const xShare = globalThis.MediaLatchCopyKit.shareHost('xShareHost', ALLOWED_X_SHARE_HOSTS, DEFAULT_X_SHARE_HOST);
 
   /**
    * Constructs an embed-friendly or canonical share URL for an X/Twitter post.
@@ -1078,7 +1044,7 @@
    * Input must be HTTPS x.com or twitter.com post URL with numeric status ID.
    * Suffixes (/photo/*, /video/*), query, and hash are omitted.
    */
-  function formatXShareUrl(rawUrl, targetHost = cachedXShareHost) {
+  function formatXShareUrl(rawUrl, targetHost = xShare.get()) {
     if (!rawUrl || typeof rawUrl !== 'string') return null;
 
     const host = ALLOWED_X_SHARE_HOSTS.includes(targetHost) ? targetHost : DEFAULT_X_SHARE_HOST;
@@ -1216,7 +1182,7 @@
       if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
 
       const tweetUrl = extractTweetUrl(article);
-      const shareUrl = tweetUrl ? formatXShareUrl(tweetUrl, cachedXShareHost) : null;
+      const shareUrl = tweetUrl ? formatXShareUrl(tweetUrl, xShare.get()) : null;
       if (!shareUrl) {
         DBG.log('x.copy', 'link', 'failed', 'NO_POST_LINK');
         wrap.classList.add('is-error');
@@ -1279,7 +1245,6 @@
     return true;
   }
 
-  let isScanPending = false;
 
   function scanAndInjectXCopyButtons(root = (typeof document !== 'undefined' ? document : null)) {
     if (!root || typeof root.querySelectorAll !== 'function') return 0;
@@ -1296,80 +1261,18 @@
     return count;
   }
 
-  function requestThrottledScan() {
-    if (isScanPending) return;
-    isScanPending = true;
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => {
-        isScanPending = false;
-        scanAndInjectXCopyButtons();
-      });
-    } else {
-      setTimeout(() => {
-        isScanPending = false;
-        scanAndInjectXCopyButtons();
-      }, 50);
-    }
-  }
+  const requestThrottledScan = globalThis.MediaLatchCopyKit.scheduler((root) => scanAndInjectXCopyButtons(root));
 
-  let xCopyObserver = null;
+  const initXCopyButtonObserver = globalThis.MediaLatchCopyKit.observer({ prepare: ensureXButtonStyles, scan: scanAndInjectXCopyButtons, request: requestThrottledScan });
 
-  function initXCopyButtonObserver() {
-    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return null;
+  globalThis.MediaLatchCopyKit.whenReady(initXCopyButtonObserver);
 
-    ensureXButtonStyles();
-    scanAndInjectXCopyButtons();
-
-    if (xCopyObserver) {
-      try { xCopyObserver.disconnect(); } catch (_) {}
-    }
-
-    xCopyObserver = new MutationObserver((mutations) => {
-      let hasAdded = false;
-      for (const m of mutations) {
-        if (m.addedNodes && m.addedNodes.length > 0) {
-          hasAdded = true;
-          break;
-        }
-      }
-      if (hasAdded) {
-        requestThrottledScan();
-      }
-    });
-
-    const target = document.body || document.documentElement;
-    if (target) {
-      xCopyObserver.observe(target, { childList: true, subtree: true });
-    }
-
-    return xCopyObserver;
-  }
-
-  if (typeof document !== 'undefined') {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
-        initXCopyButtonObserver();
-      }, { once: true });
-    } else {
-      initXCopyButtonObserver();
-    }
-  }
-
-  // --- UX-10: inline Save control over X post media ("Save this" always; "Save all (N)" only for a post with several owned media) ---
-  // One control (a closed shadow root in one host element) attached INSIDE the selected media's own tile: a local absolute child
-  // of the nearest positioned ancestor that is not above the nearest clipping ancestor, so the browser clips it with the tile and
-  // moves it with the slide. Its place comes from the visible part of the media (clipped by every clipping ancestor, the owning
-  // post and the viewport), never from a raw image or carousel-track rectangle. When no such container can be proven it is hidden.
-  // Hover does O(1) work and no network request. A click captures a fresh owner snapshot of that very element and sends only a
-  // random token; background.js validates the sender and asks THIS document (same frame and document id) to prove the snapshot
-  // again and to build the descriptor with the same builder the context menu uses, then runs the same X pipeline. No URL from
-  // this message is ever trusted, no cursor state of the context menu is reused and no contextmenu event is simulated.
+  // --- UX-10: the post-owner proof the inline Save control (content/content_inline.js) and the context menu share ---
+  // A snapshot proves again that the same media element, in the same post container, still shows the same source in the same place of the tree.
+  // The control itself (placement, "Save all", tokens, descriptors) lives in content_inline.js and reaches these through globalThis.__medialatchSite.x.
   const XI_PROMOTED = ['ad', 'promoted', 'реклама'];
-  const XI = { HOVER_MS: 60, MAX_STACK: 24, MIN_W: 96, MIN_H: 64, TOKEN_TTL: 15000, CLICK_GAP: 1500, CHAIN: 14, INSET: 8, SIZE: 32, Z: 1, SETTLE_MS: 100, SETTLE_MAX: 12, DEPTH: 40, BATCH_MAX: 100, BATCH_TTL: 180000, MULTI_W: 104, MULTI_H: 60, COMPACT_W: 80, COMPACT_H: 32, ENUM_NODES: 400, TOL: 2, CORNER: 3 };
-  const xiState = { host: null, btn: null, btnAll: null, lbl: null, lblAll: null, count: 0, compact: false, snap: null, el: null, observer: null, timer: null, settleTimer: null, settleN: 0, rearmTimer: null, rearmN: 0, sig: '', href: '', x: 0, y: 0, busyKey: '', busyAt: 0, busyTimer: null, keyEl: null, dismissed: null };
-  const xiPending = new Map();
+  const XI_CHAIN = 14;
   const xiPromotedCache = new WeakMap();
-  const xiBatches = new Map();
 
   function xiImageKind(url) {
     if (!url || typeof url !== 'string') return null;
@@ -1431,7 +1334,7 @@
     if (!o || (!allowPromoted && xiPromoted(o.article))) return null;
     if (typeof el.getBoundingClientRect !== 'function') return null;
     const chain = [];
-    for (let p = el.parentElement; p && chain.length < XI.CHAIN; p = p.parentElement) {
+    for (let p = el.parentElement; p && chain.length < XI_CHAIN; p = p.parentElement) {
       chain.push(new WeakRef(p));
       if (p === o.owner) break;
     }
@@ -1462,710 +1365,6 @@
     }
   }
 
-  function xiSame(a, b) {
-    return a.elRef.deref() === b.elRef.deref() && a.ownerRef.deref() === b.ownerRef.deref() && a.articleRef.deref() === b.articleRef.deref() &&
-      a.isQuote === b.isQuote && a.id === b.id && a.tag === b.tag && a.src === b.src && a.kind === b.kind &&
-      a.chain.length === b.chain.length && a.chain.every((ref, i) => ref.deref() === b.chain[i].deref());
-  }
-
-  function xiCandidate(stack) {
-    const own = xiState.host;
-    for (const el of stack.slice(0, XI.MAX_STACK)) {
-      if (!el || (own && (el === own || (typeof own.contains === 'function' && own.contains(el))))) continue;
-      if (el.tagName === 'VIDEO') return { el, kind: 'video' };
-      if (el.tagName === 'IMG') {
-        const kind = xiImageKind(el.currentSrc || el.src);
-        if (!kind) return null; // the topmost image is an avatar, emoji or card: no button for the media behind it
-        if (kind === 'photo') return { el, kind };
-        // a poster over its own player: the player is the selected media
-        const player = stack.slice(0, XI.MAX_STACK).find((v) => v && v.tagName === 'VIDEO' && xiOwnerOf(v) && xiOwnerOf(v).owner === (xiOwnerOf(el) || {}).owner);
-        return player ? { el: player, kind: 'video' } : { el, kind };
-      }
-    }
-    // pointer-events:none media is absent from the hit stack; its local layer must contain exactly one media at this point.
-    for (const node of stack.slice(0, XI.MAX_STACK)) {
-      if (!node || node === document.body || node === document.documentElement ||
-          (own && (node === own || (typeof own.contains === 'function' && own.contains(node))))) continue;
-      if (typeof node.closest !== 'function' || !node.closest('article')) return null;
-      const el = xiMediaWithin(node, { x: xiState.x, y: xiState.y });
-      if (el) return { el, kind: el.tagName === 'VIDEO' ? 'video' : xiImageKind(el.currentSrc || el.src) };
-    }
-    return null;
-  }
-
-  // ---- placement: the visible part of the selected media and a container that clips and moves the control with it ----
-  const xiClips = (cs) => ['overflow', 'overflowX', 'overflowY'].some((k) => cs[k] && cs[k] !== 'visible');
-
-  // { vis, host, left, top, sig } or null when no safe place can be proven. `w`/`h` are the control's size.
-  function xiLayout(el, owner, w, h, compact = false) {
-    try {
-      if (!el || !owner || typeof el.getBoundingClientRect !== 'function' || typeof window.getComputedStyle !== 'function') return null;
-      const r = el.getBoundingClientRect();
-      let L = r.left, T = r.top, Rt = r.right, B = r.bottom;
-      const clip = (b) => { L = Math.max(L, b.left); T = Math.max(T, b.top); Rt = Math.min(Rt, b.right); B = Math.min(B, b.bottom); };
-      let container = null, containerAt = -1, clipAt = -1, reached = false;
-      let depth = 0;
-      for (let p = el.parentElement; p && depth < XI.DEPTH; p = p.parentElement, depth++) {
-        const cs = window.getComputedStyle(p);
-        if (!cs) return null;
-        if (p !== owner && xiClips(cs)) {
-          clip(p.getBoundingClientRect());
-          if (clipAt < 0) clipAt = depth;
-        }
-        if (containerAt < 0 && cs.position && cs.position !== 'static') { container = p; containerAt = depth; }
-        if (p === owner) { reached = true; break; }
-      }
-      // A control inside a positioned ancestor is clipped by that ancestor and everything above it; a clipping ancestor below
-      // the container would not clip it, so the nearest clipping ancestor must be the container itself or above it.
-      if (!reached || !container || (clipAt >= 0 && containerAt > clipAt)) return null;
-      const carouselLeft = L, carouselRight = Rt;
-      clip(owner.getBoundingClientRect());
-      const vw = (typeof window.innerWidth === 'number' && window.innerWidth) || 0;
-      const vh = (typeof window.innerHeight === 'number' && window.innerHeight) || 0;
-      clip({ left: 0, top: 0, right: vw || Rt, bottom: vh || B });
-      if (!(Rt - L >= Math.max(XI.MIN_W, w + 2 * XI.INSET)) || !(B - T >= Math.max(XI.MIN_H, h + 2 * XI.INSET))) return null;
-      // A carousel may expose only part of neighbouring media: keep the icon pair inside that visible part.
-      // Vertical clipping and clipping by the post or viewport still hide the control; only ancestor-clipped supported media qualifies.
-      if (T - r.top > XI.TOL || r.bottom - B > XI.TOL) return null;
-      if ((L - r.left > XI.TOL || r.right - Rt > XI.TOL) &&
-          (!compact || !(el.tagName === 'VIDEO' || (el.tagName === 'IMG' && xiImageKind(el.currentSrc || el.src))) || clipAt < 0 ||
-           L - carouselLeft > XI.TOL || carouselRight - Rt > XI.TOL)) return null;
-      if (xiCovered(owner, { left: L, top: T, right: Rt, bottom: B },
-        { left: Rt - XI.INSET - w, top: T + XI.INSET, right: Rt - XI.INSET, bottom: T + XI.INSET + h })) return null;
-      const cr = container.getBoundingClientRect();
-      // a scaled or rotated container: local pixels no longer equal viewport pixels
-      if (typeof container.offsetWidth === 'number' && container.offsetWidth > 0 && Math.abs(cr.width - container.offsetWidth) > 2) return null;
-      const left = Math.round(Rt - XI.INSET - w - cr.left - (container.clientLeft || 0) + (container.scrollLeft || 0));
-      const top = Math.round(T + XI.INSET - cr.top - (container.clientTop || 0) + (container.scrollTop || 0));
-      return { vis: { left: L, top: T, right: Rt, bottom: B }, host: container, left, top, w, h, sig: [L, T, Rt, B, cr.left, cr.top, w, h].map(Math.round).join(',') };
-    } catch (_) {
-      return null;
-    }
-  }
-
-  // Rounded media corners may hit the enclosing card backdrop; accepting it also requires owned control-area hits.
-  function xiCovered(owner, vis, control) {
-    if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return false;
-    const host = xiState.host;
-    const d = XI.CORNER;
-    let backdrop = false;
-    for (const box of [vis, control]) {
-      if (box === control && !backdrop) break;
-      for (const [x, y] of [[box.left + d, box.top + d], [box.right - d, box.top + d], [box.left + d, box.bottom - d], [box.right - d, box.bottom - d]]) {
-        const t = document.elementFromPoint(x, y);
-        if (!t) return true;
-        if (t === host || (typeof owner.contains === 'function' && owner.contains(t))) continue;
-        if (box !== vis || typeof t.contains !== 'function' || !t.contains(owner)) return true;
-        backdrop = true;
-      }
-    }
-    return false;
-  }
-
-  const xiPointIn = (b, x, y) => x >= b.left - 1 && x <= b.right + 1 && y >= b.top - 1 && y <= b.bottom + 1;
-
-  // ---- the media a post owns (for the explicit "Save all"): its own photos, videos and GIFs, nothing nested or around it ----
-  function xiHash(s) {
-    let h = 0x811c9dc5;
-    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-    return h.toString(16).padStart(8, '0');
-  }
-
-  // The identity of a media slot from X's own thumbnail/media paths, used only to count a player and its poster once.
-  function xiSlotKey(el) {
-    const srcs = el.tagName === 'VIDEO'
-      ? [(el.getAttribute && el.getAttribute('poster')) || el.poster || '', el.currentSrc || el.src || '']
-      : [el.currentSrc || el.src || ''];
-    for (const s of srcs) {
-      let m;
-      if (/^https:\/\/pbs\.twimg\.com\//.test(s) && (m = /\/media\/([^/?#.]+)/.exec(s))) return `p:${m[1]}`;
-      if ((m = /\/tweet_video(?:_thumb)?\/([^/?#.]+)/.exec(s))) return `g:${m[1]}`;
-      if ((m = /\/(?:ext_tw_video|amplify_video)(?:_thumb)?\/(\d+)/.exec(s))) return `v:${m[1]}`;
-    }
-    return null;
-  }
-
-  // [{ el, kind }] in document order: only elements whose own container is this owner (media of a nested quote or article, avatars,
-  // emoji, link cards, hidden or zero-size elements and a poster that belongs to a player in the same slot are not counted).
-  function xiEnumerate(owner) {
-    if (!owner || typeof owner.querySelectorAll !== 'function') return [];
-    const out = [];
-    const seen = new Map();
-    const nodes=Array.from(owner.querySelectorAll('video, img'));
-    if(nodes.length>XI.ENUM_NODES)return [];
-    for (const el of nodes) {
-      const o = xiOwnerOf(el);
-      if (!o || o.owner !== owner || typeof el.getBoundingClientRect !== 'function') continue;
-      const r = el.getBoundingClientRect();
-      if (!(r.width > 0 && r.height > 0)) continue;
-      let kind = 'video';
-      if (el.tagName !== 'VIDEO') {
-        kind = xiImageKind(el.currentSrc || el.src);
-        if (!kind) continue;
-        if (kind !== 'photo') {
-          const slot = el.parentElement && el.parentElement.parentElement;
-          if (slot && slot !== owner && typeof slot.querySelector === 'function' && slot.querySelector('video')) continue;
-        }
-      }
-      const key = xiSlotKey(el);
-      if (key && seen.has(key)) {
-        const at = seen.get(key);
-        if (out[at].el.tagName !== 'VIDEO' && el.tagName === 'VIDEO') out[at] = { el, kind };
-        continue;
-      }
-      if (key) seen.set(key, out.length);
-      out.push({ el, kind });
-    }
-    return out;
-  }
-
-  // N when the hovered media belongs to a post with several owned media (2..BATCH_MAX), otherwise 0 (a one-item post: no "all").
-  function xiCountFor(owner, el) {
-    const items = xiEnumerate(owner);
-    return items.length >= 2 && items.length <= XI.BATCH_MAX && items.some((i) => i.el === el) ? items.length : 0;
-  }
-
-  const xiSize = () => (xiState.count >= 2
-    ? (xiState.compact ? { w: XI.COMPACT_W, h: XI.COMPACT_H } : { w: XI.MULTI_W, h: XI.MULTI_H })
-    : { w: XI.SIZE, h: XI.SIZE });
-
-  // The control this media gets and the place for it. A post with several owned media always keeps both explicit actions: the
-  // labelled pair when the tile can hold it, else two icon-only buttons (the count on the second) that fit any tile the single
-  // button would fit; if not even that fits, nothing is shown (never a single action that hides Save all). One media: one button.
-  function xiPlan(el, snap) {
-    const owner = snap.ownerRef.deref();
-    const n = xiCountFor(owner, el);
-    if (n >= 2) {
-      const wide = xiLayout(el, owner, XI.MULTI_W, XI.MULTI_H);
-      if (wide) return { n, compact: false, lay: wide };
-      const compact = xiLayout(el, owner, XI.COMPACT_W, XI.COMPACT_H, true);
-      return compact ? { n, compact: true, lay: compact } : null;
-    }
-    const lay = xiLayout(el, owner, XI.SIZE, XI.SIZE);
-    return lay ? { n: 0, compact: false, lay } : null;
-  }
-
-  function xiHeldPlan(el, owner) {
-    const s = xiSize();
-    const lay = xiLayout(el, owner, s.w, s.h, xiState.compact);
-    return lay ? { n: xiState.count, lay } : null;
-  }
-
-  // ---- the control: one host, a closed shadow root, a real button for "Save this" and one for "Save all (N)" ----
-  function xiIcon() {
-    try {
-      const ns = 'http://www.w3.org/2000/svg';
-      const svg = document.createElementNS(ns, 'svg');
-      svg.setAttribute('viewBox', '0 0 24 24');
-      svg.setAttribute('width', '18');
-      svg.setAttribute('height', '18');
-      svg.setAttribute('aria-hidden', 'true');
-      const path = document.createElementNS(ns, 'path');
-      path.setAttribute('d', 'M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14');
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', 'currentColor');
-      path.setAttribute('stroke-width', '2');
-      path.setAttribute('stroke-linecap', 'round');
-      path.setAttribute('stroke-linejoin', 'round');
-      svg.appendChild(path);
-      return svg;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  // tier: 'single' (one round button), 'wide' (two labelled buttons), 'compact' (round "Save this" and a short "Save all" with the count)
-  function xiButtonCss(btn, tier, isAll) {
-    const s = btn.style;
-    const width = tier === 'wide' ? XI.MULTI_W : (tier === 'compact' && isAll ? XI.COMPACT_W - XI.SIZE - 4 : XI.SIZE);
-    const height = tier === 'wide' ? 28 : XI.SIZE;
-    for (const [k, v] of [['all', 'initial'], ['box-sizing', 'border-box'], ['display', 'flex'], ['align-items', 'center'], ['justify-content', 'center'], ['gap', tier === 'wide' ? '6px' : '2px'], ['width', `${width}px`], ['height', `${height}px`], ['border-radius', '9999px'], ['border', '1px solid rgba(237,224,252,0.6)'], ['background', 'rgba(24,17,31,0.82)'], ['color', '#fff'], ['cursor', 'pointer'], ['padding', tier === 'wide' ? '0 10px' : (tier === 'compact' && isAll ? '0 4px' : '0')], ['font', '600 12px/1 system-ui, -apple-system, Segoe UI, sans-serif'], ['white-space', 'nowrap']]) s.setProperty(k, v);
-  }
-
-  function xiMakeButton(onClick, which) {
-    const btn = document.createElement('button');
-    btn.setAttribute('type', 'button');
-    const icon = xiIcon();
-    if (icon) btn.appendChild(icon);
-    const lbl = document.createElement('span');
-    btn.appendChild(lbl);
-    // The control lives inside the post's tile: none of the press events of it may reach the tile's own handlers.
-    for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick', 'touchstart', 'touchend']) {
-      btn.addEventListener(type, (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); });
-    }
-    btn.addEventListener('click', onClick, true);
-    btn.addEventListener('keydown', (e) => xiOnButtonKey(e, which), true);
-    return { btn, lbl };
-  }
-
-  function xiEnsureHost() {
-    if (xiState.host) return xiState.host;
-    const host = document.createElement('div');
-    host.setAttribute('data-image-saver-inline', 'x');
-    const hs = host.style;
-    hs.setProperty('position', 'absolute');
-    hs.setProperty('z-index', String(XI.Z)); // local and conservative: native controls of the player stay above or beside it
-    hs.setProperty('display', 'flex');
-    hs.setProperty('flex-direction', 'column');
-    hs.setProperty('align-items', 'flex-end');
-    hs.setProperty('gap', '4px');
-    hs.setProperty('width', `${XI.SIZE}px`);
-    hs.setProperty('height', `${XI.SIZE}px`);
-    hs.setProperty('margin', '0');
-    hs.setProperty('padding', '0');
-    const root = typeof host.attachShadow === 'function' ? host.attachShadow({ mode: 'closed' }) : host;
-    const one = xiMakeButton(xiOnClick, 'this');
-    const all = xiMakeButton(xiOnClickAll, 'all');
-    root.appendChild(one.btn);
-    root.appendChild(all.btn);
-    xiState.host = host;
-    xiState.btn = one.btn;
-    xiState.lbl = one.lbl;
-    xiState.btnAll = all.btn;
-    xiState.lblAll = all.lbl;
-    xiRender(0, false);
-    return host;
-  }
-
-  // n >= 2: "Save this" and "Save all (n)"; otherwise only the compact single action.
-  function xiRender(n, compact = false) {
-    const multi = n >= 2;
-    xiState.count = multi ? n : 0;
-    xiState.compact = multi && compact === true;
-    const { btn, lbl, btnAll, lblAll } = xiState;
-    if (!btn || !btnAll) return;
-    const tier = !multi ? 'single' : (compact ? 'compact' : 'wide');
-    xiButtonCss(btn, tier, false);
-    xiButtonCss(btnAll, tier, true);
-    const hs = xiState.host && xiState.host.style;
-    if (hs) {
-      hs.setProperty('flex-direction', tier === 'compact' ? 'row' : 'column');
-      hs.setProperty('align-items', tier === 'compact' ? 'center' : 'flex-end');
-      hs.setProperty('justify-content', 'flex-end');
-    }
-    isLabel(btn, 'aria-label', 'inline.saveThisAria', 'MediaLatch: Save this media');
-    isLabel(btn, 'title', 'inline.saveThisAria', 'MediaLatch: Save this media');
-    // wide: the words; compact: icons only, the count on "Save all"; the accessible names are the full words in every tier
-    isLabel(lbl, 'textContent', tier === 'wide' ? 'inline.saveThis' : null, tier === 'wide' ? 'Save this' : '');
-    lbl.style.setProperty('display', tier === 'wide' ? 'inline' : 'none');
-    isLabel(lblAll, 'textContent', tier === 'wide' ? 'inline.saveAll' : null, tier === 'wide' ? `Save all (${n})` : (tier === 'compact' ? String(n) : ''), { n });
-    lblAll.style.setProperty('display', multi ? 'inline' : 'none');
-    if (multi) {
-      btnAll.removeAttribute('hidden');
-      isLabel(btnAll, 'aria-label', 'inline.saveAllAria', `MediaLatch: Save all ${n} media in this post`, { n });
-      isLabel(btnAll, 'title', 'inline.saveAllAria', `MediaLatch: Save all ${n} media in this post`, { n });
-    } else {
-      btnAll.setAttribute('hidden', '');
-      isLabel(btnAll, 'aria-label', null, null);
-      isLabel(btnAll, 'title', null, null);
-      btnAll.style.setProperty('display', 'none');
-    }
-  }
-
-  // Attach the control to the proven container at the proven local position (the same node is moved, never duplicated).
-  function xiApply(lay) {
-    const host = xiEnsureHost();
-    if (host.parentNode !== lay.host) lay.host.appendChild(host);
-    host.style.setProperty('width', `${lay.w}px`);
-    host.style.setProperty('height', `${lay.h}px`);
-    host.style.setProperty('left', `${lay.left}px`);
-    host.style.setProperty('top', `${lay.top}px`);
-  }
-
-  function xiHide() {
-    if (xiState.snap) DBG.log('x.inline', 'hide', 'info', undefined, null, { lvl: 'debug' });
-    if (xiState.timer) { clearTimeout(xiState.timer); xiState.timer = null; }
-    if (xiState.settleTimer) { clearTimeout(xiState.settleTimer); xiState.settleTimer = null; }
-    if (xiState.rearmTimer) { clearTimeout(xiState.rearmTimer); xiState.rearmTimer = null; }
-    if (xiState.observer) { try { xiState.observer.disconnect(); } catch (_) {} xiState.observer = null; }
-    xiState.snap = null;
-    xiState.el = null;
-    xiState.keyEl = null;
-    xiState.sig = '';
-    xiState.settleN = 0;
-    xiState.rearmN = 0;
-    if (xiState.host && typeof xiState.host.remove === 'function') xiState.host.remove();
-  }
-
-  // The media is still the owner's own but has no safe visible place (a hidden slide, a half-scrolled tile): hide the whole control
-  // now and look again a few times (bounded) from the pointer's place, so it returns by itself once the tile has settled.
-  function xiHideUntilVisible() {
-    const n = xiState.rearmN;
-    xiHide();
-    xiState.rearmN = n;
-    if (n >= XI.SETTLE_MAX || xiState.rearmTimer) { if (n >= XI.SETTLE_MAX) DBG.log('x.inline', 'rearm', 'skipped', 'REARM_EXHAUSTED', { attempt: n }, { lvl: 'debug' }); return; }
-    DBG.log('x.inline', 'rearm', 'info', undefined, { attempt: n + 1 }, { lvl: 'debug' });
-    xiState.rearmN = n + 1;
-    xiState.rearmTimer = setTimeout(() => { xiState.rearmTimer = null; xiEvaluate(); }, XI.SETTLE_MS);
-  }
-
-  // Re-prove the shown control: same owner, still a safe visible place, the right actions; follow a moving slide for a bounded time.
-  function xiRecheck() {
-    xiState.settleTimer = null;
-    const snap = xiState.snap;
-    if (!snap) return;
-    const el = snap.elRef.deref();
-    const owner = snap.ownerRef.deref();
-    if (!(el && owner && xiHolds(snap))) { xiHide(); return; }
-    const plan = xiPlan(el, snap);
-    if (!plan) { xiHideUntilVisible(); return; }
-    if (plan.n !== xiState.count || plan.compact !== xiState.compact) xiRender(plan.n, plan.compact);
-    xiApply(plan.lay);
-    if (plan.lay.sig !== xiState.sig) {
-      xiState.sig = plan.lay.sig;
-      if (xiState.settleN < XI.SETTLE_MAX) { xiState.settleN++; xiState.settleTimer = setTimeout(xiRecheck, XI.SETTLE_MS); }
-    } else {
-      xiState.settleN = 0;
-    }
-  }
-
-  function xiShow(el, snap, plan) {
-    DBG.log('x.inline', 'show', 'info', undefined, () => ({ kind: snap.kind, count: plan.n, compact: Boolean(plan.compact), isQuote: Boolean(snap.isQuote), postId: snap.id || undefined }), { lvl: 'debug' });
-    xiEnsureHost();
-    xiState.snap = snap;
-    xiState.el = el;
-    xiState.sig = plan.lay.sig;
-    xiState.settleN = 0;
-    if (xiState.settleTimer) { clearTimeout(xiState.settleTimer); xiState.settleTimer = null; }
-    xiRender(plan.n, plan.compact);
-    xiApply(plan.lay);
-    if (xiState.observer) { try { xiState.observer.disconnect(); } catch (_) {} xiState.observer = null; }
-    if (typeof MutationObserver === 'function') {
-      // Scoped to the owning post: structure changes anywhere inside it, and attribute changes only on the media itself and on its
-      // ancestors up to the post (a carousel track or a tile that translates, a source or poster that changes). One pending check.
-      let pending = false;
-      const host = xiState.host;
-      xiState.observer = new MutationObserver((records) => {
-        if (Array.isArray(records) && records.length && records.every((rec) => rec && rec.target === host)) return;
-        if (pending) return;
-        pending = true;
-        setTimeout(() => { pending = false; if (xiState.snap) xiRecheck(); }, XI.SETTLE_MS);
-      });
-      const owner = snap.ownerRef.deref();
-      if (owner) {
-        xiState.observer.observe(owner, { childList: true, subtree: true });
-        xiState.observer.observe(el, { attributes: true, attributeFilter: ['src', 'poster', 'style', 'class'] });
-        for (const ref of snap.chain) {
-          const node = ref.deref();
-          if (node) xiState.observer.observe(node, { attributes: true, attributeFilter: ['style', 'class'] });
-        }
-      }
-    }
-  }
-
-  function xiEvaluate() {
-    xiState.timer = null;
-    try {
-      if (document.hidden) { xiHide(); return; }
-      const href = (typeof location !== 'undefined' && location.href) || '';
-      if (href !== xiState.href) { xiState.href = href; xiHide(); }
-      if (typeof document.elementsFromPoint !== 'function') return;
-      const cand = xiCandidate(document.elementsFromPoint(xiState.x, xiState.y));
-      if (!cand) { xiHide(); return; }
-      if (xiState.dismissed && xiState.dismissed === cand.el) return;
-      const held = xiState.snap && xiState.snap.elRef.deref() === cand.el && xiHolds(xiState.snap) ? xiState.snap : null;
-      const snap = held || xiSnapshot(cand.el, cand.kind);
-      if (!snap) { xiHide(); return; }
-      const plan = held ? xiHeldPlan(cand.el, snap.ownerRef.deref()) : xiPlan(cand.el, snap);
-      if (!plan) { xiHideUntilVisible(); return; }
-      // The pointer must be on the VISIBLE part of this media (a clipped remainder of a raw rectangle is not the media).
-      if (!xiPointIn(plan.lay.vis, xiState.x, xiState.y)) { xiHide(); return; }
-      xiState.rearmN = 0;
-      if (held) { xiApply(plan.lay); xiState.sig = plan.lay.sig; return; }
-      xiShow(cand.el, snap, plan);
-    } catch (_) {
-      xiHide();
-    }
-  }
-
-  function xiOnMove(e) {
-    if (!e || (e.pointerType && e.pointerType !== 'mouse')) return;
-    xiState.x = e.clientX;
-    xiState.y = e.clientY;
-    xiState.rearmN = 0;
-    if (!xiState.timer) xiState.timer = setTimeout(xiEvaluate, XI.HOVER_MS);
-  }
-
-  // Keyboard: focusing an owned media (or its focusable wrapper) shows the control; Tab then moves to "Save this" and on to
-  // "Save all", and Tab or Escape leaves it.
-  function xiMediaWithin(node, point = null) {
-    if (!node) return null;
-    if (node.tagName === 'VIDEO' || node.tagName === 'IMG') return node;
-    if (typeof node.querySelectorAll !== 'function') return null;
-    const nodes = Array.from(node.querySelectorAll('video, img'));
-    if (point && nodes.length > XI.ENUM_NODES) return null;
-    const list = point ? nodes.filter((m) => {
-      if (typeof m.getBoundingClientRect !== 'function') return false;
-      const r = m.getBoundingClientRect();
-      return r.width > 0 && r.height > 0 && point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
-    }) : nodes.filter((m) => m.tagName === 'VIDEO' || xiImageKind(m.currentSrc || m.src));
-    return list.length === 1 && (list[0].tagName === 'VIDEO' || xiImageKind(list[0].currentSrc || list[0].src)) ? list[0] : null;
-  }
-
-  function xiOnFocusIn(e) {
-    try {
-      const t = e && e.target;
-      if (!t || (xiState.host && (t === xiState.host || (typeof xiState.host.contains === 'function' && xiState.host.contains(t))))) return;
-      // a focus anywhere outside a post costs one closest() call, never a subtree query
-      if (typeof t.closest !== 'function' || !(t.closest(XI_POST) || t.closest('article'))) return;
-      const el = xiMediaWithin(t);
-      if (!el) return;
-      const kind = el.tagName === 'VIDEO' ? 'video' : xiImageKind(el.currentSrc || el.src);
-      if (!kind || xiState.dismissed === t) return;
-      const snap = xiSnapshot(el, kind);
-      if (!snap) return;
-      const plan = xiPlan(el, snap);
-      if (!plan) return;
-      xiShow(el, snap, plan);
-      xiState.keyEl = t;
-    } catch (_) {}
-  }
-
-  function xiOnFocusOut(e) {
-    if (e && xiState.dismissed === e.target) xiState.dismissed = null;
-  }
-
-  function xiOnDocKey(e) {
-    if (!e || e.key !== 'Tab' || e.shiftKey || !xiState.keyEl || !xiState.btn || document.activeElement !== xiState.keyEl) return;
-    if (typeof e.preventDefault === 'function') e.preventDefault();
-    if (typeof xiState.btn.focus === 'function') xiState.btn.focus();
-  }
-
-  // Tab order inside the control: media, "Save this", "Save all"; Shift+Tab goes back; Tab past the last action or Escape dismisses.
-  function xiOnButtonKey(e, which = 'this') {
-    if (!e || (e.key !== 'Tab' && e.key !== 'Escape')) return;
-    if (e.key === 'Tab' && xiState.count >= 2) {
-      if (which === 'this' && !e.shiftKey && xiState.btnAll && typeof xiState.btnAll.focus === 'function') {
-        if (typeof e.preventDefault === 'function') e.preventDefault();
-        xiState.btnAll.focus();
-        return;
-      }
-      if (which === 'all' && e.shiftKey && xiState.btn && typeof xiState.btn.focus === 'function') {
-        if (typeof e.preventDefault === 'function') e.preventDefault();
-        xiState.btn.focus();
-        return;
-      }
-    }
-    const back = xiState.keyEl;
-    if (e.key === 'Tab' && typeof e.preventDefault === 'function') e.preventDefault();
-    xiState.dismissed = back || null;
-    xiHide();
-    if (back && typeof back.focus === 'function') back.focus();
-  }
-
-  const xiToken = () => {
-    const bytes = new Uint8Array(16);
-    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') crypto.getRandomValues(bytes);
-    else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
-    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  };
-
-  function xiSend(message, token, pending) {
-    const cid = pending && pending.get(token) ? pending.get(token).cid : undefined;
-    if (cid) message.dbg = cid;
-    try {
-      const sent = chrome.runtime.sendMessage(message);
-      if (sent && typeof sent.catch === 'function') sent.catch(() => { DBG.log('x.inline', 'dispatch', 'failed', 'MESSAGE_FAILED', { action: message.action }, { cid }); });
-      DBG.log('x.inline', 'dispatch', 'start', undefined, { action: message.action }, { cid });
-    } catch (_) {
-      if (pending) pending.delete(token);
-      DBG.log('x.inline', 'dispatch', 'failed', 'EXTENSION_CONTEXT_GONE', { action: message.action }, { cid });
-    }
-    if (xiState.btn) {
-      xiState.btn.setAttribute('aria-busy', 'true');
-      if (xiState.btnAll) xiState.btnAll.setAttribute('aria-busy', 'true');
-      if (xiState.busyTimer) clearTimeout(xiState.busyTimer);
-      xiState.busyTimer = setTimeout(() => {
-        xiState.busyTimer = null;
-        if (xiState.btn) xiState.btn.removeAttribute('aria-busy');
-        if (xiState.btnAll) xiState.btnAll.removeAttribute('aria-busy');
-      }, XI.CLICK_GAP);
-    }
-  }
-
-  // "Save this": the hovered item only.
-  function xiOnClick(e) {
-    if (e) {
-      if (typeof e.stopPropagation === 'function') e.stopPropagation();
-      if (typeof e.preventDefault === 'function') e.preventDefault();
-    }
-    if (!e || e.isTrusted !== true) { DBG.log('x.inline', 'click', 'refused', 'NOT_TRUSTED', { which: 'this' }); return; }
-    const cid = DBG.cid();
-    const shown = xiState.snap;
-    const el = shown && shown.elRef.deref();
-    const s = xiSize();
-    // A fresh snapshot of the very element the button belongs to, equal to what the hover showed, still in a provable place.
-    const fresh = el ? xiSnapshot(el, shown.kind) : null;
-    // (the journal names the first gate that refused, in the guard's own order and short-circuit)
-    const gate = !shown ? 'NO_CONTROL' : !el ? 'TARGET_GONE' : !fresh ? 'NO_SNAPSHOT' : !xiSame(fresh, shown) ? 'TARGET_CHANGED' : !xiHolds(shown) ? 'OWNER_NOT_HELD'
-      : !xiLayout(el, fresh.ownerRef.deref(), s.w, s.h, xiState.compact) ? 'LAYOUT_LOST' : '';
-    if (gate) { DBG.log('x.inline', 'click', 'refused', gate, () => ({ which: 'this', kind: shown && shown.kind, isQuote: Boolean(shown && shown.isQuote) }), { cid }); xiHide(); return; }
-    const key = `${fresh.id}|${fresh.src}`;
-    const now = Date.now();
-    if (xiState.busyKey === key && now - xiState.busyAt < XI.CLICK_GAP) { DBG.log('x.inline', 'click', 'skipped', 'BUSY', { which: 'this' }, { cid }); return; }
-    DBG.log('x.inline', 'click', 'start', undefined, () => ({ which: 'this', kind: fresh.kind, isQuote: Boolean(fresh.isQuote), postId: fresh.id || undefined }), { cid });
-    xiState.busyKey = key;
-    xiState.busyAt = now;
-    for (const [t, v] of xiPending) if (now - v.at > XI.TOKEN_TTL) xiPending.delete(t);
-    while (xiPending.size >= 8) xiPending.delete(xiPending.keys().next().value);
-    const token = xiToken();
-    xiPending.set(token, { snap: fresh, at: now, cid });
-    xiSend({ action: 'X_INLINE_SAVE', token }, token, xiPending);
-  }
-
-  // "Save all (N)": only on this explicit click. A fresh enumeration must equal what the control showed; every item gets its own
-  // fresh snapshot; the background then asks for each item's proof again just before that item is saved.
-  function xiOnClickAll(e) {
-    if (e) {
-      if (typeof e.stopPropagation === 'function') e.stopPropagation();
-      if (typeof e.preventDefault === 'function') e.preventDefault();
-    }
-    if (!e || e.isTrusted !== true) { DBG.log('x.inline', 'click', 'refused', 'NOT_TRUSTED', { which: 'all' }); return; }
-    const cid = DBG.cid();
-    const shown = xiState.snap;
-    const el = shown && shown.elRef.deref();
-    const owner = shown && shown.ownerRef.deref();
-    const s = xiSize();
-    const fresh = el ? xiSnapshot(el, shown.kind) : null;
-    const gate = !fresh ? (!shown ? 'NO_CONTROL' : (!el ? 'TARGET_GONE' : 'NO_SNAPSHOT')) : !owner ? 'OWNER_GONE' : xiState.count < 2 ? 'NOT_A_BATCH'
-      : !xiSame(fresh, shown) ? 'TARGET_CHANGED' : !xiHolds(shown) ? 'OWNER_NOT_HELD' : !xiLayout(el, owner, s.w, s.h, xiState.compact) ? 'LAYOUT_LOST' : '';
-    if (gate) { DBG.log('x.inline', 'click', 'refused', gate, { which: 'all', count: xiState.count }, { cid }); xiHide(); return; }
-    const items = xiEnumerate(owner);
-    if (items.length !== xiState.count || items.length > XI.BATCH_MAX || !items.some((i) => i.el === el)) { DBG.log('x.inline', 'click', 'refused', 'LIST_CHANGED', { which: 'all', count: items.length, n: xiState.count }, { cid }); xiHide(); return; }
-    const snaps = [];
-    for (const it of items) {
-      const snap = xiSnapshot(it.el, it.kind);
-      if (!snap || snap.ownerRef.deref() !== owner) { DBG.log('x.inline', 'click', 'refused', 'ITEM_NOT_OWNED', { which: 'all', index: snaps.length }, { cid }); xiHide(); return; }
-      snaps.push(snap);
-    }
-    const sig = xiHash(snaps.map((x) => `${x.kind}:${x.src}`).join('|'));
-    const key = `all|${fresh.id}|${sig}`;
-    const now = Date.now();
-    if (xiState.busyKey === key && now - xiState.busyAt < XI.CLICK_GAP) { DBG.log('x.inline', 'click', 'skipped', 'BUSY', { which: 'all' }, { cid }); return; }
-    DBG.log('x.inline', 'click', 'start', undefined, () => ({ which: 'all', count: snaps.length, postId: fresh.id || undefined }), { cid });
-    xiState.busyKey = key;
-    xiState.busyAt = now;
-    for (const [t, v] of xiBatches) if (now - v.at > XI.BATCH_TTL) xiBatches.delete(t);
-    while (xiBatches.size >= 4) xiBatches.delete(xiBatches.keys().next().value);
-    const token = xiToken();
-    xiBatches.set(token, { items: snaps.map((snap) => ({ snap, used: false })), href: (typeof location !== 'undefined' && location.href) || '', at: now, opened: false, sig, id: fresh.id, cid });
-    xiSend({ action: 'X_INLINE_SAVE_ALL', token }, token, xiBatches);
-  }
-
-  // One item's descriptor, built with the context-menu builder for the element the snapshot proves.
-  function xiDescribe(snap) {
-    const el = snap.elRef.deref();
-    const media = el ? findMediaInElements([el], null) : null;
-    if (!media) return { ok: false, reason: 'NO_MEDIA' };
-    const expected = snap.kind === 'photo' ? ['image'] : snap.kind === 'gif-poster' ? ['x_tweet_video'] : snap.kind === 'video-poster' ? ['video'] : ['video', 'x_tweet_video'];
-    if (!expected.includes(media.type)) return { ok: false, reason: 'KIND_MISMATCH' };
-    if (typeof media.x === 'number' || media.isBlobPlayer === true) {
-      // a player's recovery looks the post up by point: this element's own centre, never the context-menu cursor (also when no menu was ever opened)
-      const r = el.getBoundingClientRect();
-      media.x = Math.round(r.left + r.width / 2);
-      media.y = Math.round(r.top + r.height / 2);
-    }
-    return { ok: true, media };
-  }
-
-  // The background asks this document to prove the snapshot a second time and to build the descriptor with the context-menu builder.
-  function xiAnswerOwner(token) {
-    const entry = typeof token === 'string' ? xiPending.get(token) : null;
-    xiPending.delete(token);
-    if (!entry || Date.now() - entry.at > XI.TOKEN_TTL) return { ok: false, reason: 'NO_TOKEN' };
-    if (!xiHolds(entry.snap)) return { ok: false, reason: 'STALE_OWNER' };
-    return xiDescribe(entry.snap);
-  }
-
-  // The post itself (not the item) still is the one the batch was started for: connected, same permalink, not promoted, same page.
-  function xiOwnerHolds(snap, entry) {
-    try {
-      const owner = snap.ownerRef.deref();
-      const article = snap.articleRef.deref();
-      return Boolean(owner && article && owner.isConnected !== false && article.isConnected !== false &&
-        ((typeof location !== 'undefined' && location.href) || '') === entry.href && xiIdOf(owner, snap.isQuote) === snap.id && !xiPromoted(article));
-    } catch (_) {
-      return false;
-    }
-  }
-
-  // Phase 1 of a batch: every item and the owner's list of media are proven again before any privileged work starts. This is the batch's
-  // admission: each slot's descriptor is frozen here (its exact source addresses and post/media identity), so later scrolling, unloading or
-  // recycling of the post cannot change, add or drop a slot. A player's page point is dropped: a later recovery finds its post by id, never at a
-  // position that scrolling has since given to another post.
-  function xiBatchOpen(token) {
-    const entry = typeof token === 'string' ? xiBatches.get(token) : null;
-    if (!entry || Date.now() - entry.at > XI.BATCH_TTL) { xiBatches.delete(token); return { ok: false, reason: 'NO_TOKEN' }; }
-    if (entry.opened) return { ok: false, reason: 'USED' };
-    entry.opened = true;
-    if (!entry.items.every((it) => xiOwnerHolds(it.snap, entry))) return { ok: false, reason: 'STALE_OWNER' };
-    if (!entry.items.every((it) => xiHolds(it.snap))) return { ok: false, reason: 'STALE_ITEM' };
-    const owner = entry.items[0].snap.ownerRef.deref();
-    const now = xiEnumerate(owner);
-    if (now.length !== entry.items.length || !now.every((it, i) => it.el === entry.items[i].snap.elRef.deref())) return { ok: false, reason: 'STALE_ITEM' };
-    entry.frozen = entry.items.map((it) => {
-      const d = xiDescribe(it.snap);
-      if (d.ok) { d.media.x = null; d.media.y = null; }
-      return d;
-    });
-    return { ok: true, count: entry.items.length, ownerId: entry.id, sig: entry.sig };
-  }
-
-  // Phase 2: ONE item's frozen descriptor, asked for right before that item is saved; one shot per item. The page is not read again, except
-  // that a navigation away from the admitted page still stops the slots that have not started.
-  function xiBatchItem(token, index) {
-    const entry = typeof token === 'string' ? xiBatches.get(token) : null;
-    if (!entry || Date.now() - entry.at > XI.BATCH_TTL) { xiBatches.delete(token); return { ok: false, reason: 'NO_TOKEN' }; }
-    const item = Number.isInteger(index) && index >= 0 && index < entry.items.length ? entry.items[index] : null;
-    if (!item || !entry.opened) return { ok: false, reason: 'NO_TOKEN' };
-    if (item.used) return { ok: false, reason: 'USED' };
-    item.used = true;
-    if (entry.items.every((it) => it.used)) xiBatches.delete(token);
-    if (((typeof location !== 'undefined' && location.href) || '') !== entry.href) return { ok: false, reason: 'STALE_OWNER' };
-    return entry.frozen[index];
-  }
-
-  function xiTeardown() {
-    DBG.log('x', 'teardown', 'info');
-    xiHide();
-    xiPending.clear();
-    xiBatches.clear();
-    if (xiState.busyTimer) { clearTimeout(xiState.busyTimer); xiState.busyTimer = null; }
-    if (xiState.host && typeof xiState.host.remove === 'function') xiState.host.remove();
-  }
-
-  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function' && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-    document.addEventListener('pointermove', xiOnMove, { capture: true, passive: true });
-    document.addEventListener('focusin', xiOnFocusIn, true);
-    document.addEventListener('focusout', xiOnFocusOut, true);
-    document.addEventListener('keydown', xiOnDocKey, true);
-    document.addEventListener('visibilitychange', xiHide, true);
-    for (const type of ['scroll', 'wheel', 'resize', 'popstate']) window.addEventListener(type, xiHide, { capture: true, passive: true });
-    // a window blur only (a capturing listener would also see every element's blur, e.g. the button taking focus)
-    window.addEventListener('blur', (e) => { if (e.target === window) xiHide(); }, true);
-    window.addEventListener('pagehide', xiTeardown, true);
-  }
-
-  if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      const action = message && message.action;
-      if (action !== 'X_INLINE_OWNER' && action !== 'X_INLINE_BATCH' && action !== 'X_INLINE_OWNER_ITEM') return;
-      // only the extension's own background (not a page, not a content script of another tab) may ask
-      if (!sender || sender.tab || sender.id !== chrome.runtime.id) { DBG.log('x.inline', 'proof', 'refused', 'FOREIGN_ASKER'); return; }
-      const pendingEntry = typeof message.token === 'string' ? (xiPending.get(message.token) || xiBatches.get(message.token)) : null;
-      const cid = pendingEntry && pendingEntry.cid ? pendingEntry.cid : undefined;
-      const answer = action === 'X_INLINE_OWNER' ? xiAnswerOwner(message.token)
-        : action === 'X_INLINE_BATCH' ? xiBatchOpen(message.token)
-          : xiBatchItem(message.token, message.index);
-      DBG.log('x.inline', action === 'X_INLINE_OWNER' ? 'proof' : (action === 'X_INLINE_BATCH' ? 'batch.proof' : 'item.proof'), answer && answer.ok ? 'ok' : 'refused',
-        answer && answer.ok ? undefined : (answer && answer.reason) || 'NO_ANSWER', () => ({
-          index: Number.isInteger(message.index) ? message.index : undefined, count: answer && answer.count, type: answer && answer.media && answer.media.type,
-          host: answer && answer.media && answer.media.url, isQuote: Boolean(answer && answer.media && answer.media.isQuoteTweet), postId: answer && answer.media ? (answer.media.tweetId || undefined) : (answer && answer.ownerId)
-        }), { cid });
-      sendResponse(answer);
-    });
-  }
-
   // Export functions to global scope for unit testing in Node/vm if applicable
   if (typeof globalThis !== 'undefined') {
     globalThis.__findXMediaAtPoint = findXMediaAtPoint;
@@ -2178,8 +1377,8 @@
     globalThis.__clearSavedMediaDescriptor = () => { savedMediaDescriptor = null; gestureKnown = false; isShiftRightClickOnMedia = false; };
     globalThis.__extractTweetUrl = extractTweetUrl;
     globalThis.__formatXShareUrl = formatXShareUrl;
-    globalThis.__setCachedXShareHost = (h) => { cachedXShareHost = h; };
-    globalThis.__getCachedXShareHost = () => cachedXShareHost;
+    globalThis.__setCachedXShareHost = (h) => xShare.set(h);
+    globalThis.__getCachedXShareHost = () => xShare.get();
     globalThis.__ALLOWED_X_SHARE_HOSTS = ALLOWED_X_SHARE_HOSTS;
     globalThis.__DEFAULT_X_SHARE_HOST = DEFAULT_X_SHARE_HOST;
     globalThis.__injectCopyButtonToActionBar = injectCopyButtonToActionBar;
@@ -2194,6 +1393,9 @@
     globalThis.__xiCardOf = xiCardOf;
     globalThis.__xiOwnerOf = xiOwnerOf;
     globalThis.__xiIdOf = xiIdOf;
+    globalThis.__medialatchSite = Object.assign(globalThis.__medialatchSite || {}, {
+      x: { post: XI_POST, ownerOf: xiOwnerOf, idOf: xiIdOf, snapshot: xiSnapshot, holds: xiHolds, promoted: xiPromoted, imageKind: xiImageKind, findMedia: findMediaInElements }
+    });
   }
 })();
 

@@ -1,7 +1,7 @@
 // Actual admission / acquisition regressions; this does not claim DNS-rebinding protection.
 const assert=require('node:assert/strict'), http=require('node:http');
 const {allows}=require('../lib/media_sources');
-require('../lib/staging');
+require('../offscreen/staging');
 const {createTestEnv}=require('./test_context_target_avatar');
 const {sniffMediaMagicBytes,isMalformedMediaContainer}=require('../offscreen');
 (async()=>{
@@ -36,7 +36,7 @@ const {sniffMediaMagicBytes,isMalformedMediaContainer}=require('../offscreen');
   const stage=MediaLatchStaging.createStaging({fetch:async()=>{fetches++;throw Error('unexpected fetch');},directory:async()=>{writes++;throw Error('unexpected disk');}});
   for(const url of denied)await assert.rejects(stage.stage({id:'job-refused',source:url,selectedPage:page}),/INVALID_SOURCE/);
   assert.equal(fetches,0);assert.equal(writes,0);
-  require('../lib/download_manager'); const {createManager}=MediaLatchDownloads;
+  require('../worker/download_manager'); const {createManager}=MediaLatchDownloads;
   // Acquisition context survives the durable private queue, but never appears in its public snapshot.
   let stored;
   const manager=createManager({store:{get:async()=>({jobs:[],paused:true}),set:async x=>stored=structuredClone(x)},id:()=> 'context',changed(){},sleep:async()=>{},remove:async()=>{}});

@@ -1,6 +1,8 @@
 // test_suite.js - Полный проверочный тест MediaLatch v2.0.0
 const REPO_ROOT = require('node:path').resolve(__dirname, '..');
+const contentDoc = require('./helpers/content.cjs');
 const fs = require('fs');
+const offscreenDoc = require('./helpers/offscreen.cjs');
 const path = require('path');
 const vm = require('vm');
 const { pathToFileURL } = require('url');
@@ -527,7 +529,7 @@ const sandbox = {
 
 vm.createContext(sandbox);
 // Service-worker importScripts: load the real shared script (lib/*.js) into the same context.
-sandbox.importScripts = (file) => vm.runInContext(fs.readFileSync(path.resolve(REPO_ROOT, file), 'utf8'), sandbox);
+require('./helpers/worker.cjs').importScripts(sandbox);
 vm.runInContext(bgCode, sandbox);
 // GIF frame counting runs in the offscreen document (the worker has no copy): the cases below use that production function.
 sandbox.isAnimatedGif = require(path.resolve(REPO_ROOT, 'offscreen.js')).isAnimatedGif;
@@ -557,7 +559,7 @@ function loadFreshBackgroundWorker(sessionStorage) {
     fetch: async () => { throw new Error('network is not used by the fresh worker'); }
   };
   vm.createContext(worker);
-  worker.importScripts = (file) => vm.runInContext(fs.readFileSync(path.resolve(REPO_ROOT, file), 'utf8'), worker);
+  require('./helpers/worker.cjs').importScripts(worker);
   vm.runInContext(bgCode, worker);
   return worker;
 }
@@ -566,7 +568,7 @@ function loadFreshBackgroundWorker(sessionStorage) {
 const localContentX = path.resolve(REPO_ROOT, 'content/content_x.js');
 const scratchContentX = path.resolve(REPO_ROOT, '../../../scratch/image-saver-extension/content/content_x.js');
 const contentXPath = fs.existsSync(localContentX) ? localContentX : scratchContentX;
-const contentXCode = fs.readFileSync(contentXPath, 'utf8');
+const contentXCode = contentDoc.source('content_x.js');
 vm.runInContext(contentXCode, sandbox);
 
 // Загружаем content/content_redgifs.js в ту же песочницу
@@ -4909,7 +4911,7 @@ async function runTests() {
   // 192. offscreen.js: fetchProtectedBlob валидация ответов и заголовков
   {
     const offscreenPath = path.resolve(REPO_ROOT, 'offscreen.js');
-    const offscreenSource = fs.readFileSync(offscreenPath, 'utf8');
+    const offscreenSource = offscreenDoc.source();
 
     let messageListener = null;
     const offscreenChrome = {
@@ -5061,7 +5063,7 @@ async function runTests() {
 
     // Offscreen allowlist validation: rejects unsupported host before fetch
     const offscreenPath = path.resolve(REPO_ROOT, 'offscreen.js');
-    const offscreenSource = fs.readFileSync(offscreenPath, 'utf8');
+    const offscreenSource = offscreenDoc.source();
     let messageListener = null;
     let fetchCalled = false;
     const offscreenSandbox = {
@@ -5131,7 +5133,7 @@ async function runTests() {
   // 194. HTTP 429 retry policy: ограниченная повторная попытка, backoff и отказ без зацикливания
   {
     const offscreenPath = path.resolve(REPO_ROOT, 'offscreen.js');
-    const offscreenSource = fs.readFileSync(offscreenPath, 'utf8');
+    const offscreenSource = offscreenDoc.source();
     let messageListener = null;
     let sleepDelays = [];
 
@@ -5388,7 +5390,7 @@ async function runTests() {
     );
 
     // Сценарий 5: Два HTTP 429 в protected fetch -> максимум два GET, download не запускается, возвращается status 429
-    const offscreenSource = fs.readFileSync(path.resolve(REPO_ROOT, 'offscreen.js'), 'utf8');
+    const offscreenSource = offscreenDoc.source();
     let offscreenMsgHandler = null;
     const testOffscreenSandbox = {
       chrome: {
@@ -5624,7 +5626,7 @@ async function runTests() {
       mockChrome._lastBadgeColor = color;
     };
 
-    const offscreenSource196 = fs.readFileSync(path.resolve(REPO_ROOT, 'offscreen.js'), 'utf8');
+    const offscreenSource196 = offscreenDoc.source();
     let offscreenMsgHandler196 = null;
     const testOffscreenSandbox196 = {
       chrome: {
@@ -9796,8 +9798,8 @@ async function runTests() {
       const rawSignedUrl = 'https://cdn.example.org/video.mp4?token=secret123&signature=sig456&key=key789&view=full';
       const sanitized = sandbox.sanitizeUrlForLog(rawSignedUrl);
 
-      const offscreenSource = fs.readFileSync(path.resolve(REPO_ROOT, 'offscreen.js'), 'utf8');
-      const offscreenHasSanitize = offscreenSource.includes('function sanitizeUrlForLog') &&
+      const offscreenSource = offscreenDoc.source();
+      const offscreenHasSanitize = fs.readFileSync(path.resolve(REPO_ROOT, 'offscreen.html'), 'utf8').includes('lib/media_guard.js') &&
         offscreenSource.includes('sanitizeUrlForLog(mediaUrl)') &&
         offscreenSource.includes('sanitizeUrlForLog(url)');
 
@@ -10101,7 +10103,7 @@ async function runTests() {
 
     // 213.5: Direct execution of offscreen sanitizeUrlForLog and network URL preservation
     {
-      const offscreenSource = fs.readFileSync(path.resolve(REPO_ROOT, 'offscreen.js'), 'utf8');
+      const offscreenSource = offscreenDoc.source();
       const offscreenSandbox = {
         chrome: {
           runtime: {
@@ -11252,7 +11254,7 @@ async function runTests() {
   console.log('\n--- Тест 216: Gelbooru Download Latency, Stream Stall Detection & GIF Decoupling ---');
   {
     const offscreenPath = path.resolve(REPO_ROOT, 'offscreen.js');
-    const offscreenSource = fs.readFileSync(offscreenPath, 'utf8');
+    const offscreenSource = offscreenDoc.source();
 
     // 216.1: Body transfer with chunked stream activity, stall detection, budget ceiling, and cancellation
     {
@@ -11819,7 +11821,7 @@ async function runTests() {
   console.log('\n--- Тест 217: X.com (Twitter) Ordinary Direct MP4 Video Verification & Fail-Safe Downloader ---');
   {
     const contentXPath = path.resolve(REPO_ROOT, 'content/content_x.js');
-    const contentXCode = fs.readFileSync(contentXPath, 'utf8');
+    const contentXCode = contentDoc.source('content_x.js');
 
     function createXDomSandbox(currentUrl = 'https://x.com/home') {
       let listeners = {};
@@ -12182,7 +12184,7 @@ async function runTests() {
   console.log('\n--- Тест 218: X.com (Twitter) Ordinary Direct MP4 Remaining Defects & Hardening ---');
   {
     const contentXPath = path.resolve(REPO_ROOT, 'content/content_x.js');
-    const contentXCode = fs.readFileSync(contentXPath, 'utf8');
+    const contentXCode = contentDoc.source('content_x.js');
 
     function createXDomSandbox(currentUrl = 'https://x.com/home') {
       let listeners = {};
@@ -14031,10 +14033,10 @@ async function runTests() {
   // =========================================================================
   console.log('\n--- Тест 222: Genuine X Animated GIF Output for tweet_video ---');
   {
-    const gifencPath = path.resolve(REPO_ROOT, 'lib', 'gifenc.js');
+    const gifencPath = path.resolve(REPO_ROOT, 'offscreen', 'gifenc.js');
     const offscreenPath = path.resolve(REPO_ROOT, 'offscreen.js');
     const gifencCode = fs.readFileSync(gifencPath, 'utf8');
-    const offscreenCode = fs.readFileSync(offscreenPath, 'utf8');
+    const offscreenCode = offscreenDoc.source();
 
     let offscreenMsgHandler = null;
     const offscreenMockChrome = {
@@ -14974,7 +14976,7 @@ async function runTests() {
   console.log('\n--- Тест 224: Instagram Post-Link Sharing (content/content_instagram.js) ---');
   {
     const igPath = path.resolve(REPO_ROOT, 'content/content_instagram.js');
-    const igCode = fs.readFileSync(igPath, 'utf8');
+    const igCode = contentDoc.source('content_instagram.js');
 
     let fallbackCopiedText = '';
     let execCommandShouldFail = false;
@@ -17154,7 +17156,7 @@ async function runTests() {
   console.log('\n--- Тест 225: TikTok Video-Link Sharing (content/content_tiktok.js) ---');
   {
     const ttPath = path.resolve(REPO_ROOT, 'content/content_tiktok.js');
-    const ttCode = fs.readFileSync(ttPath, 'utf8');
+    const ttCode = contentDoc.source('content_tiktok.js');
 
     let fallbackCopiedText = '';
     let execCommandShouldFail = false;
@@ -18214,7 +18216,7 @@ async function runTests() {
     // 226.2d: Content script live storage synchronization and fallback for oginstagram.com and kirkstagram.com
     {
       const igPath = path.resolve(REPO_ROOT, 'content/content_instagram.js');
-      const igCode = fs.readFileSync(igPath, 'utf8');
+      const igCode = contentDoc.source('content_instagram.js');
       let storageChangeListener = null;
       let mockIgStorage = { igShareHost: 'instagram.com' };
       const liveIgSandbox = {
@@ -18302,7 +18304,7 @@ async function runTests() {
 
     // 226.3: X regression check
     const xPath = path.resolve(REPO_ROOT, 'content/content_x.js');
-    const xCode = fs.readFileSync(xPath, 'utf8');
+    const xCode = contentDoc.source('content_x.js');
     const xSandbox = {
       URL,
       chrome: { runtime: {}, storage: { local: { get: () => {} }, onChanged: { addListener: () => {} } } },
@@ -18611,7 +18613,7 @@ async function runTests() {
 
     // 227.9: Offscreen document convertMp4VideoToGif / convertRedditVideoToGif execution
     {
-      const offscreenSource = fs.readFileSync(path.join(REPO_ROOT, 'offscreen.js'), 'utf8');
+      const offscreenSource = offscreenDoc.source();
       const offscreenSandbox = {
         console,
         Blob: function(parts, opts) {
@@ -25402,7 +25404,8 @@ async function runTests() {
   // ── Тест 252: UX-10 — встроенная кнопка Save над медиа X (один элемент) ──
   {
     console.log('\n--- Тест 252: UX-10 — встроенная кнопка Save над медиа X ---');
-    const xiScript = fs.readFileSync(path.join(REPO_ROOT, 'content/content_x.js'), 'utf8');
+    const xiScript = contentDoc.source('content_x.js');
+    const inlineScript = fs.readFileSync(path.join(REPO_ROOT, 'content/content_inline.js'), 'utf8');
     const prevRuntimeId = mockChrome.runtime.id;
     const prevMsgHandler252 = mockChrome.tabs._msgHandler;
     const prevFetch252 = sandbox.fetch;
@@ -25521,6 +25524,7 @@ async function runTests() {
         setTimeout: w.timeouts, clearTimeout: (id) => { w.timers = w.timers.filter((t) => t.id !== id); }, MutationObserver: FakeObserver, WeakRef, WeakMap, Map, Set
       });
       vm.runInContext(xiScript, w.ctx);
+      vm.runInContext(inlineScript, w.ctx);
       // the extension background talks to this document like chrome.tabs.sendMessage does
       w.ask = (msg, sender = { id: 'mock-id' }) => { let res; for (const f of w.msgL) { f(msg, sender, (r) => { res = r; }); if (res !== undefined) break; } return res; };
       w.move = (x, y, type = 'mouse') => { w.fire('docL', 'pointermove', { clientX: x, clientY: y, pointerType: type }); w.advance(70); };
@@ -28098,7 +28102,7 @@ async function runTests() {
   // ── Тест 240: X-05 — медиа под курсором на X принадлежит текущему клику ──
   {
     console.log('\n--- Тест 240: X-05 — принадлежность медиа текущему клику на X ---');
-    const xSrc = fs.readFileSync(path.resolve(REPO_ROOT, 'content/content_x.js'), 'utf8');
+    const xSrc = contentDoc.source('content_x.js');
     const rect = (l, t, w, h) => ({ left: l, top: t, right: l + w, bottom: t + h, width: w, height: h });
     const MP4 = 'https://video.twimg.com/ext_tw_video/123/pu/vid/720x720/owned.mp4';
     const MP4_2 = 'https://video.twimg.com/ext_tw_video/124/pu/vid/720x720/second.mp4';
@@ -28427,7 +28431,7 @@ async function runTests() {
       body.copy(box, 8);
       return new Uint8Array(Buffer.concat([box, Buffer.alloc(24)]));
     };
-    const offscreenCode = fs.readFileSync(path.join(REPO_ROOT, 'offscreen.js'), 'utf8');
+    const offscreenCode = offscreenDoc.source();
     let offListener = null;
     let offFetch = async () => {};
     const off = vm.createContext({
@@ -31368,7 +31372,7 @@ ${stats !== null ? `<p class="post__missing-stats">\n        ${stats}\n      </p
   // ── Test 272: BUGFIX-MULTISITE-01 / X-NESTED-01 — modern quote card, nested owner descriptor & MAIN-world recovery ──
   {
     console.log('\n--- Test 272: X nested quote, repost & attribution ownership: content script & MAIN world ---');
-    const xSrc272 = fs.readFileSync(path.resolve(REPO_ROOT, 'content/content_x.js'), 'utf8');
+    const xSrc272 = contentDoc.source('content_x.js');
     const csCtx = {
       console, URL, Date, setTimeout, clearTimeout,
       document: {

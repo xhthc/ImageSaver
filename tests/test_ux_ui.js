@@ -755,7 +755,7 @@ function makeChrome(state) {
     };
 
     // the keys are the persistence keys of the tracker and of the history store
-    const trackerLib = (() => { const sb = { URL, console }; vm.createContext(sb); vm.runInContext(read('lib/feedback.js'), sb); vm.runInContext(read('lib/feedback_tracker.js'), sb); return sb; })();
+    const trackerLib = (() => { const sb = { URL, console }; vm.createContext(sb); vm.runInContext(read('lib/feedback.js'), sb); vm.runInContext(read('worker/feedback_tracker.js'), sb); return sb; })();
     assert(keys.FEEDBACK_KEY === trackerLib.ImageSaverFeedbackTracker.STORAGE_KEY && read('background.js').includes(`(await chrome.storage.local.get('${keys.HISTORY_ENABLED_KEY}')).${keys.HISTORY_ENABLED_KEY} === true`), '31a: the watched keys are the tracker persistence key and the recording preference the worker reads');
 
     // a new result, a transition, a failure and a cancellation appear without reopening
@@ -1131,7 +1131,7 @@ function makeChrome(state) {
     assert(I18n.MENU_TITLE === 'MediaLatch: Save media' && !enKeys.some((k) => /Save (image|video|GIF)\b/.test(I18n.STRINGS.en[k]) && /^menu/.test(k)), '33e: the native menu title is the fixed "MediaLatch: Save media" in both languages (no per-type titles)');
     // keys used by the sources exist in the catalogue
     const uiSrc = ['ui/src/components/app', 'ui/src/core', 'ui/src/hooks'].flatMap((d) => fs.readdirSync(path.resolve(ROOT, d)).map((f) => read(`${d}/${f}`))).join('\n')
-      + ['content/content_x.js', 'content/content_reddit.js', 'content/content_redgifs.js', 'content/content_instagram.js', 'content/content_tiktok.js', 'content/content_youtube.js', 'lib/feedback_tracker.js'].map(read).join('\n');
+      + ['content/content_inline.js', 'content/content_copy_kit.js', 'content/content_x.js', 'content/content_reddit.js', 'content/content_redgifs.js', 'content/content_instagram.js', 'content/content_tiktok.js', 'content/content_youtube.js', 'worker/feedback_tracker.js'].map(read).join('\n');
     const used = new Set([...uiSrc.matchAll(/\b(?:t|isText|tr\.t|text)\(\s*["'`]([a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)+)["'`]/g)].map((m) => m[1]));
     // every quoted key-shaped string whose first segment is a catalogue prefix (stored messages, EMBED_FIELDS labels, status keys)
     const prefixes = new Set(enKeys.map((k) => k.split('.')[0]));
@@ -1280,7 +1280,7 @@ function makeChrome(state) {
     assert(present.formatDateTime(t0, 'en-US') !== present.formatDateTime(t0, 'ru-RU') && /\d/.test(present.formatTime(t0, 'en-US')), '33zl: dates are formatted with the locale of the language');
 
     // notifications follow the saved language (service worker notifier)
-    const trackerCtx = (() => { const sb = { URL, console }; vm.createContext(sb); for (const f of ['lib/i18n.js', 'lib/feedback.js', 'lib/feedback_tracker.js']) vm.runInContext(read(f), sb); return sb; })();
+    const trackerCtx = (() => { const sb = { URL, console }; vm.createContext(sb); for (const f of ['lib/i18n.js', 'lib/feedback.js', 'worker/feedback_tracker.js']) vm.runInContext(read(f), sb); return sb; })();
     const notifyWith = async (deps) => {
       const sink = [];
       const notify = trackerCtx.ImageSaverFeedbackTracker.createNotifier({ getPrefs: async () => ({ notifySuccess: true }), deliver: async (rec, o) => { sink.push(o); return true; }, ...deps });

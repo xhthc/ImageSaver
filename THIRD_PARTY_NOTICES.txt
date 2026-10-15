@@ -1,4 +1,4 @@
-Bundled component: lib/gifenc.js
+Bundled component: offscreen/gifenc.js
 Upstream: https://github.com/mattdesl/gifenc
 License source: https://github.com/mattdesl/gifenc/blob/master/LICENSE.md
 The bundled file uses a browser/global wrapper. Its version is not independently identified.
@@ -26,7 +26,7 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
 OR OTHER DEALINGS IN THE SOFTWARE.
 
 Additional bundled components:
-MP4Box 2.4.1 (BSD-3-Clause): lib/vendor/mp4box/2.4.1/LICENSE and PROVENANCE.json.
+MP4Box 2.4.1 (BSD-3-Clause): offscreen/vendor/mp4box/2.4.1/LICENSE and PROVENANCE.json.
 Extension UI dependency notices: popup/THIRD_PARTY_NOTICES.txt.
 
 MediaLatch logo: project-owned artwork (GPL-3.0-only).

@@ -197,8 +197,10 @@ async function resolvePixivUrl(urlObj, pageUrl, linkUrl) {
   const pathname = urlObj.pathname;
   const host = urlObj.hostname.toLowerCase();
 
-  const isPixivCdn = host.includes('pximg.net');
-  const isPixivPage = host.includes('pixiv.net') || (pageUrl && pageUrl.includes('pixiv.net')) || (linkUrl && linkUrl.includes('pixiv.net'));
+  // the page and the link are Pixiv's only when their own host is (a domain word in a path or a query is not ownership)
+  const pageOnPixiv = isSameOrSubdomain(urlHostOf(pageUrl), 'pixiv.net'), linkOnPixiv = isSameOrSubdomain(urlHostOf(linkUrl, pageUrl), 'pixiv.net');
+  const isPixivCdn = isSameOrSubdomain(host, 'pximg.net');
+  const isPixivPage = isSameOrSubdomain(host, 'pixiv.net') || pageOnPixiv || linkOnPixiv;
   if (!isPixivCdn && !isPixivPage) return [];
 
   // Search for illustration ID and page number:
@@ -216,8 +218,8 @@ async function resolvePixivUrl(urlObj, pageUrl, linkUrl) {
   // Supports /artworks/{id}, /illust/{id}, illust_id={id}
   if (!illustId) {
     const artworkRegex = /(?:artworks|illust(?:_id)?)[/=](\d+)/i;
-    const linkMatch = linkUrl ? linkUrl.match(artworkRegex) : null;
-    const pageMatch = pageUrl ? pageUrl.match(artworkRegex) : null;
+    const linkMatch = linkUrl && linkOnPixiv ? linkUrl.match(artworkRegex) : null;
+    const pageMatch = pageUrl && pageOnPixiv ? pageUrl.match(artworkRegex) : null;
     const pathMatch = pathname.match(artworkRegex);
     const idMatch = linkMatch || pageMatch || pathMatch;
     if (idMatch) {
@@ -234,9 +236,7 @@ async function resolvePixivUrl(urlObj, pageUrl, linkUrl) {
       .replace(/\/img-master\//, '/img-original/')
       .replace(/_(master|square|custom)\d+/g, '');
 
-    const dotIdx = cleanPath.lastIndexOf('.');
-    const basePath = dotIdx !== -1 ? cleanPath.substring(0, dotIdx) : cleanPath;
-    const currentExt = dotIdx !== -1 ? cleanPath.substring(dotIdx).toLowerCase() : '.jpg';
+    const { base: basePath, ext: currentExt } = splitExtension(cleanPath, { lower: true });
 
     // Original may be jpg, png, or gif
     candidates.push(...generateExtensionCandidates(urlObj, basePath, currentExt));
@@ -409,9 +409,7 @@ function resolveRedditUrl(urlObj, pageUrl) {
       const pathname = parsed.pathname;
       const lastSlash = pathname.lastIndexOf('/');
       const filename = lastSlash !== -1 ? pathname.substring(lastSlash + 1) : pathname;
-      const dotIdx = filename.lastIndexOf('.');
-      const rawId = dotIdx !== -1 ? filename.substring(0, dotIdx) : filename;
-      const pathExt = dotIdx !== -1 ? filename.substring(dotIdx).toLowerCase() : '';
+      const { base: rawId, ext: pathExt } = splitExtension(filename, { lower: true, fallback: '' });
 
       // Extract clean media ID from SEO slug format [slug]-v0-[media_id] or [slug]-[media_id]
       const vMatch = rawId.match(/-v\d+-([a-zA-Z0-9]+)$/i) || rawId.match(/-([a-zA-Z0-9]{8,36})$/i);
@@ -713,17 +711,7 @@ async function resolveYandereUrl(urlObj, pageUrl, linkUrl) {
 
   // 4. Sample path transformation: /sample/<md5>/yande.re%20<id>%20sample%20<tags>.jpg -> /image/...
   if (pathname.includes('/sample/')) {
-    let origPath = pathname.replace('/sample/', '/image/');
-    origPath = origPath
-      .replace(/%20sample%20/gi, '%20')
-      .replace(/[ _-]sample[ _-]/gi, ' ')
-      .replace(/%20sample/gi, '')
-      .replace(/sample%20/gi, '')
-      .replace(/\s+/g, ' ');
-
-    const dotIdx = origPath.lastIndexOf('.');
-    const basePath = dotIdx !== -1 ? origPath.substring(0, dotIdx) : origPath;
-    const ext = dotIdx !== -1 ? origPath.substring(dotIdx) : '.jpg';
+    const { base: basePath, ext } = splitExtension(sampleToImagePath(pathname));
 
     const origin = 'https://files.yande.re';
     const sampleOrigCandidates = [
@@ -839,6 +827,9 @@ async function resolveEshuushuuUrl(urlObj, pageUrl, linkUrl) {
   return candidates;
 }
 
+// The Wikimedia projects (the media host is upload.wikimedia.org): domain-label matches, so "notwikimedia.org" is not one.
+const WIKI_ROOTS = ['wikimedia.org', 'wikipedia.org', 'wiktionary.org', 'wikibooks.org', 'wikidata.org', 'wikinews.org', 'wikiquote.org', 'wikisource.org', 'wikiversity.org', 'wikivoyage.org'];
+
 const KNOWN_SITE_RESOLVERS = [
   {
     name: 'TwitterEngine',
@@ -855,10 +846,9 @@ const KNOWN_SITE_RESOLVERS = [
     name: 'PixivEngine',
     match: (urlObj, pageUrl, linkUrl) => {
       const host = urlObj.hostname.toLowerCase();
-      const isPixivCdn = host.includes('pximg.net');
-      const isPixivPage = host.includes('pixiv.net') || (pageUrl && pageUrl.includes('pixiv.net'));
-      const isPixivLink = Boolean(linkUrl && (linkUrl.includes('pixiv.net') || linkUrl.includes('pximg.net')));
-      return isPixivCdn || isPixivPage || isPixivLink;
+      const linkHost = urlHostOf(linkUrl, pageUrl);
+      return isSameOrSubdomain(host, 'pximg.net') || isSameOrSubdomain(host, 'pixiv.net') || isSameOrSubdomain(urlHostOf(pageUrl), 'pixiv.net') ||
+        isSameOrSubdomain(linkHost, 'pixiv.net') || isSameOrSubdomain(linkHost, 'pximg.net');
     },
     resolve: (urlObj, pageUrl, linkUrl) => resolvePixivUrl(urlObj, pageUrl, linkUrl)
   },
@@ -875,8 +865,7 @@ const KNOWN_SITE_RESOLVERS = [
     name: 'WikimediaEngine',
     match: (urlObj) => {
       const host = urlObj.hostname.toLowerCase();
-      const isWikiHost = (h) => h.endsWith('wikimedia.org') || h.endsWith('wikipedia.org') || h.endsWith('wiktionary.org') || h.endsWith('wikibooks.org') || h.endsWith('wikidata.org') || h.endsWith('wikinews.org') || h.endsWith('wikiquote.org') || h.endsWith('wikisource.org') || h.endsWith('wikiversity.org') || h.endsWith('wikivoyage.org');
-      return isWikiHost(host);
+      return WIKI_ROOTS.some((root) => isSameOrSubdomain(host, root));
     },
     resolve: (urlObj) => resolveWikimediaUrl(urlObj)
   },
@@ -885,7 +874,7 @@ const KNOWN_SITE_RESOLVERS = [
     match: (urlObj, pageUrl, linkUrl) => {
       // Only activate on Google Images search pages (tbm=isch or udm=2).
       // Must not fire on google.com Maps, Fonts, Analytics, or other Google products.
-      const isGstaticThumb = urlObj.hostname.toLowerCase().includes('gstatic.com') &&
+      const isGstaticThumb = isSameOrSubdomain(urlObj.hostname.toLowerCase(), 'gstatic.com') &&
         urlObj.pathname.toLowerCase().includes('/images') &&
         urlObj.search.toLowerCase().includes('q=tbn:');
       if (isGstaticThumb) {
@@ -893,8 +882,7 @@ const KNOWN_SITE_RESOLVERS = [
         if (!pageUrl) return false;
         try {
           const p = new URL(pageUrl);
-          const h = p.hostname.toLowerCase();
-          if (!h.includes('google.')) return false;
+          if (!isGoogleHost(p.hostname)) return false;
           const tbm = p.searchParams.get('tbm');
           const udm = p.searchParams.get('udm');
           return tbm === 'isch' || udm === '2';
@@ -902,7 +890,7 @@ const KNOWN_SITE_RESOLVERS = [
       }
       // Also activate when the clicked URL itself has imgurl (e.g. /imgres?imgurl=...)
       if (urlObj.searchParams.has('imgurl')) {
-        return urlObj.hostname.toLowerCase().includes('google.');
+        return isGoogleHost(urlObj.hostname);
       }
       return false;
     },
@@ -919,14 +907,8 @@ const KNOWN_SITE_RESOLVERS = [
   {
     name: 'YandexImagesEngine',
     match: (urlObj, pageUrl, linkUrl) => {
-      const host = urlObj ? urlObj.hostname.toLowerCase() : '';
-      const pageHost = pageUrl ? (function() { try { return new URL(pageUrl).hostname.toLowerCase(); } catch (e) { return ''; } })() : '';
-      const linkHost = linkUrl ? (function() { try { return new URL(linkUrl, pageUrl || 'https://yandex.ru').hostname.toLowerCase(); } catch (e) { return ''; } })() : '';
       const hasImgUrl = linkUrl ? /[?&]img_url=/i.test(linkUrl) : false;
-      return host.includes('yandex.') || host.includes('ya.ru') ||
-             pageHost.includes('yandex.') || pageHost.includes('ya.ru') ||
-             linkHost.includes('yandex.') || linkHost.includes('ya.ru') ||
-             hasImgUrl;
+      return isYandexHost(urlObj ? urlObj.hostname : '') || isYandexHost(urlHostOf(pageUrl)) || isYandexHost(urlHostOf(linkUrl, pageUrl || 'https://yandex.ru')) || hasImgUrl;
     },
     resolve: (urlObj, pageUrl, linkUrl) => {
       const candidates = [];
@@ -952,13 +934,7 @@ const KNOWN_SITE_RESOLVERS = [
       // to activate this resolver — that would break relationship scoping by
       // treating any foreign image on an anime-pictures.net page as a candidate.
       const host = urlObj.hostname.toLowerCase();
-      if (host.includes('anime-pictures.net')) return true;
-      if (linkUrl) {
-        try {
-          if (new URL(linkUrl).hostname.toLowerCase().includes('anime-pictures.net')) return true;
-        } catch (e) {}
-      }
-      return false;
+      return isSameOrSubdomain(host, 'anime-pictures.net') || isSameOrSubdomain(urlHostOf(linkUrl), 'anime-pictures.net');
     },
     resolve: async (urlObj, pageUrl, linkUrl) => {
       const candidates = [];

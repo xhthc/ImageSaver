@@ -245,7 +245,7 @@ function memStorage({ failSet = false, failGet = false } = {}) {
     };
     const sandbox = { chrome, indexedDB, console: { log() {}, info() {}, warn() {}, error() {}, debug() {} }, URL, URLSearchParams, setTimeout, clearTimeout, AbortController, TextEncoder, TextDecoder, crypto: require('node:crypto').webcrypto, fetch: async () => ({ ok: false, status: 404, headers: { get: () => null } }) };
     vm.createContext(sandbox);
-    sandbox.importScripts = (file) => vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'), sandbox);
+    require('./helpers/worker.cjs').importScripts(sandbox);
     vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, 'background.js'), 'utf8'), sandbox);
     const send = (msg, sender) => new Promise((resolve) => {
       let answered = false;

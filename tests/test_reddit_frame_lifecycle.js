@@ -293,7 +293,7 @@ function createHarness({ frames = [] } = {}) {
   };
 
   vm.createContext(sandbox);
-  sandbox.importScripts = (file) => vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'), sandbox);
+  require('./helpers/worker.cjs').importScripts(sandbox);
   vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, 'background.js'), 'utf8'), sandbox);
 
   // Awaits production-handler terminal event (OK / ERR badge or timeout), avoiding fixed sleeps

@@ -12,14 +12,6 @@
   const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {}, cid() { return ''; }, enabled() { return false; } };
   DBG.log('redgifs', 'init', 'info', undefined, () => ({ frame: typeof window !== 'undefined' && window !== window.top ? 1 : 0 }));
 
-  const isI18n = globalThis.ImageSaverI18n;
-  const isLabels = isI18n && typeof chrome !== 'undefined' ? isI18n.follow(chrome, typeof navigator !== 'undefined' ? navigator : null, () => {}) : null;
-  const isLabel = (element, field, key, fallback, vars) => {
-    if (isLabels) isLabels.label(element, field, key, vars, fallback);
-    else if (field === 'textContent') element.textContent = fallback;
-    else if (fallback === null) element.removeAttribute(field);
-    else element.setAttribute(field, fallback);
-  };
 
   let lastContextmenuTarget = null;
   let lastContextmenuPath = [];
@@ -1266,17 +1258,14 @@
     return clipId ? enrichWithProviderAudio(base, clipId, options.explicit || null) : base;
   }
 
-  // ---- Inline Save control on own-site players (REDGIFS-INLINE-01) ----
-  // Every eligible `.Player` (it owns exactly one video) gets its own real <button> as its last child, so keyboard users reach it in the native tab
-  // order (after the player's own focusable children) without hovering first. The button is hidden (transparent, no pointer events, but focusable) until
-  // the pointer rests on its player or it takes the focus; it never covers anything while hidden. Only the top document of the provider's own site is
-  // eligible (no Reddit document, no embedded /ifr/ player). Mounting, hovering and focusing do no provider or background work. A trusted activation
-  // stores a one-shot target for the live player (node, source and poster evidence, document location) and sends only its token and the player's own
-  // key; the worker then asks this same document to resolve THAT player (RESOLVE_FRAME_MEDIA with inlineToken), so the context-menu capture is neither
-  // read nor written and the player must survive every asynchronous step unchanged.
-  const INLINE = { Z: 2147483000, HOVER_MS: 60, POLL_MS: 250, SCAN_MS: 100, TOKEN_TTL: 30000, MAX_PENDING: 8, MAX_ITEMS: 100, CLICK_GAP: 1500, SIZE: 32, INSET: 8 };
+  // ---- Inline Save on own-site players (REDGIFS-INLINE-01): the proof side ----
+  // The control itself (mounting, hover, focus, placement, the click) lives in content/content_inline.js, which stores a one-shot target for the live player in INLINE_PENDING:
+  // the node, its source and poster evidence and the document location. The worker then asks this same document to resolve THAT player (RESOLVE_FRAME_MEDIA with inlineToken):
+  // the token resolves one request, once, while its player still holds, so the context-menu capture is neither read nor written. Only the top document of the provider's own site
+  // is eligible (no Reddit document, no embedded /ifr/ player).
+  const INLINE_TTL = 30000;
   const INLINE_TOKEN = /^[a-f0-9]{32}$/;
-  const inl = { items: new Map(), active: null, timer: null, scanTimer: null, poll: null, observer: null, x: 0, y: 0, moved: false, watch: false, frame: null, pending: new Map() };
+  const INLINE_PENDING = new Map();
 
   function inlineAllowed() {
     try {
@@ -1298,21 +1287,6 @@
     }
   }
 
-  // The eligible player under a point. Whatever lies above it must belong to its own card (.GifPreview or .TapTracker, else the Player itself; a
-  // generic parent proves nothing): an unrelated dialog, menu or navigation layer over the player owns the point, and the hidden player behind it
-  // is never selected. `occluded` tells such a player apart from an empty point
-  function inlinePlayerAt(x, y) {
-    const stack = Array.from(document.elementsFromPoint(x, y)).slice(0, 24);
-    for (let i = 0; i < stack.length; i++) {
-      const player = inlinePlayerOf(stack[i]);
-      if (!player) continue;
-      const card = player.owner.closest('.GifPreview') || player.owner.closest('.TapTracker') || player.owner;
-      const owned = stack.slice(0, i).every((el) => typeof card.contains === 'function' && card.contains(el));
-      return { player: owned ? player : null, occluded: !owned };
-    }
-    return { player: null, occluded: false };
-  }
-
   // The live player is still the one a control was shown for or a token was issued for: same nodes, same document location, same source and poster evidence
   function inlineHolds(t) {
     const p = t && t.video ? inlinePlayerOf(t.video) : null;
@@ -1321,275 +1295,11 @@
 
   // One-shot: a token resolves one request, once, while its player still holds
   function takeInlineTarget(token) {
-    const t = typeof token === 'string' && INLINE_TOKEN.test(token) ? inl.pending.get(token) : null;
+    const t = typeof token === 'string' && INLINE_TOKEN.test(token) ? INLINE_PENDING.get(token) : null;
     if (!t) return null;
-    inl.pending.delete(token);
-    return Date.now() - t.at <= INLINE.TOKEN_TTL && inlineHolds(t) ? t : null;
+    INLINE_PENDING.delete(token);
+    return Date.now() - t.at <= INLINE_TTL && inlineHolds(t) ? t : null;
   }
-
-  const inlineRandom = (bytes) => {
-    if (typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') return '';
-    return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, '0')).join('');
-  };
-
-  // The refresh interval lives only while a control is visible or a player waits behind a layer
-  function inlineSettle() {
-    if (inl.active || inl.watch) return;
-    if (inl.poll) { clearInterval(inl.poll); inl.poll = null; }
-    if (inl.frame) { (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout)(inl.frame); inl.frame = null; }
-  }
-
-  // Hidden = transparent and not hit-testable, still focusable
-  function inlineConceal(item) {
-    item.shown = null;
-    item.host.style.setProperty('opacity', '0');
-    item.host.style.setProperty('pointer-events', 'none');
-    if (inl.active === item) inl.active = null;
-    inlineSettle();
-  }
-
-  function inlineDrop(item) {
-    inlineConceal(item);
-    if (typeof item.host.remove === 'function') item.host.remove();
-    inl.items.delete(item.owner);
-  }
-
-  // Upper-right corner of the visible part of the player (8 px inset, 32 px button), kept inside the player and the viewport while it scrolls or
-  // resizes; false when the player is not visibly laid out or its visible part is smaller than the button
-  function inlinePlace(item) {
-    const r = typeof item.owner.getBoundingClientRect === 'function' ? item.owner.getBoundingClientRect() : null;
-    if (!r || !(r.width >= 80 && r.height >= 60) || r.bottom < 0 || r.right < 0 || r.top > window.innerHeight || r.left > window.innerWidth) return false;
-    const L = Math.max(r.left, 0);
-    const T = Math.max(r.top, 0);
-    const R = Math.min(r.right, window.innerWidth);
-    const B = Math.min(r.bottom, window.innerHeight);
-    if (R - L < INLINE.SIZE || B - T < INLINE.SIZE) return false; // the visible part of the player cannot contain the button
-    // Local anchoring: the host is absolutely positioned inside the player, so a scroll the compositor performs carries the control with its player
-    // instead of leaving it behind at the old viewport place. The wanted viewport place is converted by measurement, not by assuming which ancestor
-    // is the containing block, and the result is proven: a control that does not lie inside the visible part of its player is not shown
-    const host = item.host;
-    host.style.setProperty('left', '0px');
-    host.style.setProperty('top', '0px');
-    const origin = host.getBoundingClientRect();
-    host.style.setProperty('left', `${Math.max(R - INLINE.SIZE - INLINE.INSET, L) - origin.left}px`);
-    host.style.setProperty('top', `${Math.max(Math.min(T + INLINE.INSET, B - INLINE.SIZE - INLINE.INSET), T) - origin.top}px`);
-    const m = host.getBoundingClientRect();
-    return !(m.width > 0 && (m.left < L - 2 || m.top < T - 2 || m.right > R + 2 || m.bottom > B + 2));
-  }
-
-  // The one bounded refresh (every 250 ms, only while a control is visible or a player waits behind a layer): a changed or moved player is dropped,
-  // and the pointer's place is judged again, so a layer that appears, goes or changes visibility under a stationary pointer is noticed. The control
-  // the keyboard is on is never taken away by the pointer
-  function inlineFollow() {
-    const item = inl.active;
-    if (item && (document.hidden || !item.shown || !inlineHolds(item.shown) || !inlinePlace(item))) inlineConceal(item);
-  }
-
-  function inlineTick() {
-    inlineFollow();
-    inlineEvaluate();
-  }
-
-  // A scroll or resize places the visible control again, at most once per frame, and only while one is visible or a player waits behind a layer
-  function inlineOnViewport() {
-    if ((!inl.active && !inl.watch) || inl.frame) return;
-    const run = () => { inl.frame = null; inlineFollow(); };
-    inl.frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 16);
-  }
-
-  // Show the control of one player (hover or focus); at most one control is visible
-  function inlineReveal(item) {
-    const player = inlinePlayerOf(item.owner);
-    if (!player) { inlineDrop(item); return; }
-    if (inl.active && inl.active !== item) inlineConceal(inl.active);
-    // A selection generation is the player with the source and poster it shows now. A changed one (the same node recycled to another clip) is a
-    // request of its own: fresh throttle and duplicate key. The same one, however often the control is hidden and shown, keeps both
-    const evidence = sourceEvidenceOf(player.video);
-    if (!(item.gen && item.gen.video === player.video && sameSourceEvidence(item.gen.evidence, evidence))) {
-      item.gen = { video: player.video, evidence };
-      item.id = inlineRandom(8);
-      item.busyAt = 0;
-    }
-    if (!(item.shown && item.shown.video === player.video && inlineHolds(item.shown))) {
-      item.shown = { video: player.video, owner: item.owner, evidence, href: window.location.href };
-    }
-    if (!inlinePlace(item)) { inlineConceal(item); return; }
-    inl.active = item;
-    item.host.style.setProperty('opacity', '1');
-    item.host.style.setProperty('pointer-events', 'auto');
-    if (!inl.poll) inl.poll = setInterval(inlineTick, INLINE.POLL_MS);
-  }
-
-  // Decorative (aria-hidden): the button's own label names it
-  function inlineIcon() {
-    try {
-      const ns = 'http://www.w3.org/2000/svg';
-      const svg = document.createElementNS(ns, 'svg');
-      svg.setAttribute('viewBox', '0 0 24 24');
-      svg.setAttribute('width', '18');
-      svg.setAttribute('height', '18');
-      svg.setAttribute('aria-hidden', 'true');
-      const path = document.createElementNS(ns, 'path');
-      path.setAttribute('d', 'M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14');
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', 'currentColor');
-      path.setAttribute('stroke-width', '2');
-      path.setAttribute('stroke-linecap', 'round');
-      path.setAttribute('stroke-linejoin', 'round');
-      svg.appendChild(path);
-      return svg;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function inlineMount(owner) {
-    let item = inl.items.get(owner);
-    if (item) return item;
-    if (inl.items.size >= INLINE.MAX_ITEMS || !inlineRandom(1)) return null;
-    const host = document.createElement('div');
-    host.setAttribute('data-image-saver-inline', 'redgifs');
-    for (const [k, v] of [['position', 'absolute'], ['z-index', String(INLINE.Z)], ['margin', '0'], ['padding', '0'], ['opacity', '0'], ['pointer-events', 'none']]) host.style.setProperty(k, v);
-    const root = typeof host.attachShadow === 'function' ? host.attachShadow({ mode: 'closed' }) : host;
-    const btn = document.createElement('button');
-    btn.setAttribute('type', 'button');
-    isLabel(btn, 'aria-label', 'inline.saveClipAria', 'MediaLatch: Save this clip');
-    isLabel(btn, 'title', 'inline.saveClipAria', 'MediaLatch: Save this clip');
-    // the download icon and the single-button look of the X and Reddit inline controls (same path, colors and border), as a 32 px round button
-    const icon = inlineIcon();
-    if (icon) btn.appendChild(icon);
-    else isLabel(btn, 'textContent', 'inline.save', 'Save');
-    for (const [k, v] of [['all', 'initial'], ['box-sizing', 'border-box'], ['display', 'flex'], ['align-items', 'center'], ['justify-content', 'center'],
-      ['width', `${INLINE.SIZE}px`], ['height', `${INLINE.SIZE}px`], ['border-radius', '9999px'], ['border', '1px solid rgba(237,224,252,0.6)'],
-      ['background', 'rgba(24,17,31,0.82)'], ['color', '#fff'], ['cursor', 'pointer'], ['padding', '0'],
-      ['font', '600 12px/1 system-ui, -apple-system, Segoe UI, sans-serif']]) btn.style.setProperty(k, v);
-    for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick', 'touchstart', 'touchend']) {
-      btn.addEventListener(type, (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); });
-    }
-    item = { owner, host, btn, id: inlineRandom(8), shown: null, focused: false, busyAt: 0, busyTimer: null };
-    btn.addEventListener('click', (e) => inlineOnClick(item, e), true);
-    btn.addEventListener('keydown', (e) => inlineOnButtonKey(item, e), true);
-    // visible focus (the reset above removes the browser's ring), and the control follows the focus
-    btn.addEventListener('focus', () => {
-      item.focused = true;
-      btn.style.setProperty('outline', '2px solid #fff');
-      btn.style.setProperty('outline-offset', '2px');
-      inlineReveal(item);
-    });
-    btn.addEventListener('blur', () => {
-      item.focused = false;
-      btn.style.setProperty('outline', 'none');
-      if (!inl.timer) inl.timer = setTimeout(inlineHoverTimer, INLINE.HOVER_MS);
-    });
-    root.appendChild(btn);
-    owner.appendChild(host);
-    inl.items.set(owner, item);
-    return item;
-  }
-
-  // Every eligible player has its control; a recycled, removed or no longer eligible player loses it
-  function inlineScan() {
-    inl.scanTimer = null;
-    try {
-      if (!inlineAllowed()) return;
-      for (const [owner, item] of Array.from(inl.items)) if (!isConnectedNode(owner) || !inlinePlayerOf(owner)) inlineDrop(item);
-      for (const owner of Array.from(document.querySelectorAll('.Player')).slice(0, INLINE.MAX_ITEMS)) if (inlinePlayerOf(owner)) inlineMount(owner);
-      // a page change under a resting pointer (a layer opening or closing, a recycled player) is judged against the pointer's last place
-      if (inl.moved && (!inl.active || !inl.active.focused)) inlineEvaluate();
-    } catch (_) {}
-  }
-
-  const inlineScheduleScan = () => { if (!inl.scanTimer) inl.scanTimer = setTimeout(inlineScan, INLINE.SCAN_MS); };
-
-  function inlineEvaluate() {
-    try {
-      if (document.hidden || !inlineAllowed() || typeof document.elementsFromPoint !== 'function') {
-        inl.watch = false;
-        if (inl.active && !inl.active.focused) inlineConceal(inl.active);
-        return;
-      }
-      const at = inlinePlayerAt(inl.x, inl.y);
-      const item = at.player ? inlineMount(at.player.owner) : null;
-      inl.watch = at.occluded; // a player behind a layer is watched until the layer goes
-      if (inl.active && inl.active.focused && inl.active !== item) return; // the control the keyboard is on stays
-      if (item) inlineReveal(item);
-      else if (inl.active && !inl.active.focused) inlineConceal(inl.active);
-      if (inl.watch && !inl.poll) inl.poll = setInterval(inlineTick, INLINE.POLL_MS);
-    } catch (_) {
-      inl.watch = false;
-      if (inl.active && !inl.active.focused) inlineConceal(inl.active);
-    } finally {
-      inlineSettle(); // every exit: early returns and exceptions included
-    }
-  }
-
-  function inlineHoverTimer() {
-    inl.timer = null;
-    inlineEvaluate();
-  }
-
-  function inlineOnMove(e) {
-    if (!e || (e.pointerType && e.pointerType !== 'mouse') || !inlineAllowed()) return;
-    inl.x = e.clientX;
-    inl.y = e.clientY;
-    inl.moved = true;
-    if (!inl.timer) inl.timer = setTimeout(inlineHoverTimer, INLINE.HOVER_MS);
-  }
-
-  // Escape hides the control and leaves it: the focus is released in place, so the next Tab continues from there
-  function inlineOnButtonKey(item, e) {
-    if (!e || e.key !== 'Escape') return;
-    if (typeof e.preventDefault === 'function') e.preventDefault();
-    inlineConceal(item);
-    if (typeof item.btn.blur === 'function') item.btn.blur();
-  }
-
-  function inlineOnClick(item, e) {
-    if (e) {
-      if (typeof e.stopPropagation === 'function') e.stopPropagation();
-      if (typeof e.preventDefault === 'function') e.preventDefault();
-    }
-    // only a genuine mouse or keyboard activation of the control; a click the page dispatches sends nothing
-    if (!e || e.isTrusted !== true) { DBG.log('redgifs.inline', 'click', 'refused', 'NOT_TRUSTED'); return; }
-    const cid = DBG.cid();
-    const s = item.shown;
-    if (!s || !inlineHolds(s)) { DBG.log('redgifs.inline', 'click', 'refused', s ? 'OWNER_NOT_HELD' : 'NO_CONTROL', null, { cid }); inlineConceal(item); return; }
-    // a repeated activation of the SAME player inside the gap is one request; another player is a request of its own
-    const now = Date.now();
-    if (now - item.busyAt < INLINE.CLICK_GAP) { DBG.log('redgifs.inline', 'click', 'skipped', 'BUSY', null, { cid }); return; }
-    const token = inlineRandom(16);
-    if (!token) { DBG.log('redgifs.inline', 'click', 'failed', 'NO_RANDOM', null, { cid }); return; }
-    DBG.log('redgifs.inline', 'click', 'start', undefined, null, { cid });
-    item.busyAt = now;
-    for (const [k, v] of inl.pending) if (now - v.at > INLINE.TOKEN_TTL) inl.pending.delete(k);
-    while (inl.pending.size >= INLINE.MAX_PENDING) inl.pending.delete(inl.pending.keys().next().value);
-    inl.pending.set(token, { video: s.video, owner: s.owner, evidence: s.evidence, href: s.href, at: now });
-    try {
-      const sent = chrome.runtime.sendMessage(cid ? { action: 'REDGIFS_INLINE_SAVE', token, player: item.id, dbg: cid } : { action: 'REDGIFS_INLINE_SAVE', token, player: item.id });
-      if (sent && typeof sent.catch === 'function') sent.catch(() => { DBG.log('redgifs.inline', 'dispatch', 'failed', 'MESSAGE_FAILED', null, { cid }); });
-      DBG.log('redgifs.inline', 'dispatch', 'start', undefined, { action: 'REDGIFS_INLINE_SAVE' }, { cid });
-    } catch (_) {
-      inl.pending.delete(token);
-      DBG.log('redgifs.inline', 'dispatch', 'failed', 'EXTENSION_CONTEXT_GONE', null, { cid });
-    }
-    item.btn.setAttribute('aria-busy', 'true');
-    if (item.busyTimer) clearTimeout(item.busyTimer);
-    item.busyTimer = setTimeout(() => { item.busyTimer = null; item.btn.removeAttribute('aria-busy'); }, INLINE.CLICK_GAP);
-  }
-
-  // Own site, top document only: nothing at all is registered on a Reddit document or an embedded player
-  try {
-    if (inlineAllowed() && typeof window.addEventListener === 'function') {
-      window.addEventListener('pointermove', inlineOnMove, { capture: true, passive: true });
-      window.addEventListener('scroll', inlineOnViewport, { capture: true, passive: true }); // capture: a scroller inside the page counts too
-      window.addEventListener('resize', inlineOnViewport, { passive: true });
-      if (typeof MutationObserver === 'function' && typeof document !== 'undefined' && document.documentElement) {
-        inl.observer = new MutationObserver(inlineScheduleScan);
-        inl.observer.observe(document.documentElement, { childList: true, subtree: true });
-      }
-      inlineScheduleScan();
-    }
-  } catch (_) {}
 
   // Register frame-local message listener
   if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
@@ -1666,6 +1376,8 @@
     globalThis.MAX_JSON_DEPTH = MAX_JSON_DEPTH;
     globalThis.MAX_COLLECTED_CANDIDATES = MAX_COLLECTED_CANDIDATES;
     globalThis.setLastContextmenuTarget = (target, path = []) => captureGesture(target, path);
-    globalThis.redgifsInlineState = inl;
+    globalThis.__medialatchSite = Object.assign(globalThis.__medialatchSite || {}, {
+      redgifs: { allowed: inlineAllowed, playerOf: inlinePlayerOf, holds: inlineHolds, pending: INLINE_PENDING, ttl: INLINE_TTL, evidenceOf: sourceEvidenceOf, sameEvidence: sameSourceEvidence, connected: isConnectedNode }
+    });
   }
 })();

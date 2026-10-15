@@ -4,8 +4,8 @@
 (function (root) {
   const FB = root.ImageSaverFeedback;
   const empty = () => FB.computeStats([]);
-  // One finite owning-site list for worker and page; generic browsing hosts never get their own bucket.
-  const SITES = Object.freeze(['x', 'reddit', 'pixiv', 'redgifs', 'pawchive', 'zerochan', 'anime-pictures', 'danbooru', 'rule34', 'safebooru', 'gelbooru', 'realbooru', 'xbooru', 'hypnohub', 'tbib', 'curveybooru', 'inkbooru', 'mspabooru', 'scatbooru', 'yakui', 'e621', 'yande.re', 'konachan', 'e-shuushuu', 'sankaku', 'tenor', 'giphy', 'wikimedia', 'other', 'unattributed']);
+  // One finite owning-site list for worker and page (the canonical record lib/sites.js, then the two catch-alls); generic browsing hosts never get their own bucket.
+  const SITES = Object.freeze([...root.MediaLatchSites.SITES.map(site => site.id), 'other', 'unattributed']);
   const KNOWN = new Set(SITES.filter(id => id !== 'other' && id !== 'unattributed'));
   const siteOf = r => {
     const site = r.site === 'pawchive.pw' ? 'pawchive' : r.site;

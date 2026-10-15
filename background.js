@@ -5,26 +5,28 @@
 // binding of this file while it loads, so they all load here, before any of the code below runs.
 if (typeof importScripts === 'function') {
   importScripts('lib/folder_path.js');       // download-folder rules shared with the settings page
+  importScripts('lib/sites.js');             // the supported sites: persistent ids, folder domains, the Booru view group
   importScripts('lib/i18n.js');              // English / Russian interface text (notifications follow the saved language)
   importScripts('lib/feedback.js');          // operation records, summaries and reports (pure)
-  importScripts('lib/feedback_tracker.js');  // the operation tracker and notifier
-  importScripts('lib/statistics.js');        // all-time statistics
-  importScripts('lib/download_manager.js');  // the durable queued acquisition manager
+  importScripts('worker/feedback_tracker.js');  // the operation tracker and notifier
+  importScripts('worker/statistics.js');        // all-time statistics
+  importScripts('worker/download_manager.js');  // the durable queued acquisition manager
   importScripts('lib/export_directory.js');  // the chosen-folder export store
   importScripts('lib/debug_journal.js');     // the opt-in debug journal
-  importScripts('lib/media_format.js');      // MIME, signatures, extensions and media classification
-  importScripts('lib/download_paths.js');    // file names, folder layout and authors
+  importScripts('worker/media_format.js');      // MIME, signatures, extensions and media classification
+  importScripts('worker/download_paths.js');    // file names, folder layout and authors
   importScripts('lib/media_sources.js');    // shared privileged URL admission
-  importScripts('lib/candidates.js');        // candidate addresses, groups, scoring and the image probe
-  importScripts('lib/site_resolvers.js');    // site resolvers (X, Pixiv, Reddit, Zerochan, Sankaku, Pawchive, ...)
-  importScripts('lib/booru_resolvers.js');   // booru engine families
-  importScripts('lib/page_selection.js');    // functions injected into the clicked frame: owner admission, context target, DOM metadata
-  importScripts('lib/x_recovery.js');        // X selected-player recovery from the owning post
-  importScripts('lib/worker/providers.js');  // selected-media resolution and the original-media plan
-  importScripts('lib/toolbar_badge.js');     // the serialized toolbar badge and theme icon
-  importScripts('lib/worker/pipeline.js');   // plan execution, verification and export
-  importScripts('lib/worker/offscreen.js');  // the offscreen document lifetime
-  importScripts('lib/worker/animation.js');  // GIF conversion policy and Reddit HLS assembly
+  importScripts('lib/media_guard.js');      // log redaction, the protected-host allowlist and the signature check, shared with the offscreen document
+  importScripts('worker/candidates.js');        // candidate addresses, groups, scoring and the image probe
+  importScripts('worker/site_resolvers.js');    // site resolvers (X, Pixiv, Reddit, Zerochan, Sankaku, Pawchive, ...)
+  importScripts('worker/booru_resolvers.js');   // booru engine families
+  importScripts('worker/page_selection.js');    // functions injected into the clicked frame: owner admission, context target, DOM metadata
+  importScripts('worker/x_recovery.js');        // X selected-player recovery from the owning post
+  importScripts('worker/providers.js');  // selected-media resolution and the original-media plan
+  importScripts('worker/toolbar_badge.js');     // the serialized toolbar badge and theme icon
+  importScripts('worker/pipeline.js');   // plan execution, verification and export
+  importScripts('worker/offscreen.js');  // the offscreen document lifetime
+  importScripts('worker/animation.js');  // GIF conversion policy and Reddit HLS assembly
 }
 const FolderPath = globalThis.ImageSaverFolderPath;
 const FeedbackLib = globalThis.ImageSaverFeedback;
@@ -607,45 +609,6 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
 }
 
 /**
- * Sanitizes URLs for secure debug logging by redacting sensitive query parameters.
- * Redacts tokens, access keys, signatures, auth hashes, and similar credentials.
- * Recursively supports nested objects and strings.
- * Does NOT alter the underlying URL used by the download/network pipeline.
- */
-function sanitizeUrlForLog(input) {
-  if (!input) return input;
-  if (typeof input === 'object') {
-    if (Array.isArray(input)) {
-      return input.map(sanitizeUrlForLog);
-    }
-    const cleanObj = {};
-    for (const [k, v] of Object.entries(input)) {
-      cleanObj[k] = sanitizeUrlForLog(v);
-    }
-    return cleanObj;
-  }
-  if (typeof input !== 'string') return input;
-
-  const SENSITIVE_KEY_RE = /^(?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|a|jsc_token|session|bearer)$/i;
-
-  try {
-    const parsed = new URL(input);
-    let modified = false;
-    for (const [key, value] of parsed.searchParams.entries()) {
-      // names of signature-bearing parameters beyond the short list: AWS/Google (X-Amz-Credential, X-Goog-Credential), CloudFront (Policy, Key-Pair-Id), Akamai (hdnts, hdnea)
-      if (SENSITIVE_KEY_RE.test(key) || /token|secret|auth|signature|credential|policy|key-pair-id|hdnts|hdnea/i.test(key)) {
-        parsed.searchParams.set(key, '[REDACTED]');
-        modified = true;
-      }
-    }
-    return modified ? parsed.toString() : input;
-  } catch (_) {
-    // If not a full valid URL, fallback to regex replacement
-    return input.replace(/([?&](?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|a|jsc_token|session|bearer|[^?&=]*(?:credential|policy|key-pair-id|hdnts|hdnea)[^?&=]*)=)[^&]*/gi, '$1[REDACTED]');
-  }
-}
-
-/**
  * Diagnostic form of a candidate-group id. The id itself is an identity and stays exact: it embeds the complete normalized URL
  * (`candidate_<url>`) or the last 40 characters of one (`video_<encoded tail>`, `x_video_...`), signed query included. A log line shows only
  * the origin and path with a redaction marker for the query, or only the kind of a truncated tail with a marker; everything else is unchanged.
@@ -961,7 +924,7 @@ function hasMediaAssociation(srcUrl, linkUrl) {
     // 3. Known direct media path segments (paheal, Paheal cdn, img/view, Paheal file_only, videos, etc.)
     const isDirectMediaLink = /\/(images?|original|data|_images|content|img\/view|uploads?|media|photos?|assets|pictures?|pictures\/get_image|videos?)\//i.test(pathname) ||
                               pathname.includes('file_only') ||
-                              parsed.hostname.includes('paheal-cdn.net') ||
+                              isSameOrSubdomain(parsed.hostname, 'paheal-cdn.net') ||
                               parsed.searchParams.has('imgurl') ||
                               parsed.searchParams.has('videourl');
 
@@ -979,7 +942,7 @@ function hasMediaAssociation(srcUrl, linkUrl) {
 // ============================================================================
 // 3. Download feedback (UX-02 / UX-04): operation tracker, notifications, details messages
 // ============================================================================
-// Logic lives in lib/feedback.js (pure) and lib/feedback_tracker.js (injected Chrome APIs).
+// Logic lives in lib/feedback.js (pure) and worker/feedback_tracker.js (injected Chrome APIs).
 // Every hook below is best-effort: a feedback, storage or notification failure must never
 // abort, duplicate or change a download.
 
@@ -1021,7 +984,7 @@ var feedbackNotifier = (typeof globalThis.ImageSaverFeedbackTracker?.createNotif
   : async () => false;
 
 // All-time statistics are the only sink of finished operations. The pre-statistics history (imageSaverHistoryV1) is read once, as the
-// seed of the counters (lib/statistics.js sanitizes each entry); it is never written or pruned here.
+// seed of the counters (worker/statistics.js sanitizes each entry); it is never written or pruned here.
 var statistics = globalThis.MediaLatchStatistics && typeof indexedDB !== 'undefined'
   ? globalThis.MediaLatchStatistics.createStatistics({
       indexedDB,
@@ -1202,7 +1165,7 @@ async function managedDownload(options, feedbackOp=null, mime='', maxBytes=0, se
   const record=feedbackOp ? await feedbackTracker?.get(feedbackOp).catch(()=>null) : null;
   return downloadManager.enqueue(options,{op:feedbackOp,mime,maxBytes,site:record?.site || fbSiteOf(selectedOrigin,''),selectedPage:selectedOrigin,directoryId:saveDirectoryId});
 }
-// Post batches (MANAGER-BATCH-PROGRESS-01; model in lib/download_manager.js). Best effort: a batch that cannot be recorded never stops,
+// Post batches (MANAGER-BATCH-PROGRESS-01; model in worker/download_manager.js). Best effort: a batch that cannot be recorded never stops,
 // delays or changes a save, and batch data never reaches a fetch decision.
 async function batchOpen(site, count, partial = false) {
   try { const id = downloadManager ? await downloadManager.openBatch(site, count, partial) : null; return id ? { id } : null; } catch (_) { return null; }
@@ -2205,7 +2168,7 @@ async function onContextMenuClicked(info, tab) {
             await chrome.scripting.executeScript({
               target: { tabId: tab.id },
               injectImmediately: true,
-              files: ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_x.js'] // the journal client and the label catalogue first (DEBUG-MENU-01, UI-LOCALIZATION-01)
+              files: ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_copy_kit.js', 'content/content_x.js', 'content/content_inline.js'] // the journal client and the label catalogue first (DEBUG-MENU-01, UI-LOCALIZATION-01); the inline control after the site script it uses
             });
             mediaResult = await chrome.tabs.sendMessage(tab.id, { action: 'GET_X_MEDIA_AT_CURSOR' });
           }
@@ -2482,6 +2445,114 @@ async function onContextMenuClicked(info, tab) {
 }
 chrome.contextMenus.onClicked.addListener(onContextMenuClicked);
 
+// ---- inline saves (X, Reddit, Pixiv; content/content_inline.js): what every route shares ----
+// The content script sends only a one-shot token. A route validates the sender, asks the same frame and document to prove the owner again, re-validates what comes back and runs the
+// existing onContextMenuClicked pipeline, so resolution, verification, folders, the download lifecycle and feedback are the menu's. The site rules (sender, sanitizing, the pipeline
+// entry, how a batch is admitted) stay in each route below; the ask, the refusal, the reasons of an answer, one "Save this" and the "Save all" loop are common.
+const INLINE_TOKEN = /^[a-f0-9]{32}$/;
+const INLINE_BATCH_MIN = 2;
+const INLINE_BATCH_MAX = POST_MEDIA_MAX; // Save all: at most this many items per post
+const INLINE_BATCH_CONCURRENCY = 2; // and this many items in flight at once
+
+// Only the sending frame and the sending document can answer.
+async function inlineAsk(tab, sender, payload) {
+  try {
+    const options = { frameId: sender.frameId };
+    if (typeof sender.documentId === 'string' && sender.documentId) options.documentId = sender.documentId;
+    return await chrome.tabs.sendMessage(tab.id, payload, options);
+  } catch (_) {
+    return null;
+  }
+}
+
+// A refused owner or item is visible: a failed operation and an ERR badge, never silence and never a request.
+async function inlineRefuse(sender, cid, slot, code = 'NO_MEDIA') {
+  if (slot && await batchStopped(slot)) return;
+  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid, slot }, sender.tab);
+  await fbFail(op, { stage: 'resolve', code });
+  await fbBadgeReporter(op)('ERR', '#ef4444');
+  await batchSettle(slot, 'failed');
+}
+
+// Why a proof was refused, for the log only: one of a fixed set of codes, never page data (`known` limits the reasons a document may name).
+function inlineWhy(answer, known) {
+  if (!answer || typeof answer !== 'object') return 'NO_ANSWER';
+  if (answer.ok !== false) return 'INVALID_DESCRIPTOR';
+  return known ? (known.has(answer.reason) ? answer.reason : 'REFUSED') : (dbgCode(answer.reason) || 'REFUSED');
+}
+
+// One "Save this": the sender, the owner's proof, the sanitized descriptor, then the route's own entry into the pipeline. r: scope/phase (journal), senderOk, ask (the proof question),
+// sanitize, why, warn (the console arguments of a refusal), run(tab, sender, media, cid), and optionally ownerDetail(media) and refusalCode(answer).
+async function runInlineSingle(r, message, sender) {
+  const cid = dbgCidOf(message);
+  if (!r.senderOk(message, sender)) { dbg(r.scope, r.phase, 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
+  const tab = sender.tab;
+  dbg(r.scope, r.phase, 'start', undefined, null, { cid, tab: tab.id, frame: sender.frameId });
+  const answer = await inlineAsk(tab, sender, r.ask);
+  const media = answer && answer.ok === true ? r.sanitize(answer.media) : null;
+  dbg(r.scope, 'owner', media ? 'ok' : 'refused', media ? undefined : dbgCode(r.why(answer)), media && r.ownerDetail ? r.ownerDetail(media) : null, { cid, tab: tab.id, frame: sender.frameId });
+  if (!media) {
+    console.warn(...r.warn(answer));
+    await inlineRefuse(sender, cid, undefined, r.refusalCode ? r.refusalCode(answer) : undefined);
+    return;
+  }
+  await r.run(tab, sender, media, cid);
+}
+
+// "Save all (N)": the document proved the whole list first (the route's admission); each item is then proven AGAIN right before it runs, so a post that is removed, recycled or navigated
+// away during the batch never redirects work to another post. Items run through the same pipeline as a single save with bounded concurrency; one failed or refused item never touches
+// the others, and every refused or unprocessed item is a failed operation, so nothing is silently dropped. b: scope, label, site (progress record), tab, sender, cid, count, key (one
+// running batch per list), busy, item(index) (the item's proof question), sanitize(raw, index), itemReasons (refusals that skip only that item; any other ends the batch), why,
+// run(tab, sender, media, cid, slot) and optionally code(answer) and dedupe(media) (a repeated asset is saved once).
+async function runInlineBatch(b) {
+  const { tab, sender, cid, count } = b;
+  if (b.busy.has(b.key)) { dbg(b.scope, 'batch', 'skipped', 'BUSY', null, { cid, tab: tab.id }); return; }
+  b.busy.add(b.key);
+  const tally = { started: 0, refused: 0, duplicate: 0 };
+  const seen = new Set();
+  let batch = null; // the progress record of this list (one slot per proven item); null when it cannot be recorded
+  let next = 0;
+  let lost = false;
+  const worker = async () => {
+    while (!lost) {
+      const index = next++;
+      if (index >= count) return;
+      const slot = batchRef(batch, index);
+      if (await batchStopped(slot)) return;
+      const answer = await inlineAsk(tab, sender, b.item(index));
+      const media = answer && answer.ok === true ? b.sanitize(answer.media, index) : null;
+      if (!media) {
+        tally.refused++;
+        // an item that changed or cannot be resolved on its own is skipped; an owner that is gone, replaced, navigated or unknown (or an answer that does not match the batch) ends the batch
+        if (!(answer && answer.ok === false && b.itemReasons.has(answer.reason))) lost = true;
+        console.warn(`[MediaLatch] Inline ${b.label} Save all item refused:`, index, b.why(answer));
+        dbg(b.scope, 'item', 'refused', dbgCode(b.why(answer)), { index, batch: !lost }, { cid, tab: tab.id });
+        await inlineRefuse(sender, cid, slot, b.code ? b.code(answer) : undefined);
+        continue;
+      }
+      const dup = b.dedupe ? b.dedupe(media) : '';
+      if (dup && seen.has(dup)) { tally.duplicate++; dbg(b.scope, 'item', 'skipped', 'DUPLICATE_ASSET', { index }, { cid, tab: tab.id }); await batchSettle(slot); continue; }
+      if (dup) seen.add(dup);
+      if (await b.run(tab, sender, media, cid, slot)) tally.started++;
+      else tally.duplicate++;
+      await batchSettle(slot);
+    }
+  };
+  try {
+    batch = await batchOpen(b.site, count);
+    await Promise.all(Array.from({ length: Math.min(INLINE_BATCH_CONCURRENCY, count) }, worker));
+    for (let i = Math.min(next, count); i < count; i++) {
+      tally.refused++;
+      await inlineRefuse(sender, cid, batchRef(batch, i), b.code ? b.code(null) : undefined);
+    }
+    console.info(`[MediaLatch] Inline ${b.label} Save all:`, { items: count, ...tally });
+    dbg(b.scope, 'batch', 'ok', undefined, { items: count, started: tally.started, refused: tally.refused, duplicate: tally.duplicate }, { cid, tab: tab.id });
+  } finally {
+    await batchClose(batch);
+    b.busy.delete(b.key);
+  }
+}
+
 // UX-10: the inline Save control over X media ("Save this", and "Save all" for a post with several media). The content script sends only a one-shot token. This handler validates the sender
 // (the extension's own content script, an X page, the active tab, a frame), asks the same frame and document to prove the owner
 // again and to build the descriptor with the context-menu builder, re-validates what comes back, and then runs the existing
@@ -2489,10 +2560,6 @@ chrome.contextMenus.onClicked.addListener(onContextMenuClicked);
 // lifecycle and feedback. A removed, replaced, re-sourced, moved or recycled owner is refused before any provider request.
 const xInlineInfos = new WeakSet();
 const xInlineBusy = new Set();
-const X_INLINE_TOKEN = /^[a-f0-9]{32}$/;
-// Save all: at most this many items per post and this many items in flight at once.
-const X_INLINE_BATCH_MAX = POST_MEDIA_MAX;
-const X_INLINE_BATCH_CONCURRENCY = 2;
 
 function sanitizeXInlineMedia(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -2530,27 +2597,7 @@ function sanitizeXInlineMedia(raw) {
 // The extension's own content script, an X page, the active tab, a well-formed one-shot token. Nothing else in the message is read.
 function xInlineSenderOk(message, sender) {
   return isContentScriptSender(sender) && isXPageUrl(sender.url) && sender.tab.active === true &&
-    typeof message.token === 'string' && X_INLINE_TOKEN.test(message.token);
-}
-
-// Only the sending frame and the sending document can answer.
-async function xInlineAsk(tab, sender, payload) {
-  try {
-    const options = { frameId: sender.frameId };
-    if (typeof sender.documentId === 'string' && sender.documentId) options.documentId = sender.documentId;
-    return await chrome.tabs.sendMessage(tab.id, payload, options);
-  } catch (_) {
-    return null;
-  }
-}
-
-// A refused owner is visible: a failed operation and an ERR badge, never silence and never a request.
-async function xInlineRefuse(sender, cid, slot) {
-  if (slot && await batchStopped(slot)) return;
-  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid, slot }, sender.tab);
-  await fbFail(op, { stage: 'resolve', code: 'NO_MEDIA' });
-  await fbBadgeReporter(op)('ERR', '#ef4444');
-  await batchSettle(slot, 'failed');
+    typeof message.token === 'string' && INLINE_TOKEN.test(message.token);
 }
 
 // One proven descriptor through the shared save-x-media-item pipeline, unless the same item is already running.
@@ -2569,19 +2616,9 @@ async function xInlineRun(tab, sender, media, cid, slot) {
   }
 }
 
-async function handleXInlineSave(message, sender) {
-  const cid = dbgCidOf(message);
-  if (!xInlineSenderOk(message, sender)) { dbg('x.inline', 'save', 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
-  dbg('x.inline', 'save', 'start', undefined, null, { cid, tab: sender.tab.id, frame: sender.frameId });
-  const answer = await xInlineAsk(sender.tab, sender, { action: 'X_INLINE_OWNER', token: message.token });
-  const media = answer && answer.ok === true ? sanitizeXInlineMedia(answer.media) : null;
-  dbg('x.inline', 'owner', media ? 'ok' : 'refused', media ? undefined : (answer && answer.ok === false ? (dbgCode(answer.reason) || 'REFUSED') : (answer ? 'INVALID_DESCRIPTOR' : 'NO_ANSWER')), null, { cid, tab: sender.tab.id, frame: sender.frameId });
-  if (!media) {
-    console.warn('[MediaLatch] Inline X Save refused: the owner was not proven again');
-    await xInlineRefuse(sender, cid);
-    return;
-  }
-  await xInlineRun(sender.tab, sender, media, cid);
+function handleXInlineSave(message, sender) {
+  return runInlineSingle({ scope: 'x.inline', phase: 'save', senderOk: xInlineSenderOk, ask: { action: 'X_INLINE_OWNER', token: message.token }, sanitize: sanitizeXInlineMedia, why: inlineWhy,
+    warn: () => ['[MediaLatch] Inline X Save refused: the owner was not proven again'], run: xInlineRun }, message, sender);
 }
 
 // "Save all (N)": the document proves the whole list first (count, owner, every item), then each item is proven AGAIN right before
@@ -2592,68 +2629,19 @@ async function handleXInlineSaveAll(message, sender) {
   const cid = dbgCidOf(message);
   if (!xInlineSenderOk(message, sender)) { dbg('x.inline', 'batch', 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
   const tab = sender.tab;
-  const open = await xInlineAsk(tab, sender, { action: 'X_INLINE_BATCH', token: message.token });
+  const open = await inlineAsk(tab, sender, { action: 'X_INLINE_BATCH', token: message.token });
   const count = open && open.ok === true && Number.isInteger(open.count) ? open.count : 0;
-  dbg('x.inline', 'batch', count >= 2 && count <= X_INLINE_BATCH_MAX ? 'start' : 'refused', count >= 2 && count <= X_INLINE_BATCH_MAX ? undefined : (open && open.ok === false ? (dbgCode(open.reason) || 'REFUSED') : (open ? 'INVALID_DESCRIPTOR' : 'NO_ANSWER')), { count, postId: open && open.ownerId }, { cid, tab: tab.id, frame: sender.frameId });
-  if (count < 2 || count > X_INLINE_BATCH_MAX) {
+  const listed = count >= INLINE_BATCH_MIN && count <= INLINE_BATCH_MAX;
+  dbg('x.inline', 'batch', listed ? 'start' : 'refused', listed ? undefined : dbgCode(inlineWhy(open)), { count, postId: open && open.ownerId }, { cid, tab: tab.id, frame: sender.frameId });
+  if (!listed) {
     console.warn('[MediaLatch] Inline X Save all refused: the list of media was not proven');
-    await xInlineRefuse(sender, cid);
+    await inlineRefuse(sender, cid);
     return;
   }
   const ownerId = typeof open.ownerId === 'string' && /^\d{1,25}$/.test(open.ownerId) ? open.ownerId : '';
   const sig = typeof open.sig === 'string' && /^[a-f0-9]{8}$/.test(open.sig) ? open.sig : '';
-  const batchKey = `${tab.id}:${sender.frameId}:all:${ownerId}:${sig}`;
-  if (xInlineBusy.has(batchKey)) { dbg('x.inline', 'batch', 'skipped', 'BUSY', null, { cid, tab: tab.id }); return; }
-  xInlineBusy.add(batchKey);
-  const tally = { started: 0, refused: 0, duplicate: 0 };
-  let batch = null; // the progress record of this list (one slot per proven item); null when it cannot be recorded
-  let next = 0;
-  let lost = false;
-  const worker = async () => {
-    while (!lost) {
-      const index = next++;
-      if (index >= count) return;
-      const slot = batchRef(batch, index);
-      if (await batchStopped(slot)) return;
-      const answer = await xInlineAsk(tab, sender, { action: 'X_INLINE_OWNER_ITEM', token: message.token, index });
-      const media = answer && answer.ok === true ? sanitizeXInlineMedia(answer.media) : null;
-      if (!media) {
-        tally.refused++;
-        // an item that changed on its own is skipped; an owner that is gone, replaced, navigated or unknown ends the batch
-        if (!answer || answer.ok !== false || answer.reason !== 'STALE_ITEM') lost = true;
-        dbg('x.inline', 'item', 'refused', (answer && answer.ok === false ? (dbgCode(answer.reason) || 'REFUSED') : (answer ? 'INVALID_DESCRIPTOR' : 'NO_ANSWER')), { index, batch: !lost }, { cid, tab: tab.id });
-        await xInlineRefuse(sender, cid, slot);
-        continue;
-      }
-      if (await xInlineRun(tab, sender, media, cid, slot)) tally.started++;
-      else tally.duplicate++;
-      await batchSettle(slot);
-    }
-  };
-  try {
-    batch = await batchOpen('x', count);
-    await Promise.all(Array.from({ length: Math.min(X_INLINE_BATCH_CONCURRENCY, count) }, worker));
-    for (let i = Math.min(next, count); i < count; i++) {
-      tally.refused++;
-      await xInlineRefuse(sender, cid, batchRef(batch, i));
-    }
-    console.info('[MediaLatch] Inline X Save all:', { items: count, ...tally });
-    dbg('x.inline', 'batch', 'ok', undefined, { items: count, started: tally.started, refused: tally.refused, duplicate: tally.duplicate }, { cid, tab: tab.id });
-  } finally {
-    await batchClose(batch);
-    xInlineBusy.delete(batchKey);
-  }
-}
-
-if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
-  chrome.runtime.onMessage.addListener((message, sender) => {
-    if (!message) return;
-    if (message.action === 'X_INLINE_SAVE') {
-      handleXInlineSave(message, sender).catch((e) => console.warn('[MediaLatch] Inline X Save failed:', e?.message || e));
-    } else if (message.action === 'X_INLINE_SAVE_ALL') {
-      handleXInlineSaveAll(message, sender).catch((e) => console.warn('[MediaLatch] Inline X Save all failed:', e?.message || e));
-    }
-  });
+  await runInlineBatch({ scope: 'x.inline', label: 'X', site: 'x', tab, sender, cid, count, key: `${tab.id}:${sender.frameId}:all:${ownerId}:${sig}`, busy: xInlineBusy,
+    item: (index) => ({ action: 'X_INLINE_OWNER_ITEM', token: message.token, index }), sanitize: sanitizeXInlineMedia, itemReasons: new Set(['STALE_ITEM']), why: inlineWhy, run: xInlineRun });
 }
 
 // PIXIV-INLINE-01: the inline Save controls over Pixiv artwork images, on feed/search/profile previews and on the opened artwork: "Save this" (exactly the selected page, a
@@ -2668,7 +2656,7 @@ const pixivInlineBusy = new Set();
 
 function pixivInlineSenderOk(message, sender) {
   return isContentScriptSender(sender) && sender.frameId === 0 && isPixivPageUrl(sender.url) && sender.tab.active === true &&
-    typeof message.token === 'string' && X_INLINE_TOKEN.test(message.token);
+    typeof message.token === 'string' && INLINE_TOKEN.test(message.token);
 }
 
 // Only the fields this route needs, the asset checked again here; anything else in the answer is ignored.
@@ -2684,19 +2672,7 @@ function sanitizePixivInline(raw, mode) {
   return { mode, src: text(raw.src), link: text(raw.link), id: asset[1], index: Number(asset[2]), count: mode === 'all' ? raw.count : 0 };
 }
 
-async function handlePixivInlineSave(message, sender, mode) {
-  const cid = dbgCidOf(message);
-  if (!pixivInlineSenderOk(message, sender)) { dbg('pixiv.inline', mode, 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
-  const tab = sender.tab;
-  dbg('pixiv.inline', mode, 'start', undefined, null, { cid, tab: tab.id, frame: sender.frameId });
-  const answer = await xInlineAsk(tab, sender, { action: 'PIXIV_INLINE_OWNER', token: message.token, mode });
-  const media = answer && answer.ok === true ? sanitizePixivInline(answer.media, mode) : null;
-  dbg('pixiv.inline', 'owner', media ? 'ok' : 'refused', media ? undefined : (answer && answer.ok === false ? (dbgCode(answer.reason) || 'REFUSED') : (answer ? 'INVALID_DESCRIPTOR' : 'NO_ANSWER')), media ? { count: media.count || undefined } : null, { cid, tab: tab.id, frame: sender.frameId });
-  if (!media) {
-    console.warn('[MediaLatch] Inline Pixiv Save refused: the selected image was not proven again');
-    await xInlineRefuse(sender, cid);
-    return;
-  }
+async function pixivInlineRun(tab, sender, media, cid, mode) {
   const key = `${tab.id}:${sender.frameId}:${mode}:${media.id}:${mode === 'one' ? media.index : 'all'}`;
   if (pixivInlineBusy.has(key)) { dbg('pixiv.inline', mode, 'skipped', 'BUSY', null, { cid, tab: tab.id }); return; }
   pixivInlineBusy.add(key);
@@ -2710,12 +2686,10 @@ async function handlePixivInlineSave(message, sender, mode) {
   }
 }
 
-if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
-  chrome.runtime.onMessage.addListener((message, sender) => {
-    if (!message) return;
-    const mode = message.action === 'PIXIV_INLINE_SAVE' ? 'one' : message.action === 'PIXIV_INLINE_SAVE_ALL' ? 'all' : '';
-    if (mode) handlePixivInlineSave(message, sender, mode).catch((e) => console.warn('[MediaLatch] Inline Pixiv Save failed:', e?.message || e));
-  });
+function handlePixivInlineSave(message, sender, mode) {
+  return runInlineSingle({ scope: 'pixiv.inline', phase: mode, senderOk: pixivInlineSenderOk, ask: { action: 'PIXIV_INLINE_OWNER', token: message.token, mode }, sanitize: (raw) => sanitizePixivInline(raw, mode), why: inlineWhy,
+    ownerDetail: (media) => ({ count: media.count || undefined }), warn: () => ['[MediaLatch] Inline Pixiv Save refused: the selected image was not proven again'],
+    run: (tab, sn, media, cid) => pixivInlineRun(tab, sn, media, cid, mode) }, message, sender);
 }
 
 // UX-11-RD: the inline Save control over Reddit media ("Save this", and "Save all (N)" for a proven complete gallery). Same shape as the
@@ -2734,12 +2708,7 @@ const REDGIFS_EMBED_RETRIES = 2;
 let REDGIFS_EMBED_RETRY_MS = 250;
 let redgifsInlineActive = 0;
 const redditInlineBusy = new Set();
-const REDDIT_INLINE_TOKEN = /^[a-f0-9]{32}$/;
 const REDDIT_INLINE_OWNER_ID = /^t3_[a-z0-9]{1,12}$/;
-// Save all: a complete owned gallery is 2..100 items; two items are in flight at once.
-const REDDIT_INLINE_BATCH_MIN = 2;
-const REDDIT_INLINE_BATCH_MAX = POST_MEDIA_MAX;
-const REDDIT_INLINE_BATCH_CONCURRENCY = 2;
 
 function isRedditPageUrl(url) {
   try {
@@ -2852,24 +2821,13 @@ const redditInlineRefusalCode = (answer) => (answer && answer.ok === false
   ? (answer.reason === 'UNRESOLVED_BLOB' ? 'UNRESOLVED_BLOB_MEDIA' : (answer.reason === 'UNSUPPORTED_STREAM' ? 'UNSUPPORTED_SOURCE' : 'NO_MEDIA'))
   : 'NO_MEDIA');
 function redditInlineWhy(answer) {
-  if (!answer || typeof answer !== 'object') return 'NO_ANSWER';
-  if (answer.ok === true) return 'INVALID_DESCRIPTOR';
-  return REDDIT_INLINE_REASONS.has(answer.reason) ? answer.reason : 'REFUSED';
+  return inlineWhy(answer, REDDIT_INLINE_REASONS);
 }
 
 // The extension's own content script, a Reddit page, the active tab, a well-formed one-shot token. Nothing else in the message is read.
 function redditInlineSenderOk(message, sender) {
   return isContentScriptSender(sender) && isRedditPageUrl(sender.url) && sender.tab.active === true &&
-    typeof message.token === 'string' && REDDIT_INLINE_TOKEN.test(message.token);
-}
-
-// A refused owner or item is visible: a failed operation and an ERR badge, never silence and never a request.
-async function redditInlineRefuse(sender, code = 'NO_MEDIA', cid, slot) {
-  if (slot && await batchStopped(slot)) return;
-  const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid, slot }, sender.tab);
-  await fbFail(op, { stage: 'resolve', code });
-  await fbBadgeReporter(op)('ERR', '#ef4444');
-  await batchSettle(slot, 'failed');
+    typeof message.token === 'string' && INLINE_TOKEN.test(message.token);
 }
 
 // One proven descriptor through the shared save-image-item pipeline, unless the same asset is already running.
@@ -2888,7 +2846,7 @@ async function redditInlineRun(tab, sender, media, cid, slot) {
       dbg('reddit.inline', 'frame', frame ? 'ok' : 'refused', frame ? undefined : 'NO_SINGLE_EMBED_FRAME', () => ({ clipId: embed, frame: frame ? frame.frameId : undefined }), { cid, tab: tab.id });
       if (!frame) {
         console.warn('[MediaLatch] Inline Reddit Save refused: no single frame shows the embedded RedGIFs clip');
-        await redditInlineRefuse(sender, 'UNRESOLVED_BLOB_MEDIA', cid, slot);
+        await inlineRefuse(sender, cid, slot, 'UNRESOLVED_BLOB_MEDIA');
         return false;
       }
       info.frameId = frame.frameId;
@@ -2902,19 +2860,9 @@ async function redditInlineRun(tab, sender, media, cid, slot) {
   }
 }
 
-async function handleRedditInlineSave(message, sender) {
-  const cid = dbgCidOf(message);
-  if (!redditInlineSenderOk(message, sender)) { dbg('reddit.inline', 'save', 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
-  dbg('reddit.inline', 'save', 'start', undefined, null, { cid, tab: sender.tab.id, frame: sender.frameId });
-  const answer = await xInlineAsk(sender.tab, sender, { action: 'REDDIT_INLINE_OWNER', token: message.token });
-  const media = answer && answer.ok === true ? sanitizeRedditInlineMedia(answer.media, null) : null;
-  dbg('reddit.inline', 'owner', media ? 'ok' : 'refused', media ? undefined : dbgCode(redditInlineWhy(answer)), null, { cid, tab: sender.tab.id, frame: sender.frameId });
-  if (!media) {
-    console.warn('[MediaLatch] Inline Reddit Save refused:', redditInlineWhy(answer));
-    await redditInlineRefuse(sender, redditInlineRefusalCode(answer), cid);
-    return;
-  }
-  await redditInlineRun(sender.tab, sender, media, cid);
+function handleRedditInlineSave(message, sender) {
+  return runInlineSingle({ scope: 'reddit.inline', phase: 'save', senderOk: redditInlineSenderOk, ask: { action: 'REDDIT_INLINE_OWNER', token: message.token }, sanitize: (raw) => sanitizeRedditInlineMedia(raw, null),
+    why: redditInlineWhy, refusalCode: redditInlineRefusalCode, warn: (answer) => ['[MediaLatch] Inline Reddit Save refused:', redditInlineWhy(answer)], run: redditInlineRun }, message, sender);
 }
 
 // "Save all (N)": the document proves the whole list first (count, owner, every item), then each item is proven AGAIN right before it
@@ -2925,64 +2873,20 @@ async function handleRedditInlineSaveAll(message, sender) {
   const cid = dbgCidOf(message);
   if (!redditInlineSenderOk(message, sender)) { dbg('reddit.inline', 'batch', 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
   const tab = sender.tab;
-  const open = await xInlineAsk(tab, sender, { action: 'REDDIT_INLINE_BATCH', token: message.token });
+  const open = await inlineAsk(tab, sender, { action: 'REDDIT_INLINE_BATCH', token: message.token });
   const count = open && open.ok === true && Number.isInteger(open.count) ? open.count : 0;
   const ownerId = open && typeof open.ownerId === 'string' && REDDIT_INLINE_OWNER_ID.test(open.ownerId) ? open.ownerId : '';
   const sig = open && typeof open.sig === 'string' && /^[a-f0-9]{8}$/.test(open.sig) ? open.sig : '';
-  const batchOk = !(count < REDDIT_INLINE_BATCH_MIN || count > REDDIT_INLINE_BATCH_MAX || !ownerId || !sig);
+  const batchOk = !(count < INLINE_BATCH_MIN || count > INLINE_BATCH_MAX || !ownerId || !sig);
   dbg('reddit.inline', 'batch', batchOk ? 'start' : 'refused', batchOk ? undefined : dbgCode(redditInlineWhy(open)), { count, ownerId: ownerId || undefined }, { cid, tab: tab.id, frame: sender.frameId });
-  if (count < REDDIT_INLINE_BATCH_MIN || count > REDDIT_INLINE_BATCH_MAX || !ownerId || !sig) {
+  if (!batchOk) {
     console.warn('[MediaLatch] Inline Reddit Save all refused:', redditInlineWhy(open));
-    await redditInlineRefuse(sender, undefined, cid);
+    await inlineRefuse(sender, cid);
     return;
   }
-  const batchKey = `${tab.id}:${sender.frameId}:all:${ownerId}:${sig}`;
-  if (redditInlineBusy.has(batchKey)) { dbg('reddit.inline', 'batch', 'skipped', 'BUSY', null, { cid, tab: tab.id }); return; }
-  redditInlineBusy.add(batchKey);
-  const tally = { started: 0, refused: 0, duplicate: 0 };
-  const seen = new Set();
-  let batch = null; // the progress record of this list (one slot per proven item); null when it cannot be recorded
-  let next = 0;
-  let lost = false;
-  const worker = async () => {
-    while (!lost) {
-      const index = next++;
-      if (index >= count) return;
-      const slot = batchRef(batch, index);
-      if (await batchStopped(slot)) return;
-      const answer = await xInlineAsk(tab, sender, { action: 'REDDIT_INLINE_OWNER_ITEM', token: message.token, index });
-      const media = answer && answer.ok === true ? sanitizeRedditInlineMedia(answer.media, { ownerId, count, index, sig }) : null;
-      if (!media) {
-        tally.refused++;
-        // an item that changed or cannot be resolved on its own is skipped; an owner that is gone, replaced, navigated or unknown
-        // (or an answer that does not match the batch) ends the batch
-        const itemLevel = answer && answer.ok === false && (answer.reason === 'STALE_ITEM' || answer.reason === 'UNRESOLVED_BLOB' || answer.reason === 'UNSUPPORTED_STREAM');
-        if (!itemLevel) lost = true;
-        console.warn('[MediaLatch] Inline Reddit Save all item refused:', index, redditInlineWhy(answer));
-        dbg('reddit.inline', 'item', 'refused', dbgCode(redditInlineWhy(answer)), { index, batch: !lost }, { cid, tab: tab.id });
-        await redditInlineRefuse(sender, redditInlineRefusalCode(answer), cid, slot);
-        continue;
-      }
-      if (seen.has(media.url)) { tally.duplicate++; dbg('reddit.inline', 'item', 'skipped', 'DUPLICATE_ASSET', { index }, { cid, tab: tab.id }); await batchSettle(slot); continue; }
-      seen.add(media.url);
-      if (await redditInlineRun(tab, sender, media, cid, slot)) tally.started++;
-      else tally.duplicate++;
-      await batchSettle(slot);
-    }
-  };
-  try {
-    batch = await batchOpen('reddit', count);
-    await Promise.all(Array.from({ length: Math.min(REDDIT_INLINE_BATCH_CONCURRENCY, count) }, worker));
-    for (let i = Math.min(next, count); i < count; i++) {
-      tally.refused++;
-      await redditInlineRefuse(sender, undefined, cid, batchRef(batch, i));
-    }
-    console.info('[MediaLatch] Inline Reddit Save all:', { items: count, ...tally });
-    dbg('reddit.inline', 'batch', 'ok', undefined, { items: count, started: tally.started, refused: tally.refused, duplicate: tally.duplicate }, { cid, tab: tab.id });
-  } finally {
-    await batchClose(batch);
-    redditInlineBusy.delete(batchKey);
-  }
+  await runInlineBatch({ scope: 'reddit.inline', label: 'Reddit', site: 'reddit', tab, sender, cid, count, key: `${tab.id}:${sender.frameId}:all:${ownerId}:${sig}`, busy: redditInlineBusy,
+    item: (index) => ({ action: 'REDDIT_INLINE_OWNER_ITEM', token: message.token, index }), sanitize: (raw, index) => sanitizeRedditInlineMedia(raw, { ownerId, count, index, sig }),
+    itemReasons: new Set(['STALE_ITEM', 'UNRESOLVED_BLOB', 'UNSUPPORTED_STREAM']), why: redditInlineWhy, code: redditInlineRefusalCode, dedupe: (media) => media.url, run: redditInlineRun });
 }
 
 // REDGIFS-INLINE-01: the inline Save control of the provider's own site. The content script sends only a one-shot token. The sender must be the
@@ -2992,7 +2896,7 @@ async function handleRedditInlineSaveAll(message, sender) {
 function redgifsInlineSenderOk(message, sender) {
   if (!isContentScriptSender(sender) || sender.tab.active !== true || sender.frameId !== 0) return false;
   if (typeof sender.documentId !== 'string' || !sender.documentId) return false;
-  if (typeof message.token !== 'string' || !/^[a-f0-9]{32}$/.test(message.token)) return false;
+  if (typeof message.token !== 'string' || !INLINE_TOKEN.test(message.token)) return false;
   if (typeof message.player !== 'string' || !/^[a-f0-9]{16}$/.test(message.player)) return false;
   try {
     const u = new URL(sender.url);
@@ -3033,16 +2937,20 @@ async function handleRedgifsInlineSave(message, sender) {
   }
 }
 
+// One router for the inline actions of the content script (content/content_inline.js): the route, and the label its failure is logged with.
+const INLINE_ROUTES = {
+  X_INLINE_SAVE: ['Inline X Save', handleXInlineSave],
+  X_INLINE_SAVE_ALL: ['Inline X Save all', handleXInlineSaveAll],
+  PIXIV_INLINE_SAVE: ['Inline Pixiv Save', (m, s) => handlePixivInlineSave(m, s, 'one')],
+  PIXIV_INLINE_SAVE_ALL: ['Inline Pixiv Save', (m, s) => handlePixivInlineSave(m, s, 'all')],
+  REDDIT_INLINE_SAVE: ['Inline Reddit Save', handleRedditInlineSave],
+  REDDIT_INLINE_SAVE_ALL: ['Inline Reddit Save all', handleRedditInlineSaveAll],
+  REDGIFS_INLINE_SAVE: ['Inline RedGIFs Save', handleRedgifsInlineSave]
+};
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender) => {
-    if (!message) return;
-    if (message.action === 'REDGIFS_INLINE_SAVE') {
-      handleRedgifsInlineSave(message, sender).catch((e) => console.warn('[MediaLatch] Inline RedGIFs Save failed:', e?.message || e));
-    } else if (message.action === 'REDDIT_INLINE_SAVE') {
-      handleRedditInlineSave(message, sender).catch((e) => console.warn('[MediaLatch] Inline Reddit Save failed:', e?.message || e));
-    } else if (message.action === 'REDDIT_INLINE_SAVE_ALL') {
-      handleRedditInlineSaveAll(message, sender).catch((e) => console.warn('[MediaLatch] Inline Reddit Save all failed:', e?.message || e));
-    }
+    const route = message && Object.hasOwn(INLINE_ROUTES, message.action) ? INLINE_ROUTES[message.action] : null;
+    if (route) route[1](message, sender).catch((e) => console.warn(`[MediaLatch] ${route[0]} failed:`, e?.message || e));
   });
 }
 

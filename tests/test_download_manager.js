@@ -1,6 +1,6 @@
 // Queue and production disk-transfer regressions; native byte/export evidence is recorded separately.
 const assert=require('node:assert/strict');
-require('../lib/media_sources.js');require('../lib/download_manager.js');require('../lib/staging.js');require('../lib/feedback.js');require('../lib/feedback_tracker.js');require('../lib/statistics.js');
+require('../lib/media_sources.js');require('../lib/sites.js');require('../worker/download_manager.js');require('../offscreen/staging.js');require('../lib/feedback.js');require('../worker/feedback_tracker.js');require('../worker/statistics.js');
 const {sniffMediaMagicBytes,isMalformedMediaContainer}=require('../offscreen.js');
 const {createManager}=MediaLatchDownloads,{createStaging}=MediaLatchStaging;
 const wait=()=>new Promise(r=>setTimeout(r,5));
@@ -746,7 +746,7 @@ function env(stored={jobs:[],paused:false}) {
     };
     const sandbox = {
       chrome, URL, indexedDB: {}, crypto: { randomUUID: () => 'uuid' }, console: { log() {}, warn() {}, error() {} },
-      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^lib\/(media_sources|media_format|download_paths|candidates|site_resolvers|booru_resolvers|page_selection|x_recovery|toolbar_badge|worker\/(offscreen|providers|pipeline|animation))\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
+      setTimeout, clearTimeout, fetch: async () => ({ ok: true, status: 200, headers: new Map() }), importScripts: file => { if (/^(?:lib\/(?:media_sources|media_guard|sites)|worker\/(?:media_format|download_paths|candidates|site_resolvers|booru_resolvers|page_selection|x_recovery|toolbar_badge|offscreen|providers|pipeline|animation))\.js$/.test(file)) vm.runInContext(require('node:fs').readFileSync(file,'utf8'),sandbox); },
       ImageSaverFeedback: globalThis.ImageSaverFeedback,
       ImageSaverFeedbackTracker: globalThis.ImageSaverFeedbackTracker,
       MediaLatchDownloads: {

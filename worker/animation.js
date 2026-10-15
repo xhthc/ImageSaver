@@ -197,7 +197,7 @@ async function executeRedditGifDownload(videoUrl, settings = {}, options = {}) {
 }
 
 // ---- REDDIT-HLS-01: one complete MP4 (video + audio) from the HLS master a selected Reddit player declares ----------------------------------------------
-// The offscreen document fetches the playlist-declared fMP4 resources and remuxes them with the pinned MP4Box (lib/reddit_hls.mjs); this worker only
+// The offscreen document fetches the playlist-declared fMP4 resources and remuxes them with the pinned MP4Box (offscreen/reddit_hls.mjs); this worker only
 // validates the address, runs one assembly at a time, and hands the resulting Blob to the same download/tracking/revocation path as the Reddit GIF.
 const REDDIT_HLS_MASTER = /^https:\/\/v\.redd\.it\/([A-Za-z0-9_-]{1,64})\/HLSPlaylist\.m3u8(?:\?[^#]*)?$/;
 function redditHlsMasterUrl(url) {

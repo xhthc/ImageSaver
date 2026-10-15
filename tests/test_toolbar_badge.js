@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path');
-require('../lib/toolbar_badge.js');
+require('../worker/toolbar_badge.js');
 function fixture(){
   const state={downloads:0,pending:0,resolving:0,failures:0},writes=[],timers=new Map();
   let text='',color='',clock=0,seq=0,read=async()=>({...state});

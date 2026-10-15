@@ -113,11 +113,11 @@ async function main() {
     ['open-tab capture', b => b.injectContextTargetIntoOpenTabs(), { tabId: 1, allFrames: true }, ['lib/debug_journal.js', 'content/content_context_target.js', 'content/content_notifications.js']],
     ['selected owner', b => b.resolveContextOwner(1, 3, { src: 'https://cdn.example.test/selected.jpg' }), { tabId: 1, frameIds: [3] }, 'verifyContextOwner'],
     ['selected target', b => b.resolveContextMediaTarget(1, 3), { tabId: 1, frameIds: [3] }, 'readContextMediaTarget'],
-    ['frame listener fallback', b => b.resolveFrameLocalMedia({ tabId: 1, frameId: 3, documentId: 'doc-selected', clickedSrc: 'blob:https://www.redgifs.com/selected' }), { tabId: 1, documentIds: ['doc-selected'] }, ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_redgifs.js']],
-    ['Reddit listener fallback', b => b.resolveRedditFrameBlobMedia({ tabId: 1, frameId: 3, clickedSrc: 'blob:https://www.reddit.com/selected' }), { tabId: 1, frameIds: [3] }, ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_reddit.js']],
+    ['frame listener fallback', b => b.resolveFrameLocalMedia({ tabId: 1, frameId: 3, documentId: 'doc-selected', clickedSrc: 'blob:https://www.redgifs.com/selected' }), { tabId: 1, documentIds: ['doc-selected'] }, ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_redgifs.js', 'content/content_inline.js']],
+    ['Reddit listener fallback', b => b.resolveRedditFrameBlobMedia({ tabId: 1, frameId: 3, clickedSrc: 'blob:https://www.reddit.com/selected' }), { tabId: 1, frameIds: [3] }, ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_reddit.js', 'content/content_inline.js']],
     ['X declared variants', b => b.recoverXPostMp4Variant(1, { isBlobPlayer: true, tweetId: '123' }), { tabId: 1 }, 'extractXPostVideoInMainWorld', 'MAIN'],
     ['generic DOM metadata', b => b.resolveOriginalMediaPlan({ tabId: 1, frameId: 3, srcUrl: 'https://cdn.example.test/selected.jpg', pageUrl: 'https://unlisted.example.test/feed' }), { tabId: 1, frameIds: [3] }, 'extractDomImageMetadata'],
-    ['X listener fallback', b => b.onContextMenuClicked({ menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/home' }, { id: 1, url: 'https://x.com/home' }), { tabId: 1 }, ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_x.js']],
+    ['X listener fallback', b => b.onContextMenuClicked({ menuItemId: 'save-x-media-item', pageUrl: 'https://x.com/home' }, { id: 1, url: 'https://x.com/home' }), { tabId: 1 }, ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_copy_kit.js', 'content/content_x.js', 'content/content_inline.js']],
     ['embed frame address', b => b.redditInlineFindRedGifsFrame(1, { frameId: 0 }, 'wildcheetah'), { tabId: 1, allFrames: true }, 'func']
   ];
   for (const [name, run, target, entry, world] of schedulingCases) {

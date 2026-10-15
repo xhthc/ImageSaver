@@ -1,4 +1,6 @@
 // offscreen.js - Manages protected media fetches, Blob URLs, and media sniffing in offscreen document
+// The shared helpers (sanitizeUrlForLog, getProtectedHostInfo, sniffMagicBytes) come from lib/media_guard.js, loaded before this script by offscreen.html.
+if (typeof module !== 'undefined' && module.exports) Object.assign(globalThis, require('./lib/media_guard.js'));
 
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -119,7 +121,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
     return true;
   }
 
-  // REDDIT-HLS-01: one complete MP4 from a Reddit HLS master (lib/reddit_hls.mjs); only a lightweight result and a Blob URL cross IPC
+  // REDDIT-HLS-01: one complete MP4 from a Reddit HLS master (offscreen/reddit_hls.mjs); only a lightweight result and a Blob URL cross IPC
   if (message.action === 'ASSEMBLE_REDDIT_HLS') {
     if (typeof message.url !== 'string' || !message.url) {
       sendResponse({ success: false, error: 'FOREIGN_SOURCE' });
@@ -371,29 +373,6 @@ function isNonMediaOrErrorPayload(buffer) {
 }
 
 /**
- * Validates and identifies supported protected media hosts.
- */
-function getProtectedHostInfo(url) {
-  if (!url || typeof url !== 'string') return null;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return null;
-    }
-    const hostname = parsed.hostname.toLowerCase();
-    if (hostname === 'oimages.anime-pictures.net') {
-      return { type: 'anime-pictures', hostname };
-    }
-    if (hostname === 'gelbooru.com' || hostname.endsWith('.gelbooru.com')) {
-      return { type: 'gelbooru', hostname };
-    }
-    return null;
-  } catch (e) {
-    return null;
-  }
-}
-
-/**
  * Parses Retry-After header value in seconds or HTTP-date.
  * Bounds result between 0 and maxDelayMs (default 5000ms).
  */
@@ -415,109 +394,11 @@ function parseRetryAfterMs(headerValue, defaultDelayMs = 1000, maxDelayMs = 5000
 }
 
 /**
- * Sniffs canonical media MIME type from initial buffer bytes.
- * Detects JPEG, PNG, GIF, WebP, AVIF, MP4, and WebM using file signatures.
- * Strictly rejects HTML/XML/JSON/text or unrecognized binary payloads.
- *
- * @param {ArrayBuffer|Uint8Array|number[]} buffer
- * @returns {string|null} Canonical MIME type or null if unrecognized/non-media.
+ * Sniffs canonical media MIME type from the bytes the offscreen document stages or converts: the strict policy of lib/media_guard.js (a UTF-8 BOM is skipped,
+ * an SVG payload is reported as image/svg+xml, whitespace-led text is refused and an ftyp box must be complete).
  */
 function sniffMediaMagicBytes(buffer) {
-  if (!buffer) return null;
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  if (bytes.length < 4) return null;
-
-  // 1. Text/HTML/JSON rejection (starts with '<', whitespace, or '{'/'[', or UTF-8 BOM followed by text)
-  let checkOffset = 0;
-  if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
-    checkOffset = 3;
-  }
-  const textStart = checkOffset;
-  while (checkOffset < bytes.length && (bytes[checkOffset] === 0x20 || bytes[checkOffset] === 0x09 || bytes[checkOffset] === 0x0A || bytes[checkOffset] === 0x0D)) {
-    checkOffset++;
-  }
-  if (checkOffset < bytes.length) {
-    const b0 = bytes[checkOffset];
-    if (b0 === 0x3C) {
-      if (isSvgPayload(bytes.subarray(checkOffset))) {
-        return 'image/svg+xml';
-      }
-      return null;
-    }
-    if (b0 === 0x7B || b0 === 0x5B) {
-      return null;
-    }
-  }
-  if (checkOffset > textStart) return null; // Whitespace-led non-SVG text is never binary media
-
-  // 2. JPEG: SOI marker 0xFF 0xD8 0xFF
-  if (bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
-    return 'image/jpeg';
-  }
-
-  // 3. PNG: 8-byte signature 89 50 4E 47 0D 0A 1A 0A
-  if (bytes.length >= 8 &&
-      bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47 &&
-      bytes[4] === 0x0D && bytes[5] === 0x0A && bytes[6] === 0x1A && bytes[7] === 0x0A) {
-    return 'image/png';
-  }
-
-  // 4. GIF: GIF87a or GIF89a
-  if (bytes.length >= 6 &&
-      bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38 &&
-      (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61) {
-    return 'image/gif';
-  }
-
-  // 5. WebP: RIFF....WEBP
-  if (bytes.length >= 12 &&
-      bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
-      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
-    return 'image/webp';
-  }
-
-  // 6. WebM: Matroska EBML header 0x1A 0x45 0xDF 0xA3
-  if (bytes.length >= 4 &&
-      bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3) {
-    return 'video/webm';
-  }
-
-  // 7. ISO BMFF ftyp box header: an AVIF still image (brand avif/avis) is an image, every other brand is the
-  // existing MP4 behaviour. Without the brand check a real AVIF would be labelled video/mp4.
-  const isoKind = (off) => {
-    if (off + 12 > bytes.length) return null;
-    const size = ((bytes[off] << 24) >>> 0) | (bytes[off + 1] << 16) | (bytes[off + 2] << 8) | bytes[off + 3];
-    if (size < 16) return null; // An ftyp box requires at least 16 bytes (size + type + major_brand + minor_version)
-    const brandAt = (p) => String.fromCharCode(bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]);
-    const isAvifBrand = (b) => b === 'avif' || b === 'avis';
-    const major = brandAt(off + 8);
-    if (isAvifBrand(major)) return 'image/avif';
-    if (major === 'mif1' || major === 'msf1') {
-      // The compatible-brand list decides between AVIF and the generic MP4 default: until all of it is visible the box is undecided.
-      if (bytes.length < off + size) return null;
-      const end = Math.min(bytes.length, off + size);
-      for (let p = off + 16; p + 4 <= end; p += 4) if (isAvifBrand(brandAt(p))) return 'image/avif';
-    }
-    return 'video/mp4';
-  };
-  if (bytes.length >= 12) {
-    // Standard ftyp box at offset 4
-    if (bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
-      return isoKind(0);
-    }
-    // Check standard pre-ftyp padding boxes ('wide', 'free', 'skip') within initial 64 bytes
-    let offset = 0;
-    while (offset + 8 <= bytes.length && offset <= 64) {
-      const boxSize = ((bytes[offset] << 24) >>> 0) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3];
-      if (bytes[offset + 4] === 0x66 && bytes[offset + 5] === 0x74 && bytes[offset + 6] === 0x79 && bytes[offset + 7] === 0x70) {
-        return isoKind(offset);
-      }
-      if (boxSize < 8 || boxSize > 64) break;
-      offset += boxSize;
-    }
-  }
-
-  return null;
+  return sniffMagicBytes(buffer, isSvgPayload);
 }
 
 /**
@@ -944,41 +825,6 @@ async function fetchGelbooruBlob(url, options = {}) {
   return fetchProtectedBlob(url, options);
 }
 
-/**
- * Sanitizes URLs for safe diagnostic logging by redacting sensitive parameters.
- * Diagnostic boundary for offscreen fetches: sanitizeUrlForLog(mediaUrl) and sanitizeUrlForLog(url).
- */
-function sanitizeUrlForLog(input) {
-  if (!input) return input;
-  if (typeof input === 'object') {
-    if (Array.isArray(input)) {
-      return input.map(sanitizeUrlForLog);
-    }
-    const cleanObj = {};
-    for (const [k, v] of Object.entries(input)) {
-      cleanObj[k] = sanitizeUrlForLog(v);
-    }
-    return cleanObj;
-  }
-  if (typeof input !== 'string') return input;
-
-  const SENSITIVE_KEY_RE = /^(?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|a|jsc_token|session|bearer)$/i;
-
-  try {
-    const parsed = new URL(input);
-    let modified = false;
-    for (const [key, value] of parsed.searchParams.entries()) {
-      if (SENSITIVE_KEY_RE.test(key) || /token|secret|auth|signature|credential|policy|key-pair-id|hdnts|hdnea/i.test(key)) {
-        parsed.searchParams.set(key, '[REDACTED]');
-        modified = true;
-      }
-    }
-    return modified ? parsed.toString() : input;
-  } catch (_) {
-    return input.replace(/([?&](?:token|access_token|auth|key|signature|sig|secret|api_key|apikey|s|a|jsc_token|session|bearer|[^?&=]*(?:credential|policy|key-pair-id|hdnts|hdnea)[^?&=]*)=)[^&]*/gi, '$1[REDACTED]');
-  }
-}
-
 const GIF_CONVERSION_LIMITS = {
   maxDurationSec: 30.0,
   maxFrames: 150,
@@ -993,7 +839,7 @@ function getGifencModule() {
   if (typeof globalThis !== 'undefined' && globalThis.gifenc) return globalThis.gifenc;
   if (typeof require === 'function') {
     try {
-      return require('./lib/gifenc.js');
+      return require('./offscreen/gifenc.js');
     } catch (_) {}
   }
   return null;
@@ -1420,7 +1266,7 @@ async function convertRedditVideoToGif(mediaUrl, options = {}) {
 }
 
 // The assembly module (and the pinned muxer it imports) is loaded only when a save needs it. The only failure detail that leaves is a fixed code.
-const loadRedditHlsModule = typeof __REDDIT_HLS_LOADER === 'function' ? __REDDIT_HLS_LOADER : () => import(chrome.runtime.getURL('lib/reddit_hls.mjs'));
+const loadRedditHlsModule = typeof __REDDIT_HLS_LOADER === 'function' ? __REDDIT_HLS_LOADER : () => import(chrome.runtime.getURL('offscreen/reddit_hls.mjs'));
 
 async function assembleRedditHlsBlob(url) {
   let mod;

@@ -14,7 +14,7 @@
   "copiedFrom": "the verified official tarball, extracted for evidence under local-notes/checks/reddit-hls01/prep/mp4box-package/package (dist/ and LICENSE only)",
   "modification": "none: the files below are byte-identical to the package files",
   "runtimeDependencies": "none",
-  "usage": "ESM, imported lazily by lib/reddit_hls.mjs from the offscreen document and from Node tests; never loaded from a remote address",
+  "usage": "ESM, imported lazily by offscreen/reddit_hls.mjs from the offscreen document and from Node tests; never loaded from a remote address",
   "files": [
     {
       "path": "mp4box.all.mjs",

@@ -1,5 +1,6 @@
 import {useCallback,useEffect,useRef,useState} from "react"
 import {Ban, CheckCircle2, ChevronDown, Clock, Download, Inbox, Layers, Loader2, Pause, Play, RotateCcw, X, Trash2, XCircle} from "lucide-react"
+import {ScrollArea} from "radix-ui"
 import {Button} from "@/components/ui/button"
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from "@/components/ui/collapsible"
 import {Alert, AlertDescription} from "@/components/ui/alert"
@@ -52,6 +53,12 @@ function BatchSummary({batch:b,pending,busy,onCancel}:{batch:DownloadBatch;pendi
       {pending?<Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true"/>:<Ban aria-hidden="true"/>}{t(pending?'downloads.batch.cancelling':'downloads.batch.cancel')}
     </Button>:null}
   </li>
+}
+// Keep the manager and toolbar popup on the same themed rail.
+export function DownloadsScrollbar() {
+  return <ScrollArea.Scrollbar orientation="vertical" className="flex w-3 touch-none select-none rounded-full bg-muted/30 p-0.5" data-slot="downloads-scrollbar">
+    <ScrollArea.Thumb className="relative flex-1 rounded-full bg-ring/70 transition-colors hover:bg-ring/90 active:bg-ring" data-slot="downloads-scrollbar-thumb"/>
+  </ScrollArea.Scrollbar>
 }
 /** A job's error as a localized title/explanation (and, for a failed job on the full page, the next step), with the raw code kept on a small line.
  * A queued job that the manager retries itself (RATE_LIMIT) is not styled as a failure. */
@@ -144,6 +151,12 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
       </>}
     </li>
   }
+  const list=<ul className="space-y-2" data-slot="download-jobs">{[...batches.values()].filter(b=>!jobs.some(j=>j.batch===b.id)).map(batchSummary)}{jobs.flatMap((j,i)=>{
+      // the first row of a batch brings its summary and the batch's other rows; a batch is placed where its newest row is
+      const batch=j.batch?batches.get(j.batch):undefined
+      if(batch && jobs.findIndex(x=>x.batch===batch.id)!==i)return []
+      return batch?[batchSummary(batch),...jobs.filter(x=>x.batch===batch.id).map(row)]:[row(j)]
+    })}</ul>
   return <section aria-label={t('downloads.heading')} tabIndex={-1} className={cn("outline-none",full?"space-y-4":"space-y-2.5")} data-slot={full?'results-section':undefined}>
     {full
       ?<SectionHeader title={t('downloads.heading')} description={t('section.downloads')}>{queueControls}</SectionHeader>
@@ -154,12 +167,10 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
     </AlertDescription></Alert>:null}
     {s.status==='loading'?<p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true"/>{t('downloads.loading')}</p>:null}
     {s.status==='ready' && !jobs.length && !batches.size?<p data-slot="empty" className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground"><Inbox className="size-5" aria-hidden="true"/>{t('downloads.empty')}</p>:null}
-    <ul className="space-y-2" data-slot="download-jobs">{[...batches.values()].filter(b=>!jobs.some(j=>j.batch===b.id)).map(batchSummary)}{jobs.flatMap((j,i)=>{
-      // the first row of a batch brings its summary and the batch's other rows; a batch is placed where its newest row is
-      const batch=j.batch?batches.get(j.batch):undefined
-      if(batch && jobs.findIndex(x=>x.batch===batch.id)!==i)return []
-      return batch?[batchSummary(batch),...jobs.filter(x=>x.batch===batch.id).map(row)]:[row(j)]
-    })}</ul>
+    {full?<ScrollArea.Root type="auto" className="relative overflow-hidden rounded-xl" data-slot="downloads-scroll-area">
+      <ScrollArea.Viewport role="region" aria-label={t('downloads.heading')} tabIndex={jobs.length>0 || batches.size>0?0:undefined} className="max-h-[min(65dvh,44rem)] w-full overscroll-y-contain rounded-[inherit] pr-4 focus-visible:-outline-offset-2" data-slot="downloads-viewport">{list}</ScrollArea.Viewport>
+      <DownloadsScrollbar/>
+    </ScrollArea.Root>:list}
   </section>
 }
 function DetailedBody({controller,feedback,focusId}:{controller:ReturnType<typeof createDownloads>;feedback:FeedbackController;focusId:string}) {

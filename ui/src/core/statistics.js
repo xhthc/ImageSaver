@@ -1,8 +1,9 @@
 import { createStore } from './store.js';
 import { HISTORY_ENABLED_KEY, watchStorage } from './keys.js';
+import '../../../lib/sites.js';
 
 // Group only the view: the worker keeps its individual site counters and deduplication ledger.
-const BOORU = new Set(['danbooru', 'rule34', 'safebooru', 'gelbooru', 'realbooru', 'xbooru', 'hypnohub', 'tbib', 'curveybooru', 'inkbooru', 'mspabooru', 'scatbooru', 'yakui', 'e621', 'yande.re', 'konachan', 'sankaku']);
+const BOORU = new Set(globalThis.MediaLatchSites.SITES.filter(site => site.booru).map(site => site.id));
 const sum = (a, b) => Object.fromEntries(Object.keys(a).map(k => [k, typeof a[k] === 'number' ? a[k] + b[k] : sum(a[k], b[k])]));
 function bucketsOf(res) {
   const buckets = {};

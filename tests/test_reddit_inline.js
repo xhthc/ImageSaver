@@ -388,6 +388,9 @@ function createMockEnvironment(opts = {}) {
   // the manifest loads the journal client first (DEBUG-MENU-01); the suites without debug keep the content script alone
   if (opts.debug) vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, 'lib', 'debug_journal.js'), 'utf8'), context);
   vm.runInContext(contentCode, context);
+  vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, 'content/content_inline.js'), 'utf8'), context);
+  // the inline handler's internals, under the names the suites below use (__riState, __riCandidate, __RI ...)
+  for (const [k, v] of Object.entries(context.__medialatchInline.reddit.api)) context[k === 'K' ? '__RI' : '__ri' + k[0].toUpperCase() + k.slice(1)] = v;
 
   return {
     context,
@@ -1286,7 +1289,7 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
       }
     };
     vm.createContext(sandbox);
-    sandbox.importScripts = (file) => vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'), sandbox);
+    require('./helpers/worker.cjs').importScripts(sandbox);
     vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, 'background.js'), 'utf8'), sandbox);
 
     // content script -> background: what chrome.runtime.sendMessage of the real content script delivers, with the sender Chrome would attach

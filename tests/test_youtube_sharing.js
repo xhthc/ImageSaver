@@ -244,7 +244,7 @@ async function runYouTubeSharingTests() {
 
   // Load content/content_youtube.js in sandboxed VM
   const ytPath = path.resolve(REPO_ROOT, 'content/content_youtube.js');
-  const ytCode = fs.readFileSync(ytPath, 'utf8');
+  const ytCode = require('./helpers/content.cjs').source('content_youtube.js');
 
   let clipboardText = '';
   let fallbackCopiedText = '';

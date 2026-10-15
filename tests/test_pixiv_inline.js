@@ -1,7 +1,7 @@
 'use strict';
 // PIXIV-INLINE-01: the inline Save this / Save all (N) controls over Pixiv previews and opened artwork images, through the production routes: the real content script
-// (content/content_pixiv.js, in a jsdom window) -> a real message to the real background.js (sender checks, one-shot token, same frame and document proof, explicit inline mode)
-// -> the real resolver (lib/site_resolvers.js) and the real Pixiv batch/single save path. Fixtures: the DOM is Pixiv-shaped (card link + thumbnail + page-count label, opened image
+// (content/content_inline.js, in a jsdom window) -> a real message to the real background.js (sender checks, one-shot token, same frame and document proof, explicit inline mode)
+// -> the real resolver (worker/site_resolvers.js) and the real Pixiv batch/single save path. Fixtures: the DOM is Pixiv-shaped (card link + thumbnail + page-count label, opened image
 // + "k/N" label, recommended cards); layout is stubbed (jsdom has none); the manager is stood in for by the exact-URL export of tests/test_post_media.js. A fixture proves the
 // code, not the current live Pixiv DOM.
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm'), { createRequire } = require('node:module');
@@ -92,7 +92,7 @@ function build({ url, html, lang = 'en', pages = PAGES, bodyOf }) {
   s.batchOpen = async (site, count, partial) => { opened.push([site, count, partial]); return null; };
   const fail = s.fbFail; s.fbFail = async (op, failure) => { failures.push(failure); return fail(op, failure); };
   s.managedDownload = async (options) => { const r = await s.fetch(options.url, { method: 'GET' }); if (!r.ok) throw new Error('HTTP_ERROR'); return s.chrome.downloads.download(options); };
-  const content = code('content/content_pixiv.js');
+  const content = code('content/content_inline.js');
   w.eval(code('lib/i18n.js'));
   page.inject = () => w.eval(content);
   page.inject();
@@ -137,13 +137,13 @@ async function test(name, fn) {
 
 (async () => {
   console.log('\n--- PIXIV-INLINE-01: registration ---');
-  await test('manifest: one Pixiv-only content script (top frame, no new permission); the manifest-driven package and syntax lists include it', async () => {
-    const m = JSON.parse(code('manifest.json')), entries = m.content_scripts.filter((c) => c.js.includes('content/content_pixiv.js'));
-    assert.equal(entries.length, 1); assert.deepEqual(entries[0].matches, ['https://www.pixiv.net/*']); assert.deepEqual(entries[0].js, ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_pixiv.js']); assert(!entries[0].all_frames, 'the top frame only');
+  await test('manifest: Pixiv is served by the one inline content script (top frame, no new permission); the manifest-driven package and syntax lists include it', async () => {
+    const m = JSON.parse(code('manifest.json')), entries = m.content_scripts.filter((c) => c.js.includes('content/content_inline.js'));
+    assert.equal(entries.length, 1); assert(entries[0].matches.includes('https://www.pixiv.net/*')); assert.deepEqual(entries[0].js, ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_inline.js']); assert(!entries[0].all_frames, 'the top frame only');
     assert.deepEqual(m.permissions, ['contextMenus', 'downloads', 'storage', 'scripting', 'declarativeNetRequest', 'offscreen']); assert.deepEqual(m.host_permissions, ['http://*/*', 'https://*/*']);
     // tools/package.mjs ships every content/content_*.js a manifest entry references (and refuses a missing one); tools/verify.mjs syntax-checks every content script of the manifest
     const pkg = code('tools/package.mjs'), ver = code('tools/verify.mjs');
-    assert(pkg.includes('content\\/content_[a-z_]+\\.js') && /^content\/content_[a-z_]+\.js$/.test('content/content_pixiv.js'));
+    assert(pkg.includes('content\\/content_[a-z_]+\\.js') && /^content\/content_[a-z_]+\.js$/.test('content/content_inline.js'));
     assert(pkg.includes('(manifest.content_scripts || []).flatMap(item => [...(item.js || []), ...(item.css || [])])') && ver.includes('manifest.content_scripts.flatMap(entry => entry.js)'));
     assert(ver.includes("'test_pixiv_inline.js'"), 'the suite runs in tools/verify.mjs');
   });
@@ -399,7 +399,7 @@ async function test(name, fn) {
     const p = feed(); p.inject(); p.inject(); await p.hover(150, 150);
     assert.equal(p.d.querySelectorAll('[data-image-saver-inline="pixiv"]').length, 1);
     p.click(p.buttons().one); await p.settle(1); assert.equal(p.sent.length, 1); assert.equal(p.exported().length, 1);
-    p.w.__medialatchPixivInline.teardown(); assert(!p.host(), 'the control is gone');
+    p.w.__medialatchInline.teardown(); assert(!p.host(), 'the control is gone');
     await p.hover(150, 150); assert(!p.host(), 'and nothing listens any more');
   });
   await test('keyboard: focusing the card link shows the control; Tab reaches Save this and Save all; Escape dismisses', async () => {
@@ -454,7 +454,7 @@ async function test(name, fn) {
   await test('F1 a real unload (not persisted) still ends everything; a re-injection after it gives one control and one proof handler', async () => {
     const p = feed(); await p.hover(150, 150); assert(p.host());
     p.w.dispatchEvent(new p.w.PageTransitionEvent('pagehide', { persisted: false }));
-    assert(!p.host()); assert.equal(p.contentListeners.length, 0, 'the proof handler is removed'); assert(!p.w.__medialatchPixivInline);
+    assert(!p.host()); assert.equal(p.contentListeners.length, 0, 'the proof handler is removed'); assert(!p.w.__medialatchInline);
     await p.hover(150, 150); assert(!p.host(), 'nothing listens any more');
     p.inject(); p.inject(); await p.hover(150, 150); assert.equal(p.contentListeners.length, 1); assert.equal(p.d.querySelectorAll('[data-image-saver-inline="pixiv"]').length, 1);
     p.click(p.buttons().one); await p.settle(1); assert.equal(p.sent.length, 1); assert.equal(p.exported().length, 1);

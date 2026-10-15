@@ -3,7 +3,7 @@
 /**
  * test_reddit_hls.js - REDDIT-HLS-01: one complete MP4 (video + audio) from a Reddit v.redd.it HLS (CMAF) post video.
  *
- * The production module lib/reddit_hls.mjs runs unchanged with the REAL pinned MP4Box 2.4.1 (lib/vendor/mp4box/2.4.1); nothing of the muxer is mocked.
+ * The production module offscreen/reddit_hls.mjs runs unchanged with the REAL pinned MP4Box 2.4.1 (offscreen/vendor/mp4box/2.4.1); nothing of the muxer is mocked.
  * Only the network is replaced, by a server that serves tiny controlled but complete fMP4 resources in the layout verified on the reproducer (ftyp, moov with
  * edts after mdia and mvex(mehd, trex), sidx, interleaved-by-track moof/mdat with tfhd defaults) plus the playlists that declare them. Every success case
  * reparses the output with the real library and compares tracks, timescales, edit lists, every sample's DTS/CTS/duration/size/sync flag and payload, the index
@@ -435,7 +435,7 @@ const tickAsync = () => new Promise((r) => setImmediate(r));
 // Success
 // =============================================================================================================================================
 test('vendor: the pinned MP4Box 2.4.1 is byte-identical to its provenance record and carries its license', async () => {
-  const dir = path.join(ROOT, 'lib', 'vendor', 'mp4box', '2.4.1');
+  const dir = path.join(ROOT, 'offscreen', 'vendor', 'mp4box', '2.4.1');
   const prov = JSON.parse(fs.readFileSync(path.join(dir, 'PROVENANCE.json'), 'utf8'));
   assert.equal(prov.package, 'mp4box');
   assert.equal(prov.version, '2.4.1');
@@ -991,8 +991,8 @@ test('R2 output bound and cancellation of the packaging: the exact size passes, 
 
 // =============================================================================================================================================
 (async () => {
-  H = await import(pathToFileURL(path.join(ROOT, 'lib', 'reddit_hls.mjs')).href);
-  M = await import(pathToFileURL(path.join(ROOT, 'lib', 'vendor', 'mp4box', '2.4.1', 'mp4box.all.mjs')).href);
+  H = await import(pathToFileURL(path.join(ROOT, 'offscreen', 'reddit_hls.mjs')).href);
+  M = await import(pathToFileURL(path.join(ROOT, 'offscreen', 'vendor', 'mp4box', '2.4.1', 'mp4box.all.mjs')).href);
   for (const t of queue) {
     try {
       await t.fn();

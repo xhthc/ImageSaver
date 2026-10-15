@@ -30,6 +30,7 @@
 'use strict';
 
 const REPO_ROOT = require('node:path').resolve(__dirname, '..');
+const contentDoc = require('./helpers/content.cjs');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -201,12 +202,12 @@ function createTestEnv() {
   };
 
   const bgContext = vm.createContext(bgSandbox);
-  bgSandbox.importScripts = (file) => vm.runInContext(fs.readFileSync(path.resolve(REPO_ROOT, file), 'utf8'), bgSandbox);
+  require('./helpers/worker.cjs').importScripts(bgSandbox);
   vm.runInContext(bgCodeRaw, bgContext);
 
   const contentXPath = path.resolve(REPO_ROOT, 'content/content_x.js');
   if (fs.existsSync(contentXPath)) {
-    const contentXCode = fs.readFileSync(contentXPath, 'utf8');
+    const contentXCode = contentDoc.source('content_x.js');
     vm.runInContext(contentXCode, bgContext);
   }
 

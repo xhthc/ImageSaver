@@ -10,9 +10,9 @@ const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 2, 0xff, 0xd9]);
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MP4 = new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 2, 0, 0x6d, 0x70, 0x34, 0x31, 0x6d, 0x70, 0x34, 0x32]);
 const read = (file) => fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
-const background = ['background.js', 'lib/media_format.js', 'lib/worker/providers.js', 'lib/worker/pipeline.js']
+const background = ['background.js', 'worker/media_format.js', 'worker/providers.js', 'worker/pipeline.js']
   .map(read).join('\n');
-const offscreen = read('offscreen.js');
+const offscreen = require('./helpers/offscreen.cjs').source();
 const redgifs = read('content/content_redgifs.js');
 const functionSource = (source, name) => {
   const match = source.match(new RegExp('^(?:async )?function ' + name + '\\([^\\n]*\\) \\{[\\s\\S]*?^}', 'm'));
@@ -72,8 +72,8 @@ function environment(fixture) {
   vm.createContext(sandbox);
   vm.runInContext(offscreen, sandbox);
   vm.runInContext([
+    read('lib/media_guard.js'),
     functionSource(background, 'sniffMediaMagicBytes'),
-    functionSource(background, 'sanitizeUrlForLog'),
     functionSource(background, 'cancelResponseBody')
   ].join('\n'), sandbox);
   return { sandbox, requests, logs, deadlines, timers, close: () => { for (const t of timers) clearTimeout(t); timers.clear(); } };
@@ -113,18 +113,22 @@ async function test(name, run) {
     } finally { env.close(); }
   });
 
-  for (const source of [background, offscreen]) await test(`${source === background ? 'background' : 'offscreen'} redaction covers Reddit and signed CDNs`, async () => {
-    const sandbox = { URL };
-    vm.createContext(sandbox);
-    vm.runInContext(functionSource(source, 'sanitizeUrlForLog'), sandbox);
-    const reddit = 'https://v.redd.it/clip/HLSPlaylist.m3u8?a=123,REDDIT_SECRET&v=1';
-    assert(!sandbox.sanitizeUrlForLog(reddit).includes('REDDIT_SECRET'));
-    for (const key of ['X-Amz-Credential', 'X-Goog-Credential', 'Policy', 'Key-Pair-Id', 'hdnts', 'hdnea']) {
-      const url = `https://cdn.example.test/a.jpg?${key}=CDN_SECRET&id=42`;
-      const logged = sandbox.sanitizeUrlForLog(url);
-      assert(!logged.includes('CDN_SECRET'), key);
-      assert(logged.includes('id=42'));
-    }
+  // one implementation (lib/media_guard.js), loaded by both contexts: the worker's global and the offscreen document's global are checked separately
+  assert(read('background.js').includes("importScripts('lib/media_guard.js')") && read('offscreen.html').includes('lib/media_guard.js'));
+  for (const context of ['background', 'offscreen']) await test(`${context} redaction covers Reddit and signed CDNs`, async () => {
+    const env = context === 'offscreen' ? environment(response()) : null;
+    const sandbox = env ? env.sandbox : vm.createContext({ URL });
+    if (!env) vm.runInContext(read('lib/media_guard.js'), sandbox);
+    try {
+      const reddit = 'https://v.redd.it/clip/HLSPlaylist.m3u8?a=123,REDDIT_SECRET&v=1';
+      assert(!sandbox.sanitizeUrlForLog(reddit).includes('REDDIT_SECRET'));
+      for (const key of ['X-Amz-Credential', 'X-Goog-Credential', 'Policy', 'Key-Pair-Id', 'hdnts', 'hdnea']) {
+        const url = `https://cdn.example.test/a.jpg?${key}=CDN_SECRET&id=42`;
+        const logged = sandbox.sanitizeUrlForLog(url);
+        assert(!logged.includes('CDN_SECRET'), key);
+        assert(logged.includes('id=42'));
+      }
+    } finally { if (env) env.close(); }
   });
   for (const [name, config, accepted] of [
     ['bounded JSON', { bytes: Buffer.from('{"token":"example"}') }, true],

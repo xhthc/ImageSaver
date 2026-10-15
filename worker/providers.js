@@ -155,7 +155,7 @@ async function resolveFrameLocalMediaImpl(options = {}) {
         await chrome.scripting.executeScript({
           target: sendOptions.documentId ? { tabId, documentIds: [sendOptions.documentId] } : { tabId, frameIds: [targetFrameId] },
           injectImmediately: true,
-          files: ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_redgifs.js'] // the journal client and the label catalogue first (DEBUG-MENU-01, UI-LOCALIZATION-01)
+          files: ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_redgifs.js', 'content/content_inline.js'] // the journal client and the label catalogue first (DEBUG-MENU-01, UI-LOCALIZATION-01); the inline control after the site script it uses
         });
         response = await chrome.tabs.sendMessage(
           tabId,
@@ -293,7 +293,7 @@ async function resolveRedditFrameBlobMedia({ tabId, frameId, clickedSrc, pageUrl
         await chrome.scripting.executeScript({
           target: { tabId, frameIds: [targetFrameId] },
           injectImmediately: true,
-          files: ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_reddit.js'] // the journal client and the label catalogue first (DEBUG-MENU-01, UI-LOCALIZATION-01)
+          files: ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_reddit.js', 'content/content_inline.js'] // the journal client and the label catalogue first (DEBUG-MENU-01, UI-LOCALIZATION-01); the inline control after the site script it uses
         });
         response = await chrome.tabs.sendMessage(
           tabId,
@@ -1607,10 +1607,10 @@ async function resolveOriginalMediaPlanImpl(firstArg, secondArg, thirdArg, fourt
       const hasImageExt = /\.(jpe?g|png|gif|webp|avif|bmp|svg)$/i.test(pathname);
       const isDirectMediaLink = /\/(images?|original|data|_images|content|img\/view|uploads?|media|photos?|assets|pictures?)\//i.test(pathname) ||
         pathname.includes('file_only') ||
-        parsedLink.hostname.includes('paheal-cdn.net');
+        isSameOrSubdomain(parsedLink.hostname, 'paheal-cdn.net');
       const isWiki = pathname.includes('/wiki/') || pathname.includes('/w/index.php') || /[:/](file|image|файл):/i.test(pathname);
       const isHtmlPagePattern = /\/(post|posts|comment|comments|user|users|tag|tags|upload|thread|threads|forum|article|blog|artworks?|illust)\//i.test(pathname) && !hasImageExt;
-      const isSearchPage = pathname.includes('/search') || pathname.includes('/imgres') || (parsedLink.hostname.includes('yandex.') && pathname.includes('/images/search'));
+      const isSearchPage = pathname.includes('/search') || pathname.includes('/imgres') || (isYandexHost(parsedLink.hostname) && pathname.includes('/images/search'));
 
       if (!isWiki && !isHtmlPagePattern && !isSearchPage && (hasImageExt || isDirectMediaLink)) {
         // the link as it is: its query (an id, a signature) belongs to the selected asset, and a queryless twin is another address
@@ -1715,7 +1715,7 @@ async function resolveOriginalMediaPlanImpl(firstArg, secondArg, thirdArg, fourt
           if (!u) return false;
           try {
             const parsed = new URL(u, baseUrl);
-            return parsed.hostname.toLowerCase().includes('yandex.') || parsed.hostname.toLowerCase().includes('ya.ru') || parsed.searchParams.has('img_url');
+            return isYandexHost(parsed.hostname) || parsed.searchParams.has('img_url');
           } catch (e) {
             return /[?&]img_url=/i.test(u);
           }

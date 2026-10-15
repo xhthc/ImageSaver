@@ -66,18 +66,8 @@
       "js": [
         "lib/debug_journal.js",
         "lib/i18n.js",
+        "content/content_copy_kit.js",
         "content/content_x.js"
-      ],
-      "run_at": "document_start"
-    },
-    {
-      "matches": [
-        "https://www.pixiv.net/*"
-      ],
-      "js": [
-        "lib/debug_journal.js",
-        "lib/i18n.js",
-        "content/content_pixiv.js"
       ],
       "run_at": "document_start"
     },
@@ -88,7 +78,6 @@
       ],
       "js": [
         "lib/debug_journal.js",
-        "lib/i18n.js",
         "content/content_reddit.js"
       ],
       "run_at": "document_start"
@@ -102,10 +91,25 @@
       ],
       "js": [
         "lib/debug_journal.js",
-        "lib/i18n.js",
         "content/content_redgifs.js"
       ],
       "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*",
+        "https://www.pixiv.net/*",
+        "https://*.reddit.com/*",
+        "https://reddit.com/*",
+        "https://www.redgifs.com/*"
+      ],
+      "js": [
+        "lib/debug_journal.js",
+        "lib/i18n.js",
+        "content/content_inline.js"
+      ],
       "run_at": "document_start"
     },
     {
@@ -126,6 +130,7 @@
       "js": [
         "lib/debug_journal.js",
         "lib/i18n.js",
+        "content/content_copy_kit.js",
         "content/content_instagram.js"
       ],
       "run_at": "document_start"
@@ -138,6 +143,7 @@
       "js": [
         "lib/debug_journal.js",
         "lib/i18n.js",
+        "content/content_copy_kit.js",
         "content/content_tiktok.js"
       ],
       "run_at": "document_start"
@@ -150,6 +156,7 @@
       "js": [
         "lib/debug_journal.js",
         "lib/i18n.js",
+        "content/content_copy_kit.js",
         "content/content_youtube.js"
       ],
       "run_at": "document_start"

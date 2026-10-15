@@ -8,4 +8,4 @@
 /ui/*.html text eol=lf
 
 # Preserve the pinned MP4Box runtime and licence bytes on checkout.
-/lib/vendor/mp4box/2.4.1/** -text
+/offscreen/vendor/mp4box/2.4.1/** -text

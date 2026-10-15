@@ -128,7 +128,7 @@ async function executeMediaPlanImpl(plan, settings = {}, rawImageUrl = '', optio
       const u = new URL(url);
       const p = u.pathname.toLowerCase();
       const h = u.hostname.toLowerCase();
-      if (h.includes('pixiv.net') && (p.includes('/artworks/') || p.includes('/illust'))) return true;
+      if (isSameOrSubdomain(h, 'pixiv.net') && (p.includes('/artworks/') || p.includes('/illust'))) return true;
       if (/\.(html?|xhtml|php|asp|aspx)$/i.test(p) && !p.includes('image') && !p.includes('download')) return true;
     } catch (e) {}
     return false;

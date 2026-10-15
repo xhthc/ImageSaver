@@ -18,6 +18,7 @@ const assert = require('assert');
 
 const REDGIFS_SCRIPT_PATH = process.env.REDGIFS_SCRIPT_PATH || path.join(REPO_ROOT, 'content/content_redgifs.js');
 const REDGIFS_CODE = fs.readFileSync(REDGIFS_SCRIPT_PATH, 'utf8');
+const INLINE_CODE = fs.readFileSync(path.join(REPO_ROOT, 'content/content_inline.js'), 'utf8');
 
 let totalTests = 0;
 let passedTests = 0;
@@ -263,12 +264,12 @@ runTest('Language subscriptions remain single after catalogue and script reinjec
   };
   const catalogue = fs.readFileSync(path.join(REPO_ROOT, 'lib/i18n.js'), 'utf8');
   vm.runInContext(catalogue, env.sandbox);
-  vm.runInContext(REDGIFS_CODE, env.sandbox);
+  vm.runInContext(INLINE_CODE, env.sandbox); // the inline module owns the label subscription
   const initialCount = listeners.length;
   assert(initialCount > 0, 'The real language subscriber is loaded');
   for (let i = 0; i < 5; i++) {
     vm.runInContext(catalogue, env.sandbox);
-    vm.runInContext(REDGIFS_CODE, env.sandbox);
+    vm.runInContext(INLINE_CODE, env.sandbox);
   }
   assert.equal(listeners.length, initialCount, 'Reinjection must not add discarded language subscribers');
 });

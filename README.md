@@ -231,10 +231,10 @@ MediaLatch/
 ├─ manifest.json
 ├─ background.js
 ├─ offscreen.html / offscreen.js
-├─ content/                 Site scripts
-├─ lib/
-│  ├─ worker/              Background worker modules
-│  └─ vendor/              Bundled libraries and licences
+├─ content/                 Content scripts: site detection, copy-link buttons, the one inline Save module
+├─ worker/                  Service-worker modules, loaded by background.js in order
+├─ offscreen/               Offscreen-document modules, GIF encoder, vendor/ (bundled libraries and licences)
+├─ lib/                     Scripts shared by several contexts (i18n, journal, folder rules, site record, URL admission, media guard)
 ├─ ui/                     Editable UI source
 ├─ popup/                  Generated UI build
 ├─ tests/
@@ -250,7 +250,7 @@ MediaLatch/
 └─ icons/                  Logo and theme variants
 ```
 
-The unpacked extension stays at the repository root. `background.js` loads `lib/worker/` modules in one ordered block. Shared media policy and helpers stay in `lib/`; provider scripts in `content/`. Edit `ui/` and generate `popup/`. Test data and fixture servers are development-only and excluded from runtime packages.
+The unpacked extension stays at the repository root. `background.js` loads the `worker/` modules in one ordered block and `offscreen.html` loads the `offscreen/` modules. A script that more than one context uses stays in `lib/`; site and inline-control scripts live in `content/`. Edit `ui/` and generate `popup/`. Test data and fixture servers are development-only and excluded from runtime packages.
 
 For local media fixtures: `node tools/fixtures/generic-media-server.js --self-check` or start the server without the flag. See [fixture provenance](tests/fixtures/generic-media/avif/README.md).
 
@@ -274,4 +274,4 @@ Edit `ui/`, then rebuild `popup/`. Verification covers offline regressions, UI t
 
 ## License
 
-Project-owned code is **GPL-3.0-only**. Third-party code and icon glyphs retain their original notices: [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), [UI notices](popup/THIRD_PARTY_NOTICES.txt) and the [MP4Box license](lib/vendor/mp4box/2.4.1/LICENSE).
+Project-owned code is **GPL-3.0-only**. Third-party code and icon glyphs retain their original notices: [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), [UI notices](popup/THIRD_PARTY_NOTICES.txt) and the [MP4Box license](offscreen/vendor/mp4box/2.4.1/LICENSE).

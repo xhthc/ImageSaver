@@ -18,9 +18,9 @@ const assert = require('assert');
 const ROOT = REPO_ROOT;
 const read = (p) => fs.readFileSync(path.resolve(ROOT, p), 'utf8');
 
-const gifenc = require(path.resolve(ROOT, 'lib', 'gifenc.js'));
+const gifenc = require(path.resolve(ROOT, 'offscreen', 'gifenc.js'));
 const FBLib = require(path.resolve(ROOT, 'lib', 'feedback.js'));
-const FBTrackerLib = require(path.resolve(ROOT, 'lib', 'feedback_tracker.js'));
+const FBTrackerLib = require(path.resolve(ROOT, 'worker', 'feedback_tracker.js'));
 const FolderPathLib = require(path.resolve(ROOT, 'lib', 'folder_path.js')).ImageSaverFolderPath;
 
 let passed = 0;
@@ -373,7 +373,7 @@ function createIntegratedEnvironment({
 
   currentContextIsOffscreen = true;
   vm.createContext(offscreenSandbox);
-  vm.runInContext(read('offscreen.js'), offscreenSandbox);
+  vm.runInContext(require('./helpers/offscreen.cjs').source(), offscreenSandbox);
   currentContextIsOffscreen = false;
 
   // Create isolated context for background.js

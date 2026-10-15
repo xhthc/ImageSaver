@@ -1,4 +1,4 @@
-// Classic worker module; loaded by background.js after lib/site_resolvers.js, in this code's original position.
+// Classic worker module; loaded by background.js after worker/site_resolvers.js, in this code's original position.
 // Booru engine families (Danbooru, Gelbooru, Moebooru, Philomena, e621, Shimmie, Szurubooru, Piwigo): ownership, page metadata and originals.
 // ============================================================================
 // 5. LEVEL 3: Booru Engine Type Resolvers (Engine Resolvers)
@@ -32,6 +32,12 @@ function isSameOrSubdomain(hostname, rootDomain) {
   const h = hostname.toLowerCase();
   const root = rootDomain.toLowerCase();
   return h === root || h.endsWith('.' + root);
+}
+
+/** Lowercase hostname of an address (resolved against `base`), '' when it is not one. */
+function urlHostOf(value, base) {
+  if (!value) return '';
+  try { return new URL(value, base).hostname.toLowerCase(); } catch (_) { return ''; }
 }
 
 /**
@@ -335,6 +341,33 @@ function isValidE621AssetUrl(fileUrl, expectedMd5) {
   return true;
 }
 
+// A path split at its last dot: { base, ext }. The extension keeps its dot (lowercased when asked); `fallback` stands in when the path has none.
+function splitExtension(path, { lower = false, fallback = '.jpg' } = {}) {
+  const dot = path.lastIndexOf('.');
+  if (dot === -1) return { base: path, ext: fallback };
+  const ext = path.substring(dot);
+  return { base: path.substring(0, dot), ext: lower ? ext.toLowerCase() : ext };
+}
+
+// The deterministic extension variants of one path on the same host as legacy-tier candidates (score 80), videos allowed.
+function legacyExtensionCandidates(urlObj, basePath, ext) {
+  return generateExtensionCandidates(urlObj, basePath, ext, { includeVideo: true }).map((c) => createCandidateDescriptor(c, {
+    score: 80,
+    tier: 'legacy',
+    allowVideo: c.endsWith('.mp4') || c.endsWith('.webm')
+  }));
+}
+
+// A Moebooru-style sample address path -> the path of the full image: /sample/<hash>/<title> sample <tags>.jpg -> /image/<hash>/<title> <tags>.<ext>
+function sampleToImagePath(pathname) {
+  return pathname.replace('/sample/', '/image/')
+    .replace(/%20sample%20/gi, '%20')
+    .replace(/[ _-]sample[ _-]/gi, ' ')
+    .replace(/%20sample/gi, '')
+    .replace(/sample%20/gi, '')
+    .replace(/\s+/g, ' ');
+}
+
 /**
  * Helper function to generate candidate URLs with different file extensions
  * Prevents blind extension replacement and verifies actual formats on the server.
@@ -440,19 +473,9 @@ const BOORU_ENGINE_RESOLVERS = [
         let origPath = pathname.replace(/\/(sample|\d+x\d+|preview)\//g, '/original/');
         origPath = origPath.replace(/sample[-_]/g, '');
 
-        const dotIdx = origPath.lastIndexOf('.');
-        const basePath = dotIdx !== -1 ? origPath.substring(0, dotIdx) : origPath;
-        const ext = dotIdx !== -1 ? origPath.substring(dotIdx) : '.jpg';
+        const { base: basePath, ext } = splitExtension(origPath);
 
-        const extCands = generateExtensionCandidates(urlObj, basePath, ext, { includeVideo: true });
-        for (const c of extCands) {
-          const isVid = c.endsWith('.mp4') || c.endsWith('.webm');
-          candidates.push(createCandidateDescriptor(c, {
-            score: 80,
-            tier: 'legacy',
-            allowVideo: isVid
-          }));
-        }
+        candidates.push(...legacyExtensionCandidates(urlObj, basePath, ext));
       }
 
       return candidates;
@@ -579,15 +602,7 @@ const BOORU_ENGINE_RESOLVERS = [
         }
 
         // 2b. Standard extension candidates on current host
-        const extCands = generateExtensionCandidates(urlObj, `${dir}${baseName}`, currentExt, { includeVideo: true });
-        for (const c of extCands) {
-          const isVid = c.endsWith('.mp4') || c.endsWith('.webm');
-          candidates.push(createCandidateDescriptor(c, {
-            score: 80,
-            tier: 'legacy',
-            allowVideo: isVid
-          }));
-        }
+        candidates.push(...legacyExtensionCandidates(urlObj, `${dir}${baseName}`, currentExt));
       }
 
       return candidates;
@@ -628,41 +643,17 @@ const BOORU_ENGINE_RESOLVERS = [
 
       // 1. Sample transformation: /sample/<hash>/<title> sample <tags>.jpg -> /image/<hash>/<title> <tags>.<ext>
       if (pathname.includes('/sample/')) {
-        let origPath = pathname.replace('/sample/', '/image/');
-        origPath = origPath
-          .replace(/%20sample%20/gi, '%20')
-          .replace(/[ _-]sample[ _-]/gi, ' ')
-          .replace(/%20sample/gi, '')
-          .replace(/sample%20/gi, '')
-          .replace(/\s+/g, ' ');
+        const origPath = sampleToImagePath(pathname);
 
-        const dotIdx = origPath.lastIndexOf('.');
-        const basePath = dotIdx !== -1 ? origPath.substring(0, dotIdx) : origPath;
-        const ext = dotIdx !== -1 ? origPath.substring(dotIdx) : '.jpg';
+        const { base: basePath, ext } = splitExtension(origPath);
 
-        const extCands = generateExtensionCandidates(urlObj, basePath, ext, { includeVideo: true });
-        for (const c of extCands) {
-          const isVid = c.endsWith('.mp4') || c.endsWith('.webm');
-          candidates.push(createCandidateDescriptor(c, {
-            score: 80,
-            tier: 'legacy',
-            allowVideo: isVid
-          }));
-        }
+        candidates.push(...legacyExtensionCandidates(urlObj, basePath, ext));
       }
 
       // 2. Deterministic fallback for /data/preview/<md5>.jpg (the flat /data/<md5>.<ext> layout of Sakugabooru)
       if (pathname.includes('/preview/')) {
         if (md5) {
-          const extCands = generateExtensionCandidates(urlObj, `/data/${md5}`, '.mp4', { includeVideo: true });
-          for (const c of extCands) {
-            const isVid = c.endsWith('.mp4') || c.endsWith('.webm');
-            candidates.push(createCandidateDescriptor(c, {
-              score: 80,
-              tier: 'legacy',
-              allowVideo: isVid
-            }));
-          }
+          candidates.push(...legacyExtensionCandidates(urlObj, `/data/${md5}`, '.mp4'));
         }
       }
 
@@ -712,7 +703,7 @@ const BOORU_ENGINE_RESOLVERS = [
 
       if (imageId) {
         try {
-          const apiHost = urlObj.hostname.includes('derpicdn.net') ? 'https://derpibooru.org' : urlObj.origin;
+          const apiHost = isSameOrSubdomain(urlObj.hostname, 'derpicdn.net') ? 'https://derpibooru.org' : urlObj.origin;
           const apiUrl = `${apiHost}/api/v1/json/images/${imageId}`;
           const data = await fetchResolverMetadata(apiUrl);
 
@@ -827,15 +818,7 @@ const BOORU_ENGINE_RESOLVERS = [
 
         // 2b. Deterministic CDN candidates (fallback / offline)
         const basePath = `/data/${p1}/${p2}/${md5}`;
-        const extCands = generateExtensionCandidates(urlObj, basePath, '.png', { includeVideo: true });
-        for (const c of extCands) {
-          const isVid = c.endsWith('.mp4') || c.endsWith('.webm');
-          candidates.push(createCandidateDescriptor(c, {
-            score: 80,
-            tier: 'legacy',
-            allowVideo: isVid
-          }));
-        }
+        candidates.push(...legacyExtensionCandidates(urlObj, basePath, '.png'));
       }
 
       return candidates;
@@ -858,7 +841,7 @@ const BOORU_ENGINE_RESOLVERS = [
       const urlStr = urlObj.toString();
       const pathname = urlObj.pathname;
 
-      if (urlObj.hostname.includes('r34t.paheal.net') || urlObj.hostname.includes('paheal')) {
+      if (isSameOrSubdomain(urlObj.hostname, 'paheal.net') || isSameOrSubdomain(urlObj.hostname, 'paheal-cdn.net')) {
         const pahealOrig = new URL(urlStr);
         pahealOrig.hostname = 'r34i.paheal-cdn.net';
         candidates.push(pahealOrig.toString());

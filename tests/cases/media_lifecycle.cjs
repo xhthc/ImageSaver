@@ -838,7 +838,7 @@ exports.verifyResourceLifecycle = async function ({REPO_ROOT, assert, downloaded
 
     // 201.2. offscreen.js rejects messages from unauthorized senders
     {
-      const currentOffscreenSource = fs.readFileSync(path.join(REPO_ROOT, 'offscreen.js'), 'utf8');
+      const currentOffscreenSource = require('../helpers/offscreen.cjs').source();
 
       let capturedListener = null;
       const offscreenSandbox = {
@@ -932,7 +932,7 @@ exports.verifyResourceLifecycle = async function ({REPO_ROOT, assert, downloaded
 
     // 201.4. Offscreen protected blob fetch with AbortSignal cancellation cleans up cleanly
     {
-      const currentOffscreenSource = fs.readFileSync(path.join(REPO_ROOT, 'offscreen.js'), 'utf8');
+      const currentOffscreenSource = require('../helpers/offscreen.cjs').source();
       const offscreenSandbox = {
         console,
         setTimeout,
@@ -978,7 +978,7 @@ exports.verifyResourceLifecycle = async function ({REPO_ROOT, assert, downloaded
 
     // 201.5. Offscreen protected blob fetch with invalid MIME safely reports error
     {
-      const currentOffscreenSource = fs.readFileSync(path.join(REPO_ROOT, 'offscreen.js'), 'utf8');
+      const currentOffscreenSource = require('../helpers/offscreen.cjs').source();
       const offscreenSandbox = {
         console,
         setTimeout,
@@ -1055,7 +1055,7 @@ exports.verifyResourceLifecycle = async function ({REPO_ROOT, assert, downloaded
 
     // 202.0. Подготовка окружения для тестирования DOM content/content_x.js
     const contentXPath = path.resolve(REPO_ROOT, 'content/content_x.js');
-    const contentXCode = fs.readFileSync(contentXPath, 'utf8');
+    const contentXCode = require('../helpers/content.cjs').source('content_x.js');
 
     class XMockElement {
       constructor(tagName = 'div', attrs = {}) {

@@ -10,24 +10,27 @@ This document describes the v2.5.3 preview. The Explorer companion integration a
 |---|---|
 | `manifest.json` | Manifest V3 permissions, classic service worker and content scripts |
 | `background.js` | Worker entry: one ordered block of worker modules, debug journal, DNR rules, context menu and selected-target hint, download tracking/badge, feedback, download lifecycle, offscreen bridge and the save entry points (context menu, inline X/Reddit/RedGIFs controls) |
-| `lib/media_format.js`, `lib/download_paths.js` | MIME/signature/extension policy and media classification; file names, folder layout and authors |
-| `lib/media_sources.js` | Shared HTTP(S), URL-credential and literal local/private-network admission, tied to the native selected page origin |
-| `lib/candidates.js` | Candidate addresses and groups (resolution plans), thumbnail detection, scoring, the image probe and generic CDN/CMS derivatives |
-| `lib/site_resolvers.js`, `lib/booru_resolvers.js` | Dedicated site adapters (X, Pixiv, Reddit, Zerochan, Anime-Pictures, Sankaku, Pawchive, ...) and booru engine families |
-| `lib/page_selection.js`, `lib/x_recovery.js` | Functions injected into the clicked frame (owner admission, context target, DOM metadata) and X selected-player recovery from the owning post |
-| `lib/worker/providers.js`, `lib/worker/pipeline.js` | Selected-media resolution and the original-media plan; plan execution, final MIME verification and export |
-| `lib/worker/offscreen.js`, `lib/worker/animation.js`, `lib/toolbar_badge.js` | Offscreen lifetime controller, GIF/HLS conversion policy and the serialized toolbar badge |
+| `worker/media_format.js`, `worker/download_paths.js` | MIME/signature/extension policy and media classification; file names, folder layout and authors |
+| `lib/media_sources.js`, `lib/media_guard.js` | Shared HTTP(S), URL-credential and literal local/private-network admission, tied to the native selected page origin; log redaction, the protected-host allowlist and the magic-byte signature check (the worker's and the offscreen document's policies share one table) |
+| `lib/sites.js` | The supported sites, one record each: persistent id (statistics bucket and folder name), folder domains, the statistics Booru view group. Naming only: provider host authority stays in the resolvers |
+| `worker/candidates.js` | Candidate addresses and groups (resolution plans), thumbnail detection, scoring, the image probe and generic CDN/CMS derivatives |
+| `worker/site_resolvers.js`, `worker/booru_resolvers.js` | Dedicated site adapters (X, Pixiv, Reddit, Zerochan, Anime-Pictures, Sankaku, Pawchive, ...) and booru engine families |
+| `worker/page_selection.js`, `worker/x_recovery.js` | Functions injected into the clicked frame (owner admission, context target, DOM metadata) and X selected-player recovery from the owning post |
+| `worker/providers.js`, `worker/pipeline.js` | Selected-media resolution and the original-media plan; plan execution, final MIME verification and export |
+| `worker/offscreen.js`, `worker/animation.js`, `worker/toolbar_badge.js` | Offscreen lifetime controller, GIF/HLS conversion policy and the serialized toolbar badge |
 | `content/content_context_target.js` | Capture the pressed media/CSS/overlay target; re-prove ownership at save time |
 | `content/content_notifications.js` | Top-frame bounded page notices in closed Shadow DOM; original-origin delivery, dismiss/manager actions and paused timers |
-| `content/content_x.js`, `content/content_reddit.js`, `content/content_redgifs.js` | Provider evidence, selected-player recovery and inline controls |
+| `content/content_x.js`, `content/content_reddit.js`, `content/content_redgifs.js` | Provider evidence, selected-player recovery and the owner rules the inline controls and the context menu share |
+| `content/content_inline.js` | The inline Save controls of X, Reddit, Pixiv and the RedGIFs own site in one module: a shared control (hover/focus/keyboard lifecycle, one-shot tokens, trusted click, sender-checked proof, batches) and one handler per site (candidate, owner proof, placement, descriptors) |
+| `content/content_copy_kit.js` | Scaffolding of the copy-link buttons of X, Instagram, TikTok and YouTube: cached share host, one scan per frame, page watcher, SPA navigation, label binding |
 | Other `content_*.js` | Scoped site/link helpers; each script's messages define its contract |
 | `offscreen.js`, `offscreen.html` | Protected buffered fetches, genuine GIF encoding and Reddit HLS assembly |
-| `lib/download_manager.js`, `lib/staging.js` | Private persistent byte queue, streamed OPFS acquisition/validation, local Blob export and recovery |
+| `worker/download_manager.js`, `offscreen/staging.js` | Private persistent byte queue, streamed OPFS acquisition/validation, local Blob export and recovery |
 | `lib/export_directory.js` | Private IndexedDB directory grants/receipts and streaming validated-file writes to a selected base directory |
-| `lib/statistics.js` | Private aggregate counters and compact per-operation deduplication, without media addresses or names |
+| `worker/statistics.js` | Private aggregate counters and compact per-operation deduplication, without media addresses or names |
 | `lib/feedback*.js`, `lib/folder_path.js` | Allow-listed records, operation tracking/notices and portable relative paths |
-| `lib/reddit_hls.mjs`, `lib/vendor/mp4box/` | Restricted Reddit HLS input and locally bundled MP4 muxing |
-| `lib/gifenc.js` | Bundled GIF encoder; preserve its MIT notice |
+| `offscreen/reddit_hls.mjs`, `offscreen/vendor/mp4box/` | Restricted Reddit HLS input and locally bundled MP4 muxing |
+| `offscreen/gifenc.js` | Bundled GIF encoder; preserve its MIT notice |
 | `ui/src/core/` | Framework-neutral page controllers, including settings and release checks |
 | `ui/src/components/` | React rendering with Radix, shadcn/ui and Lucide |
 | `popup/` | Committed Vite output, loaded without a developer toolchain |
@@ -109,7 +112,7 @@ GitHub checks use the fixed `xhthc/MediaLatch` releases endpoint. The old reposi
 
 The worker modules listed in the runtime layout are classic scripts that `background.js` imports in one ordered block before any of its own code runs; no module reads a `background.js` binding while it loads. Their declarations share the worker global scope, so a module's function may call another module's or the entry point's at run time. Selected-owner proofs, signed addresses, MIME validation and transport policy are unchanged by this organization.
 
-`lib/worker/offscreen.js` creates a controller with explicit browser, messaging, download maps, tracking and manager-busy dependencies. Its ownership, creation/close single-flight and recovery state belong to that controller. A worker bridge preserves existing call order and interfaces. Unknown persisted ownership and unavailable download lookups still block destructive cleanup.
+`worker/offscreen.js` creates a controller with explicit browser, messaging, download maps, tracking and manager-busy dependencies. Its ownership, creation/close single-flight and recovery state belong to that controller. A worker bridge preserves existing call order and interfaces. Unknown persisted ownership and unavailable download lookups still block destructive cleanup.
 
 `lib/download_contracts.d.ts` describes the existing download snapshot, commands and UI state. The downloads controller is checked with `@ts-check`; its React view infers the store type. Worker sender checks and runtime validation remain mandatory: the declarations do not validate message contents. Compile-only negative cases check misspelled commands/states and numeric job IDs. The original MIME/resource integration cases now run from `tests/cases/media_lifecycle.cjs` in their original order with the same shared fixtures; `tests/test_worker_offscreen.js` also checks the controller directly.
 
@@ -127,4 +130,4 @@ Zerochan feed metadata is read in the pinned selected page session, with a bound
 
 ## Source organization
 
-Site content scripts live in `content/`; their manifest matching, injection order and frame scope are unchanged. Each runs in its own isolated world, so a helper shared with the worker or another content script is a separate copy unless a `lib/` file is listed in both (as `lib/debug_journal.js` and `lib/i18n.js` are). The offscreen document keeps its own copies of the URL-log sanitizer and protected-host check for the same reason. Offline checks live in `tests/`; binary media and captured Reddit structures are grouped under `tests/fixtures/generic-media/` and `tests/fixtures/reddit/`. Local media servers and AVIF generation tools live in `tools/fixtures/` and resolve fixture paths from their own location. The worker's modules live under `lib/worker/` and are listed in one block at the top of `background.js`; declarations are not duplicated in the entry point. Keep serialized `executeScript` functions self-contained. UI source and generated popup continue to use the existing React/Vite build.
+Site content scripts live in `content/`; their manifest matching, injection order and frame scope are unchanged. Each runs in its own isolated world, so a helper shared with the worker or another content script is a separate copy unless a `lib/` file is listed in both (as `lib/debug_journal.js` and `lib/i18n.js` are). Scripts that the worker and the offscreen document both run (`lib/media_guard.js`, `lib/media_sources.js`) are listed in both `background.js` and `offscreen.html`. Offline checks live in `tests/`; binary media and captured Reddit structures are grouped under `tests/fixtures/generic-media/` and `tests/fixtures/reddit/`. Local media servers and AVIF generation tools live in `tools/fixtures/` and resolve fixture paths from their own location. Runtime code is grouped by execution context: `worker/` (the service worker's modules, listed in one block at the top of `background.js`; declarations are not duplicated in the entry point), `offscreen/` (the offscreen document's modules and its bundled `vendor/`), `content/` (manifest-injected scripts) and `lib/` (scripts more than one context loads). The inline controls are one content script, started only for the page's own host in the top frame; the site scripts expose the owner rules they share with the context menu through `globalThis.__medialatchSite`. Keep serialized `executeScript` functions self-contained. UI source and generated popup continue to use the existing React/Vite build.

@@ -1,6 +1,6 @@
 'use strict';
 const assert=require('node:assert/strict');
-require('../lib/folder_path');require('../lib/export_directory');require('../lib/download_manager');require('../lib/feedback');require('../lib/feedback_tracker');
+require('../lib/folder_path');require('../lib/export_directory');require('../worker/download_manager');require('../lib/feedback');require('../worker/feedback_tracker');
 const {createExporter}=MediaLatchDirectory;
 function fixture(){
  const receipts=new Map(),handles=new Map();let permission='granted',hold=null,aborts=0,writeError=null,closeError=false;

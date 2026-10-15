@@ -35,8 +35,8 @@ function test(name, fn) {
 
 // Load offscreen.js into an isolated VM sandbox
 const offscreenPath = path.resolve(REPO_ROOT, 'offscreen.js');
-const offscreenSource = fs.readFileSync(offscreenPath, 'utf8');
-const gifenc = require(path.resolve(REPO_ROOT, 'lib', 'gifenc.js'));
+const offscreenSource = require('./helpers/offscreen.cjs').source();
+const gifenc = require(path.resolve(REPO_ROOT, 'offscreen', 'gifenc.js'));
 
 function createTestSandbox(overrides = {}) {
   let messageListener = null;

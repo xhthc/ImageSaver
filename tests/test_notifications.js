@@ -161,7 +161,7 @@ const visibility=value=>{hidden=value;w.document.dispatchEvent(new w.Event('visi
   for(const target of [{tabId:-1,origin:'https://example.com'},{tabId:7,origin:'https://example.com/?secret=1'},{tabId:7,origin:'javascript:alert(1)'},{tabId:7,origin:'https://name:pass@example.com'}])assert(!sb.ImageSaverFeedback.sanitizeRecord({...raw,noticeTarget:target}).noticeTarget,'Unsafe route stripped');
   assert(!sb.ImageSaverFeedback.buildReport(raw).includes('noticeTarget'),'Report does not include routing metadata');
   // With success notices disabled, resolving an error retires its old card without showing a success card.
-  vm.runInContext(fs.readFileSync('lib/feedback_tracker.js','utf8'),sb);
+  vm.runInContext(fs.readFileSync('worker/feedback_tracker.js','utf8'),sb);
   const notifier=sb.ImageSaverFeedbackTracker.createNotifier({lang:'en',getPrefs:async()=>({notifySuccess:false}),deliver:async(record,opts)=>show({...opts,id:record.id,origin:'https://example.com',theme:'violet'}).success});
   const batch={id:'batch-retry-disabled',site:'x',count:2,saved:1,failed:1,cancelled:0,skipped:0,remaining:0};
   const record={id:'op-810000',state:'complete'};

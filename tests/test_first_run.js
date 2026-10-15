@@ -46,7 +46,7 @@ function worker({ tabsCreate } = {}) {
     setTimeout, clearTimeout, setInterval, clearInterval, Date, Set, Map, URL, Number, Array, Object, Promise, ArrayBuffer, Uint8Array, Math, String, Boolean, RegExp, AbortController,
   };
   vm.createContext(sandbox);
-  sandbox.importScripts = (file) => vm.runInContext(fs.readFileSync(path.resolve(ROOT, file), 'utf8'), sandbox);
+  require('./helpers/worker.cjs').importScripts(sandbox);
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8'), sandbox);
   return { created, rules, fire: async (details) => { installed(details); await tick(); } };
 }

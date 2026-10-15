@@ -1,9 +1,9 @@
-// lib/reddit_hls.mjs - one complete MP4 from a Reddit v.redd.it HLS (CMAF) post video, with its audio.
+// offscreen/reddit_hls.mjs - one complete MP4 from a Reddit v.redd.it HLS (CMAF) post video, with its audio.
 //
 // Layout supported (verified on the reproducer, nothing else is attempted): a finite, unencrypted VOD where the master playlist offers H264 video variants
 // plus a separate AAC audio group, and each selected track's init segment and media segments are byte ranges of ONE declared fMP4 resource.
 // Every URL is taken from the playlists themselves (never guessed), must be https://v.redd.it/<same asset>/..., and every fetch refuses redirects.
-// The two declared resources are fetched whole (bounded) and parsed with the pinned MP4Box 2.4.1 (lib/vendor/mp4box/2.4.1). The result is one regular,
+// The two declared resources are fetched whole (bounded) and parsed with the pinned MP4Box 2.4.1 (offscreen/vendor/mp4box/2.4.1). The result is one regular,
 // seekable (non-fragmented) MP4: ftyp, moov with both tracks and their ordinary sample tables, one mdat. Every sample payload, DTS/CTS/duration/sync flag,
 // the codec configuration and the edit lists are carried over unchanged (a track starting after zero gets an initial empty edit), nothing is re-encoded; the library writes the boxes (track headers, sample
 // description, stts/ctts/stsz/stss/stsc/stco), this module only plans the interleaved chunks and fills the tables.

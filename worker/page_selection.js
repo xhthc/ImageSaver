@@ -1,4 +1,4 @@
-// Classic worker module; loaded by background.js after lib/booru_resolvers.js, in this code's original position.
+// Classic worker module; loaded by background.js after worker/booru_resolvers.js, in this code's original position.
 // Functions injected into the clicked frame (owner admission, context target, DOM image metadata) and their worker-side callers.
 // ============================================================================
 // 6. LEVEL 4: DOM Metadata (srcset, data-*, og:image, JSON-LD)
@@ -430,7 +430,7 @@ function extractDomImageMetadata(clickedSrc) {
       try {
         const clickedUrl = new URL(clickedSrc);
         const yandexImgId = clickedUrl.searchParams.get('id');
-        if (yandexImgId && (clickedUrl.hostname.includes('avatars.mds.yandex.net') || clickedUrl.hostname.includes('yandex.'))) {
+        if (yandexImgId && /(^|\.)yandex\.(com|com\.tr|[a-z]{2})$|(^|\.)avatars\.mds\.yandex\.net$/i.test(clickedUrl.hostname)) {
           // Provider-specific identity (accepted Yandex path): first image carrying the id, unchanged.
           targetImg = images.find((el) => el.tagName === 'IMG' && (el.currentSrc || el.src || '').includes(yandexImgId)) || null;
         }
