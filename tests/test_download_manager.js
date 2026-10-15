@@ -120,6 +120,8 @@ function env(stored={jobs:[],paused:false}) {
   let once=true;const exp=q.d.export;q.d.export=async(...args)=>{if(once){once=false;throw Error('EXPORT_FAILED')}return exp(...args)};
   const qm=createManager(q.d);await qm.ready;await assert.rejects(qm.enqueue({url:'https://media.test/x',filename:'q.png'},{op:old}),/EXPORT_FAILED/);await qm.drain();await qm.command('retry',(await qm.list()).jobs[0].id);await qm.drain();await until(async()=> (await stats.list()).stats.success===1);
   assert.equal((await stats.list()).stats.failed,1);assert.equal((await stats.list()).stats.total,2);
+  // Removing a download row never changes statistics: the totals and every site bucket stay as they were.
+  {const before=JSON.stringify(await stats.list());const done=(await qm.list()).jobs.find(j=>j.state==='complete');assert(done);await qm.command('remove',done.id);assert.equal((await qm.list()).jobs.some(j=>j.id===done.id),false);assert.equal(JSON.stringify(await stats.list()),before);}
   // Recover an accepted export before its ID attachment, including an old terminal feedback attempt.
   for(const sameWorker of [false,true]) {
     const storage={},native=env();native.autoComplete=false;let n=0;
@@ -467,6 +469,17 @@ function env(stored={jobs:[],paused:false}) {
     assert.equal(readBeforeCommit,false,'a notification snapshot must wait for the pending write');
     assert.equal(summary.failed,0,'a rejected result cannot enter a notification');assert.equal(summary.remaining,2);
     e.d.store.set=store;
+  }
+  // The admitted owning site is private durable metadata, even for converted blobs without a selected page.
+  {
+    const e=env({jobs:[],paused:true}),m=createManager(e.d);await m.ready;
+    void m.enqueue({url:'blob:chrome-extension://test/converted',filename:'converted.gif'},{op:'op-retained-site',site:'reddit',mime:'image/gif'}).catch(()=>{});
+    await wait();const raw=e.data;
+    assert.equal(raw.jobs[0].site,'reddit','converted output keeps its admitted owning site on disk');
+    assert.equal((await m.list()).jobs[0].site,undefined,'private owning metadata is absent from public jobs');
+    const restarted=env(raw),m2=createManager(restarted.d);await m2.ready;
+    assert.equal(restarted.data.jobs[0].site,'reddit','worker hydration retains the admitted site');
+    await m.command('cancel',raw.jobs[0].id);
   }
   // 7. Background adapter expectedMime fallback: executes actual background.js adapter for newAttempt AND recoverAttempt (background.js:9411-9419).
   {

@@ -1170,12 +1170,12 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
       // Keep the previous terminal target before replacing this slot's operation, including after a worker restart.
       if(j.batch && old?.noticeTarget && FeedbackLib.isTerminal(old.state) && !batchNoticeDelivered.has(j.batch.id))batchNoticeRemember(j.batch.id,{record:old});
       const m = j.mime || j.expectedMime || '';
-      return fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
+      return fbBegin({sourceUrl:j.source,site:fbAttemptSite(j,old),expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
     },
     recoverAttempt:async j=>{
       const old=await feedbackTracker?.get(j.op);
       const m = j.mime || j.expectedMime || '';
-      return old && (!FeedbackLib.isTerminal(old.state) || old.state==='complete')?j.op:fbBegin({sourceUrl:j.source,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
+      return old && (!FeedbackLib.isTerminal(old.state) || old.state==='complete')?j.op:fbBegin({sourceUrl:j.source,site:fbAttemptSite(j,old),expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
     },
     attach:async(j,id)=>isFileExport(id)?fbStage(j.op,'saving',{output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}):fbAttach(j.op,id,{filename:j.filename,output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}),
     complete:async(j,item)=>isFileExport(j.downloadId)?feedbackTracker?.completeFile(j.op,item,{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}):fbDownloadTerminal(j.downloadId,'complete'),
@@ -1194,7 +1194,8 @@ async function managedDownload(options, feedbackOp=null, mime='', maxBytes=0, se
   if(!downloadManager){if(saveDirectoryId)throw Error('DIRECTORY_ACCESS_REQUIRED');return chrome.downloads.download(options);}
   // Only the admitting origin is needed by delayed staging; do not persist its full page URL.
   let selectedOrigin='';try{selectedOrigin=new URL(selectedPage).origin;}catch(_){}
-  return downloadManager.enqueue(options,{op:feedbackOp,mime,maxBytes,selectedPage:selectedOrigin,directoryId:saveDirectoryId});
+  const record=feedbackOp ? await feedbackTracker?.get(feedbackOp).catch(()=>null) : null;
+  return downloadManager.enqueue(options,{op:feedbackOp,mime,maxBytes,site:record?.site || fbSiteOf(selectedOrigin,''),selectedPage:selectedOrigin,directoryId:saveDirectoryId});
 }
 // Post batches (MANAGER-BATCH-PROGRESS-01; model in lib/download_manager.js). Best effort: a batch that cannot be recorded never stops,
 // delays or changes a save, and batch data never reaches a fetch decision.
@@ -1315,6 +1316,13 @@ function fbSiteOf(pageUrl, sourceUrl) {
   } catch (_) {
     return '';
   }
+}
+
+// Retain the previous record owner, then the durable job owner, then its admitting origin; converted blobs have no origin.
+// Never the media host, so statistics do not learn a site from a CDN.
+function fbAttemptSite(job, old) {
+  const site = old?.site && old.site !== 'unknown-site' ? old.site : job.site;
+  return site && site !== 'unknown-site' ? site : (job.selectedPage ? fbSiteOf(job.selectedPage, '') : '');
 }
 
 /**

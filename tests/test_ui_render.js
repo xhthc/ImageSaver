@@ -39,6 +39,9 @@ const libFolder = read('lib/folder_path.js');
 // Records and a message-answering Chrome mock
 // ---------------------------------------------------------------------------------------------------
 const FB = (() => { const sb = { URL }; require('vm').createContext(sb); require('vm').runInContext(libFeedback, sb); return sb.ImageSaverFeedback; })();
+// The worker's own site buckets (lib/statistics.js) answer the statistics requests of the mocked Chrome.
+const ST = (() => { const sb = { URL, structuredClone }; require('vm').createContext(sb); require('vm').runInContext(libFeedback, sb); require('vm').runInContext(read('lib/statistics.js'), sb); return sb.MediaLatchStatistics; })();
+const siteBuckets = (records) => Object.fromEntries(ST.SITES.map((id) => [id, FB.computeStats(records.filter((r) => ST.siteOf(r) === id))]));
 let seq = 0;
 const T0 = Date.now() - 3600 * 1000;
 function rec(over = {}) {
@@ -90,7 +93,8 @@ function makeChrome(state) {
         }
         if (msg.action === 'STATISTICS_LIST' || msg.action === 'STATISTICS_CLEAR') {
           if (msg.action === 'STATISTICS_CLEAR') { if (state.failClear) return { success: false }; state.history = []; }
-          return { success: true, stats: FB.computeStats(state.history), imported: 0 };
+          if (msg.action === 'STATISTICS_LIST' && state.failStats) return { success: false };
+          return { success: true, stats: FB.computeStats(state.history), imported: 0, ...(state.noSites ? {} : { sites: siteBuckets(state.history) }) };
         }
         return undefined;
       },
@@ -535,6 +539,58 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     state.failSet=true; await p.click(sw); assert(sw.getAttribute('aria-checked')==='false' && /Не удалось сохранить настройку учёта/.test(p.text()),'R8f: failed preference write is truthful');
     state.failSet=false;state.failClear=true;await p.click(p.byText('button',/Очистить статистику/));assert(value('total')==='2' && /итоги сохранены/.test(p.text()),'R8g: failed clear retains totals');
     state.failClear=false;await p.click(p.byText('button',/Очистить статистику/));assert(p.q('[data-slot="stats-message"]') && /Статистика очищена/.test(p.text()),'R8h: successful durable clear');
+    await p.unmount();
+  }
+
+  // =================================================================================================
+  console.log('\n--- R8b. Statistics by site: one labelled selector, the same counters, a global clear ---');
+  for (const lang of ['en', 'ru']) {
+    const T = lang === 'en'
+      ? { site: 'Site', all: 'All sites', legacy: 'Legacy / unattributed', empty: 'No recorded operations yet.', emptySite: 'No recorded operations for this site yet.', cleared: 'Statistics cleared for all sites.', clear: /Clear statistics for all sites/, load: 'Could not load statistics.', total: 'Operations' }
+      : { site: 'Сайт', all: 'Все сайты', legacy: 'Прежние / без сайта', empty: 'Учтённых операций пока нет.', emptySite: 'Для этого сайта учтённых операций пока нет.', cleared: 'Статистика очищена для всех сайтов.', clear: /Очистить статистику всех сайтов/, load: 'Не удалось загрузить статистику.', total: 'Операций' };
+    const history = [rec({ site: 'reddit' }), rec({ site: 'reddit' }), rec({ site: 'x', state: 'failed', failure: failure('download', 'network') }), rec({ site: 'example.com' }), rec({ site: '' })];
+    const state = { session: [], history, local: { historyEnabled: true, uiLanguage: lang } };
+    const p = await page('full', state);
+    const value = (k) => p.q('[data-stat="' + k + '"] [data-slot="value"]')?.textContent;
+    const trigger = () => p.q('#statisticsSite');
+    const choose = async (name) => { await p.key(trigger(), 'Enter'); const o = p.qa('[role="option"]').find((n) => n.textContent.trim() === name); await p.key(o, 'Enter'); await p.settle(); };
+    const refresh = async () => { await p.U.act(async () => { for (const cb of state.msgListeners || []) cb({ action: 'STATISTICS_CHANGED' }); await sleep(5); }); await p.settle(6); };
+    assert(p.q('label[for="statisticsSite"]')?.textContent === T.site && trigger().getAttribute('role') === 'combobox' && trigger().textContent === T.all && value('total') === '5', `R8b-a ${lang}: a labelled selector starts on All sites with the overall figures`);
+    await p.key(trigger(), 'Enter');
+    const options = p.qa('[role="option"]').map((n) => n.textContent.trim());
+    assert(options.length === 5 && options[0] === T.all && options.at(-1) === T.legacy && options.includes('Reddit') && options.includes('X') && !options.includes('Pixiv') && !options.includes('Danbooru'), `R8b-b ${lang}: only populated services plus All sites are offered (${options.join('|')})`);
+    await p.key(p.qa('[role="option"]').find((n) => n.textContent.trim() === 'Reddit'), 'Enter'); await p.settle();
+    assert(trigger().textContent === 'Reddit' && value('total') === '2' && value('success') === '2' && value('failed') === '0', `R8b-c ${lang}: choosing a site shows that site's counters`);
+    assert(p.byText('button', T.clear), `R8b-d ${lang}: the clear control names all sites while a site is shown`);
+    state.history = history.concat([rec({ site: 'danbooru' }), rec({ site: 'gelbooru', state: 'failed', failure: failure('download', 'network') }), rec({ site: 'pixiv' })]); await refresh();
+    const booru = lang === 'en' ? 'Booru' : 'Booru-сайты';
+    await p.key(trigger(), 'Enter');
+    const populated = p.qa('[role="option"]').map(n => n.textContent.trim());
+    assert(populated.length === 7 && populated.includes(booru) && populated.includes('Pixiv') && !populated.includes('Danbooru') && !populated.includes('Gelbooru'), `R8b-e ${lang}: new recorded services appear; multiple boards use one Booru choice`);
+    await p.key(p.qa('[role="option"]').find(n => n.textContent.trim() === booru), 'Enter'); await p.settle();
+    assert(value('total') === '2' && value('success') === '1' && value('failed') === '1', `R8b-e2 ${lang}: Booru sums successful and failed operations`);
+    state.history = history; await refresh();
+    assert(trigger().textContent === booru && p.q('[data-slot="stats-message"]')?.textContent === T.emptySite, `R8b-e3 ${lang}: the selected view stays visible if its counters become empty`);
+    await choose('X'); assert(value('total') === '1' && value('failed') === '1', `R8b-f ${lang}: a second site has its own counters`);
+    await choose(T.legacy); assert(value('total') === '1', `R8b-g ${lang}: legacy / unattributed is its own view`);
+    await choose('Reddit');
+    state.history = history.concat([rec({ site: 'reddit' })]); await refresh();
+    assert(trigger().textContent === 'Reddit' && value('total') === '3', `R8b-h ${lang}: a refresh keeps the selected site and updates its figures`);
+    state.failStats = true; state.history = history; await refresh();
+    assert(trigger().textContent === 'Reddit' && value('total') === '3' && p.text().includes(T.load), `R8b-i ${lang}: a failed refresh keeps the selection and the last good figures and says so`);
+    state.failStats = false; await refresh();
+    assert(trigger().textContent === 'Reddit' && value('total') === '2' && !p.text().includes(T.load), `R8b-j ${lang}: recovery restores the figures under the same selection`);
+    state.noSites = true; await refresh();
+    assert(!p.q('[data-stat="total"]') && p.text().includes(T.load), `R8b-k ${lang}: a snapshot without the site buckets never shows the overall figures under a site label`);
+    state.noSites = false; await refresh(); assert(trigger().textContent === 'Reddit' && value('total') === '2', `R8b-k2 ${lang}: the selection is still there when the buckets return`);
+    if (lang === 'en') { await p.U.act(async () => { await p.language.setLanguage('ru'); }); await p.settle(); assert(trigger().textContent === 'Reddit' && p.q('label[for="statisticsSite"]').textContent === 'Сайт' && value('total') === '2', 'R8b-l: a language change keeps the selection and the figures'); await p.U.act(async () => { await p.language.setLanguage('en'); }); await p.settle(); }
+    state.failClear = true; await p.click(p.byText('button', T.clear));
+    assert(trigger().textContent === 'Reddit' && value('total') === '2', `R8b-m ${lang}: a failed clear is reported and nothing is zeroed`);
+    state.failClear = false; await p.click(p.byText('button', T.clear));
+    assert(trigger().textContent === 'Reddit' && p.q('[data-slot="stats-message"]')?.textContent === T.emptySite && p.text().includes(T.cleared) && state.history.length === 0, `R8b-n ${lang}: clear is global, keeps the view and says all sites were cleared`);
+    await choose(T.all); assert(p.q('[data-slot="stats-message"]')?.textContent === T.empty, `R8b-o ${lang}: All sites is empty as well: every bucket was cleared`);
+    await p.key(trigger(), 'Enter'); assert(p.qa('[role="option"]').length === 1, `R8b-o2 ${lang}: empty services disappear once All sites is selected`); await p.key(p.qa('[role="option"]')[0], 'Enter');
+    assert(!/example|picture-|cdn\./.test(p.q('[data-slot="statistics"]').textContent), `R8b-p ${lang}: the page shows no host or file name`);
     await p.unmount();
   }
 

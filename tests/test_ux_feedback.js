@@ -2761,6 +2761,85 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     assert(notices.length===1 && notices[0].message.includes(outcome==='complete'?'Saved 1 of 2':'1 failed'), `31 ${outcome}: the first terminal result is delivered once without an onChanged event or another slot change`);
   }
 
+  console.log('\n--- 32. Statistics by site: owning-site attribution through the production worker ---');
+  {
+    const idb = idbDouble();
+    const env = makeEnv({ local: { historyEnabled: true }, indexedDB: idb, captureManager: true }); await env.ready();
+    const sender = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
+    const ask = (action) => new Promise((resolve) => { for (const l of env.messageListeners) { let replied = false; const keep = l({ action }, sender, (r) => { replied = true; resolve(r); }); if (keep || replied) return; } resolve(null); });
+    const snap = async () => await ask('STATISTICS_LIST');
+    const sum = (s) => Object.values(s.sites).reduce((n, b) => n + b.total, 0);
+    const finish = async (pageUrl, sourceUrl) => { const op = await env.x.fbBegin({ pageUrl, sourceUrl, site: env.sandbox.fbSiteOf(pageUrl, sourceUrl) }); await env.x.fbFail(op, { code: 'NETWORK_FAILED' }); await env.tracker.flush(); return op; };
+    const first = await snap();
+    assert(first.success && Object.keys(first.sites).join() === env.sandbox.MediaLatchStatistics.SITES.join() && first.sites.danbooru && first.sites.zerochan && first.sites.tenor && !first.sites.booru, '32a: the snapshot carries every category bucket in the shared order');
+    await finish('https://www.reddit.com/r/gifs/comments/abc/', 'https://thumbs2.redgifs.com/clip.mp4');
+    let s = await snap(); assert(s.sites.reddit.total === 1 && s.sites.redgifs.total === 0, '32b: Reddit-embedded RedGIFs is counted for Reddit');
+    await finish('https://www.redgifs.com/watch/clip', 'https://thumbs2.redgifs.com/clip.mp4');
+    await finish('https://twitter.com/a/status/1', 'https://pbs.twimg.com/media/a.jpg');
+    await finish('https://example.com/gallery/1', 'https://cdn.example.net/a.jpg');
+    await finish('https://danbooru.donmai.us/posts/1', 'https://cdn.donmai.us/a.jpg');
+    const unknown = await env.x.fbBegin({ sourceUrl: 'https://pbs.twimg.com/media/b.jpg' }); await env.x.fbFail(unknown, { code: 'NETWORK_FAILED' }); await env.tracker.flush();
+    s = await snap();
+    assert(s.sites.redgifs.total === 1 && s.sites.x.total === 1 && s.sites.other.total === 1 && s.sites.danbooru.total === 1, '32c: owning pages give their own categories and a generic site is only "other"');
+    assert(s.sites.unattributed.total === 1 && s.stats.total === 6 && sum(s) === s.stats.total, '32d: an operation without owning-site metadata stays unattributed (a media CDN gives no site) and the buckets add up to the total');
+    for (const k of ['success', 'failed', 'cancelled', 'unknown']) assert(Object.values(s.sites).reduce((n, b) => n + b[k], 0) === s.stats[k], '32e: every outcome metric reconciles: ' + k);
+    assert(!JSON.stringify(s).includes('example') && !JSON.stringify(s).includes('donmai') && !JSON.stringify(s).includes('twimg'), '32f: the snapshot names no host');
+
+    // A retry and a restart recovery keep the owning site of the attempt they replace
+    const old = await finish('https://www.reddit.com/r/a/comments/1/', 'https://i.redd.it/a.jpg');
+    const before = (await snap()).sites.reddit.failed;
+    for (const action of ['newAttempt', 'recoverAttempt']) {
+      const op = await env.managerDeps[action]({ op: old, source: 'https://i.redd.it/a.jpg', mime: 'image/jpeg' });
+      assert((await env.tracker.get(op)).site === 'reddit', '32g: ' + action + ' keeps the owning site of the previous record');
+      await env.x.fbFail(op, { code: 'NETWORK_FAILED' }); await env.tracker.flush();
+    }
+    assert((await snap()).sites.reddit.failed === before + 2, '32h: the attempts are counted under the same site');
+    const gone = await env.managerDeps.newAttempt({ op: 'op-evicted', source: 'https://pbs.twimg.com/a.jpg', mime: 'image/jpeg', selectedPage: 'https://x.com' });
+    assert((await env.tracker.get(gone)).site === 'x', '32i: without the previous record the admitting page origin the job keeps gives the site');
+    const lost = await env.managerDeps.newAttempt({ op: 'op-evicted', source: 'https://pbs.twimg.com/a.jpg', mime: 'image/jpeg' });
+    assert((await env.tracker.get(lost)).site === '', '32j: with neither, the site stays unknown: a media CDN never gives it');
+    const recovered = await env.managerDeps.recoverAttempt({ op: 'op-evicted', source: 'https://i.redd.it/a.jpg', mime: 'image/jpeg', selectedPage: 'https://www.reddit.com' });
+    assert((await env.tracker.get(recovered)).site === 'reddit', '32k: a recovered attempt without its record takes the admitting origin');
+    const unknownOld = await env.x.fbBegin({ sourceUrl: 'https://cdn.example.net/a.jpg', site: 'unknown-site' });
+    await env.x.fbFail(unknownOld, { code: 'NETWORK_FAILED' }); await env.tracker.flush();
+    const renewed = await env.managerDeps.newAttempt({ op: unknownOld, source: 'https://cdn.example.net/a.jpg', mime: 'image/jpeg', selectedPage: 'https://www.pixiv.net' });
+    assert((await env.tracker.get(renewed)).site === 'pixiv', '32l: an unknown earlier site yields to the admitting origin');
+
+    // Disabled recording preserves every bucket; the global clear empties all of them; a late pre-clear completion is ignored
+    const kept = JSON.stringify((await snap()).sites);
+    env.local.historyEnabled = false; await finish('https://www.pixiv.net/artworks/1', 'https://i.pximg.net/a.jpg');
+    assert(JSON.stringify((await snap()).sites) === kept, '32m: recording off preserves every bucket');
+    env.local.historyEnabled = true;
+    const lateOp = await env.x.fbBegin({ pageUrl: 'https://www.pixiv.net/artworks/2', sourceUrl: 'https://i.pximg.net/b.jpg', site: 'pixiv' });
+    const cleared = await ask('STATISTICS_CLEAR');
+    assert(cleared.success && cleared.stats.total === 0 && Object.values(cleared.sites).every((b) => b.total === 0), '32n: clearing is global');
+    await env.x.fbFail(lateOp, { code: 'NETWORK_FAILED' }); await env.tracker.flush();
+    s = await snap(); assert(s.stats.total === 0 && sum(s) === 0, '32o: a completion of an operation that began before the clear never returns, in any bucket');
+    await new Promise((r) => setTimeout(r, 8)); await finish('https://www.pixiv.net/artworks/3', 'https://i.pximg.net/c.jpg');
+    s = await snap(); assert(s.stats.total === 1 && s.sites.pixiv.total === 1 && sum(s) === 1, '32p: the next operation after the clear is counted once, in its own bucket');
+  }
+
+  // 33. Converted outputs keep a private owning-site token even after their bounded feedback record is evicted.
+  {
+    const env=makeEnv({captureManager:true,local:{historyEnabled:true}});await env.ready();let admitted;
+    const manager=vm.runInContext('downloadManager',env.sandbox);
+    const queue=manager.enqueue;manager.enqueue=async(options,meta)=>{admitted=meta;return 101;};
+    const old=await env.x.fbBegin({site:'reddit',sourceUrl:'https://v.redd.it/source/DASH_360.mp4'});
+    await env.sandbox.managedDownload({url:'blob:chrome-extension://testid/converted',filename:'converted.gif'},old,'image/gif');
+    manager.enqueue=queue;
+    assert(admitted.site==='reddit' && admitted.selectedPage==='','33a: converted output captures the known owner without requiring a page URL');
+    await env.x.fbFail(old,{code:'EXPORT_FAILED'});
+    for(let i=0;i<21;i++){const op=await env.x.fbBegin({site:'x'});await env.x.fbFail(op,{code:'NETWORK_FAILED'});}
+    await env.tracker.flush();assert(!(await env.tracker.get(old)),'33b: the original feedback record really was evicted');
+    for(const action of ['newAttempt','recoverAttempt']){
+      const op=await env.managerDeps[action]({op:old,source:'blob:chrome-extension://testid/converted',mime:'image/gif',site:admitted.site});
+      assert((await env.tracker.get(op)).site==='reddit','33c: '+action+' uses the private job owner after record eviction');
+    }
+    const corrected=await env.x.fbBegin({site:'pixiv'});await env.x.fbFail(corrected,{code:'EXPORT_FAILED'});
+    const op=await env.managerDeps.newAttempt({op:corrected,source:'blob:chrome-extension://testid/converted',mime:'image/gif',site:'reddit'});
+    assert((await env.tracker.get(op)).site==='pixiv','33d: a retained corrected record still outranks the admitted job token');
+  }
+
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);
   process.exit(failed > 0 ? 1 : 0);
 })().catch((err) => {
