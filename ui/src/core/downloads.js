@@ -2,7 +2,7 @@
 import { createStore } from './store.js';
 /** @param {{chrome: import('../../../lib/download_contracts').DownloadsChrome}} dependencies */
 export function createDownloads({ chrome }) {
-    const store = createStore(/** @type {import('../../../lib/download_contracts').DownloadsViewState} */ ({ jobs: [], batches: [], paused: false, status: 'loading', error: '', busy: false, removingIds: [], dismissedIds: [] }));
+    const store = createStore(/** @type {import('../../../lib/download_contracts').DownloadsViewState} */ ({ jobs: [], batches: [], paused: false, status: 'loading', error: '', busy: false, pendingBatch: '', removingIds: [], dismissedIds: [] }));
     let disposed = false;
     /** @type {Promise<void> | null} */
     let current = null;
@@ -54,7 +54,7 @@ export function createDownloads({ chrome }) {
             return;
         const selectedJobs = store.getState().jobs.slice();
         const ids = command === 'clearFinished' ? store.getState().jobs.filter(j => ['complete', 'failed', 'cancelled'].includes(j.state)).map(j => j.id) : [id];
-        store.setState({ busy: true, error: '', ...(command === 'clearFinished' ? { removingIds: store.getState().jobs.filter(j => ids.includes(j.id)).flatMap(j => [j.id, j.op].filter(Boolean)), jobs: store.getState().jobs.filter(j => !ids.includes(j.id)) } : {}) });
+        store.setState({ busy: true, error: '', ...(command === 'cancelBatch' ? { pendingBatch: String(id) } : {}), ...(command === 'clearFinished' ? { removingIds: store.getState().jobs.filter(j => ids.includes(j.id)).flatMap(j => [j.id, j.op].filter(Boolean)), jobs: store.getState().jobs.filter(j => !ids.includes(j.id)) } : {}) });
         try {
             for (const selected of ids) {
                 const r = await chrome.runtime.sendMessage({ action: 'DOWNLOADS_COMMAND', command: command === 'clearFinished' ? 'remove' : command, id: selected });
@@ -73,7 +73,10 @@ export function createDownloads({ chrome }) {
         }
         catch (_) {
             if (!disposed)
-                store.setState({ error: 'downloads.commandFailed' });
+                store.setState({ error: command === 'cancelBatch' ? 'downloads.batchCancelFailed' : 'downloads.commandFailed' });
+            // a refused click may already have stored the intent (a later write failed): show the committed state, so the action stays accurate and can be repeated
+            if (command === 'cancelBatch')
+                await load();
         }
         finally {
             if (command === 'clearFinished') {
@@ -82,7 +85,7 @@ export function createDownloads({ chrome }) {
                 await load();
             }
             if (!disposed)
-                store.setState({ busy: false });
+                store.setState({ busy: false, pendingBatch: '' });
         }
     }
     return { store, load, command, dispose() { disposed = true; chrome.runtime.onMessage?.removeListener(changed); } };

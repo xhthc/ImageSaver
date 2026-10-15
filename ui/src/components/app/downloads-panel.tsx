@@ -1,4 +1,4 @@
-import {useEffect,useState} from "react"
+import {useCallback,useEffect,useRef,useState} from "react"
 import {Ban, CheckCircle2, ChevronDown, Clock, Download, Inbox, Layers, Loader2, Pause, Play, RotateCcw, X, Trash2, XCircle} from "lucide-react"
 import {Button} from "@/components/ui/button"
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from "@/components/ui/collapsible"
@@ -26,17 +26,31 @@ function JobIcon({state}:{state:string}) {
 }
 /** One post batch ("Save all"): counts only. "Saved" is what the browser or the chosen folder confirmed; a batch with nothing left is
  * finished, which is not the same as every file saved. No bytes, speed or ETA is aggregated across files. */
-function BatchSummary({batch:b}:{batch:DownloadBatch}) {
+function BatchSummary({batch:b,pending,busy,onCancel}:{batch:DownloadBatch;pending:boolean;busy:boolean;onCancel:(e:React.MouseEvent<HTMLButtonElement>)=>void}) {
   const {t}=useI18n()
   const parts=[b.failed&&['failed',b.failed,"text-danger"],b.cancelled&&['cancelled',b.cancelled,""],b.skipped&&['skipped',b.skipped,""],b.remaining&&['remaining',b.remaining,""]].filter(Boolean) as [string,number,string][]
-  return <li data-slot="batch-summary" data-batch={b.id} className="flex items-start gap-2 rounded-xl bg-muted px-3 py-2 text-xs leading-4">
+  const title=t('downloads.batch.title',{site:t('downloads.batch.site.'+b.site)})
+  // Cancel remaining: offered while something of the batch is unfinished. It is only "busy" while its own request is pending (focusable, aria-disabled, like Retry), and
+  // stays available afterwards so that a partly failed cancellation can be repeated, also from a reopened manager. "Cancelling" is said only while work that the
+  // accepted cancellation covers is unfinished (b.cancelling); a file the user retried afterwards is not that.
+  // When the button goes away while it has focus (the batch settled), focus moves to the summary instead of being lost.
+  const summary=useRef<HTMLLIElement>(null)
+  const cancelRef=useCallback((el:HTMLButtonElement|null)=>{
+    const a=document.activeElement as HTMLElement|null
+    if(!el && a?.getAttribute?.('data-slot')==='batch-cancel')(summary.current?.contains(a)?summary.current:a.closest('section'))?.focus()
+  },[])
+  return <li ref={summary} tabIndex={-1} data-slot="batch-summary" data-batch={b.id} className="flex flex-wrap items-start gap-x-2 gap-y-1 rounded-xl bg-muted px-3 py-2 text-xs leading-4 outline-none">
     <Layers className="mt-px size-3.5 shrink-0 text-muted-foreground" aria-hidden="true"/>
-    <p role="status" className="min-w-0 flex-1 tabular-nums">
-      <span className="font-semibold">{t('downloads.batch.title',{site:t('downloads.batch.site.'+b.site)})}</span>
+    <p role="status" className="min-w-0 flex-1 basis-40 tabular-nums">
+      <span className="font-semibold">{title}</span>
       {' · '}{b.saved===b.count && !b.partial?t('downloads.batch.allSaved',{count:b.count}):t('downloads.batch.saved',{saved:b.saved,count:b.count})}
       {parts.map(([key,n,tone])=><span key={key} className={tone||"text-muted-foreground"}>{' · '}{t('downloads.batch.'+key,{n})}</span>)}
+      {b.cancelling && !pending?<span className="text-muted-foreground">{' · '}{t('downloads.batch.cancelling')}</span>:null}
       {b.partial?<span className="text-muted-foreground">{' · '}{t('downloads.batch.partial')}</span>:null}
     </p>
+    {b.remaining>0?<Button ref={cancelRef} type="button" variant="ghost" size="sm" data-slot="batch-cancel" aria-disabled={busy} aria-label={`${t('downloads.batch.cancel')}: ${title}`} className="-my-1 h-7 shrink-0 px-2 text-xs aria-disabled:opacity-60" onClick={onCancel}>
+      {pending?<Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true"/>:<Ban aria-hidden="true"/>}{t(pending?'downloads.batch.cancelling':'downloads.batch.cancel')}
+    </Button>:null}
   </li>
 }
 /** A job's error as a localized title/explanation (and, for a failed job on the full page, the next step), with the raw code kept on a small line.
@@ -71,6 +85,14 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
     if(controller.store.getState().status==='ready')list?.focus()
   }
   // A batch summary is shown while something of it is unfinished or one of its rows is still listed; rows keep their own actions.
+  // Cancel remaining stays a button while its request is pending; a finished batch has none. After it was accepted the focus returns to the list instead of being lost.
+  const cancelBatch=async(e:React.MouseEvent<HTMLButtonElement>,b:DownloadBatch)=>{
+    if(s.busy || s.pendingBatch)return
+    const list=e.currentTarget.closest('section')
+    await controller.command('cancelBatch',b.id)
+    if(list && (!document.activeElement || document.activeElement===document.body || !list.contains(document.activeElement)))list.focus()
+  }
+  const batchSummary=(b:DownloadBatch)=><BatchSummary key={'batch-'+b.id} batch={b} pending={s.pendingBatch===b.id} busy={s.busy} onCancel={e=>void cancelBatch(e,b)}/>
   const batches=new Map<string,DownloadBatch>(s.batches.filter(b=>b.remaining>0 || jobs.some(j=>j.batch===b.id)).map(b=>[b.id,b]))
   const finished=s.jobs.some(j=>TERMINAL.includes(j.state))
   const pauseLabel=t(s.paused?'downloads.resume':'downloads.pause')
@@ -132,11 +154,11 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
     </AlertDescription></Alert>:null}
     {s.status==='loading'?<p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true"/>{t('downloads.loading')}</p>:null}
     {s.status==='ready' && !jobs.length && !batches.size?<p data-slot="empty" className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground"><Inbox className="size-5" aria-hidden="true"/>{t('downloads.empty')}</p>:null}
-    <ul className="space-y-2" data-slot="download-jobs">{[...batches.values()].filter(b=>!jobs.some(j=>j.batch===b.id)).map(b=><BatchSummary key={b.id} batch={b}/>)}{jobs.flatMap((j,i)=>{
+    <ul className="space-y-2" data-slot="download-jobs">{[...batches.values()].filter(b=>!jobs.some(j=>j.batch===b.id)).map(batchSummary)}{jobs.flatMap((j,i)=>{
       // the first row of a batch brings its summary and the batch's other rows; a batch is placed where its newest row is
       const batch=j.batch?batches.get(j.batch):undefined
       if(batch && jobs.findIndex(x=>x.batch===batch.id)!==i)return []
-      return batch?[<BatchSummary key={'batch-'+batch.id} batch={batch}/>,...jobs.filter(x=>x.batch===batch.id).map(row)]:[row(j)]
+      return batch?[batchSummary(batch),...jobs.filter(x=>x.batch===batch.id).map(row)]:[row(j)]
     })}</ul>
   </section>
 }

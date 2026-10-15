@@ -96,5 +96,9 @@ function fixture(body=items.map(original=>({urls:{original}})),onPages){
  await new Promise(resolve=>setTimeout(resolve,20));assert.equal(held.length,2,'Third page waits for a handler slot');
  held.splice(0).forEach(resolve=>resolve());await waitFor(()=>held.length===2);held.splice(0).forEach(resolve=>resolve());await running;
  assert.equal(peak,2,'Protected acquisition is capped at two per batch');assert.equal(overlap.e.downloadedCalls.length,4);
- console.log('PASS: Pixiv scope, exact exports, metadata/ownership bounds, HEAD/GET429 stop and two-handler concurrency');
+ // MANAGER-BATCH-CANCEL-01: the loop asks the manager before every page; once the cancellation is accepted no further page is requested or saved
+ const cancelled=fixture();let asked=0;cancelled.s.batchStopped=async()=>++asked>2;
+ await cancelled.s.onContextMenuClicked(click,tab);
+ assert.equal(cancelled.e.downloadedCalls.length,2,'a cancelled batch stops after the pages that had already started');assert.equal(new Set(cancelled.calls.filter(x=>items.includes(x.url)).map(x=>x.url)).size,2,'and requests no further media');assert.equal(asked,3);
+ console.log('PASS: Pixiv scope, exact exports, metadata/ownership bounds, HEAD/GET429 stop and two-handler concurrency and a cancelled batch');
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -525,6 +525,25 @@ function makeChrome(state) {
     await c.command('retry','job-test');assert(calls.some(m=>m.action==='DOWNLOADS_COMMAND' && m.command==='retry' && m.id==='job-test'),'manager-ui-3: retry sends exactly the selected job');
     fail=true;await c.command('pause');assert(c.store.getState().error==='downloads.commandFailed' && !c.store.getState().busy,'manager-ui-4: a refused action is truthful and releases buttons');
     fail=false;listeners[0]({action:'DOWNLOADS_CHANGED'});await settle();
+    // MANAGER-BATCH-CANCEL-01: the controller sends the exact batch id once, shows the pending state and a batch-specific error, and keeps nothing after it
+    {
+      const seen=[];let gate=null,mode='ok';
+      const ch={runtime:{onMessage:{addListener(){},removeListener(){}},sendMessage:async m=>{seen.push(m);if(m.command==='cancelBatch'){if(gate)await gate;if(mode==='refuse'||mode==='stored')return {success:false,error:'STORAGE_FAILED'};}return {success:true,jobs:[],paused:false,batches:[{id:'batch-1',site:'x',count:2,saved:0,failed:0,cancelled:0,skipped:0,remaining:2,createdAt:1,...(mode==='ok'&&seen.some(x=>x.command==='cancelBatch')?{cancelRequested:true}:{}),...(mode==='stored'?{cancelRequested:true,cancelling:true}:{})}]};}}};
+      const cc=createDownloads({chrome:ch});await cc.load();
+      let release;gate=new Promise(r=>{release=r;});const first=cc.command('cancelBatch','batch-1');await settle();
+      assert(cc.store.getState().pendingBatch==='batch-1' && cc.store.getState().busy,'manager-ui-cb1: the pending batch is visible');
+      await cc.command('cancelBatch','batch-1');assert(seen.filter(m=>m.command==='cancelBatch').length===1 && seen.find(m=>m.command==='cancelBatch').id==='batch-1' && seen.find(m=>m.command==='cancelBatch').action==='DOWNLOADS_COMMAND','manager-ui-cb2: one exact command; a click while pending is ignored');
+      release();await first;const after=cc.store.getState();
+      assert(after.pendingBatch==='' && !after.busy && after.error==='' && after.batches[0].cancelRequested===true,'manager-ui-cb3: the accepted cancellation is read back from the worker');
+      mode='refuse';gate=null;await cc.command('cancelBatch','batch-1');
+      assert(cc.store.getState().error==='downloads.batchCancelFailed' && cc.store.getState().pendingBatch==='' && !cc.store.getState().busy,'manager-ui-cb4: a refused cancellation is its own error and releases the buttons');
+      mode='ok';await cc.command('pause');assert(cc.store.getState().error==='','manager-ui-cb5: the next action clears it');
+      // F1: a click that failed after the intent was stored still shows the committed state, and the action can be repeated
+      mode='stored';const sent=seen.filter(m=>m.command==='cancelBatch').length;await cc.command('cancelBatch','batch-1');const st=cc.store.getState();
+      assert(st.error==='downloads.batchCancelFailed' && st.batches[0].cancelRequested===true && st.batches[0].cancelling===true && !st.busy && st.pendingBatch==='','manager-ui-cb6: a refused click that had stored the intent shows the committed state read back, with the error');
+      await cc.command('cancelBatch','batch-1');assert(seen.filter(m=>m.command==='cancelBatch').length===sent+2,'manager-ui-cb7: the action is available again after the failure: a repeated click is sent');
+      cc.dispose();
+    }
     // MANAGER-BATCH-PROGRESS-01: batch summaries come from the worker snapshot; an older worker or storage has none
     {
       const kept=replies,cb=createDownloads({chrome});

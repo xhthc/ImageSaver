@@ -1203,8 +1203,9 @@ async function batchOpen(site, count, partial = false) {
   try { const id = downloadManager ? await downloadManager.openBatch(site, count, partial) : null; return id ? { id } : null; } catch (_) { return null; }
 }
 const batchRef = (batch, i) => (batch ? { id: batch.id, i } : undefined);
+// A refused binding write keeps its association in memory (the manager does it inside bindSlot; keepSlot repeats it if the call failed for another reason).
 async function batchBind(ref, op) {
-  try { await downloadManager?.bindSlot(ref, op); } catch (_) {}
+  try { await downloadManager?.bindSlot(ref, op); } catch (_) { try { await downloadManager.keepSlot(ref, op); } catch (_) {} }
 }
 // After a slot's item ended: a slot with a job is decided by the job (saved only when the browser or the chosen folder confirmed the
 // file). Otherwise its operation tells: failed/interrupted -> failed, cancelled -> cancelled; no operation, or one that was discarded as
@@ -1222,6 +1223,11 @@ async function batchSettle(ref, none = 'skipped') {
 }
 async function batchClose(batch) {
   try { if (batch) await downloadManager?.closeBatch(batch.id); } catch (_) {}
+}
+// MANAGER-BATCH-CANCEL-01: has "Cancel remaining" been accepted (committed) for the batch of this slot? It only ever STOPS work: the answer is never a reason
+// to fetch, save or bind anything. The command itself is not wrapped here: a refused write reaches the manager page as an error.
+async function batchStopped(ref) {
+  try { return Boolean(ref && downloadManager && await downloadManager.stopped(ref)); } catch (_) { return false; }
 }
 // Page notice of a post batch (MANAGER-BATCH-NOTICES-01): ONE card per batch, whose text is the manager's canonical slot counts. The manager
 // calls batchNoticeChanged after every saved change of a batch's counts (a confirmed save, a failure, a cancellation, a skipped duplicate, a
@@ -1333,6 +1339,8 @@ function fbBadgeReporter(op) {
   return async (text, color, durationMs) => {
     if (op && (text === 'ERR' || text === 'AUTH' || text === 'RATE')) {
       await fbFail(op, { code: text === 'AUTH' ? 'AUTH_REQUIRED' : (text === 'RATE' ? 'RATE_LIMIT' : '') });
+      // an operation the user cancelled (a late preparation of a cancelled batch) is not an error to flash
+      if (text === 'ERR' && (await feedbackTracker?.get(op).catch(() => null))?.state === 'cancelled') return;
     }
     return flashBadge(text, color, durationMs);
   };
@@ -1686,6 +1694,8 @@ let contextOwnerProofs = 0;
 async function onContextMenuClicked(info, tab) {
   // DEBUG-MENU-01: one attempt id per save (an inline save brings the id of its click); journal only, never an authority
   if (!info.dbgCid) info.dbgCid = dbgNewCid();
+  // an item of a batch whose cancellation was accepted never starts: no operation, no request (its slot was settled by the cancellation)
+  if (info.batchSlot && await batchStopped(info.batchSlot)) { dbg('menu', 'click', 'skipped', 'BATCH_CANCELLED', null, { cid: info.dbgCid, tab: tab && tab.id }); return; }
   dbg('menu', 'click', 'start', undefined, () => ({
     menu: info.menuItemId, hasSrc: Boolean(info.srcUrl), hasLink: Boolean(info.linkUrl), srcHost: info.srcUrl, linkHost: info.linkUrl,
     pageHost: info.pageUrl || (tab && tab.url), frame: info.frameId, kind: info.mediaType,
@@ -2137,7 +2147,7 @@ async function onContextMenuClicked(info, tab) {
       }
       console.error('[MediaLatch] Критическая ошибка при сохранении:', downloadError);
       await fbFail(op, { code: downloadError?.message });
-      await flashBadge('ERR', '#ef4444');
+      if (downloadError?.message !== 'CANCELLED') await flashBadge('ERR', '#ef4444');
     } finally {
       activeResolvingCount--;
       inFlightRequests.delete(dedupeKey);
@@ -2509,6 +2519,7 @@ async function xInlineAsk(tab, sender, payload) {
 
 // A refused owner is visible: a failed operation and an ERR badge, never silence and never a request.
 async function xInlineRefuse(sender, cid, slot) {
+  if (slot && await batchStopped(slot)) return;
   const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid, slot }, sender.tab);
   await fbFail(op, { stage: 'resolve', code: 'NO_MEDIA' });
   await fbBadgeReporter(op)('ERR', '#ef4444');
@@ -2576,6 +2587,7 @@ async function handleXInlineSaveAll(message, sender) {
       const index = next++;
       if (index >= count) return;
       const slot = batchRef(batch, index);
+      if (await batchStopped(slot)) return;
       const answer = await xInlineAsk(tab, sender, { action: 'X_INLINE_OWNER_ITEM', token: message.token, index });
       const media = answer && answer.ok === true ? sanitizeXInlineMedia(answer.media) : null;
       if (!media) {
@@ -2764,6 +2776,7 @@ function redditInlineSenderOk(message, sender) {
 
 // A refused owner or item is visible: a failed operation and an ERR badge, never silence and never a request.
 async function redditInlineRefuse(sender, code = 'NO_MEDIA', cid, slot) {
+  if (slot && await batchStopped(slot)) return;
   const op = await fbBegin({ pageUrl: sender.url || '', sourceUrl: '', site: fbSiteOf(sender.url, ''), cid, slot }, sender.tab);
   await fbFail(op, { stage: 'resolve', code });
   await fbBadgeReporter(op)('ERR', '#ef4444');
@@ -2847,6 +2860,7 @@ async function handleRedditInlineSaveAll(message, sender) {
       const index = next++;
       if (index >= count) return;
       const slot = batchRef(batch, index);
+      if (await batchStopped(slot)) return;
       const answer = await xInlineAsk(tab, sender, { action: 'REDDIT_INLINE_OWNER_ITEM', token: message.token, index });
       const media = answer && answer.ok === true ? sanitizeRedditInlineMedia(answer.media, { ownerId, count, index, sig }) : null;
       if (!media) {

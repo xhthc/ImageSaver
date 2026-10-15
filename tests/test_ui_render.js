@@ -75,6 +75,7 @@ function makeChrome(state) {
         if (state.failMessages) throw new Error('MESSAGING_DOWN');
         if(msg.action === 'DOWNLOADS_LIST' || msg.action === 'DOWNLOADS_COMMAND') {
           if(msg.command==='remove'){if(state.failRemoval)return {success:false};const op=state.jobs?.find(j=>j.id===msg.id)?.op || msg.id;if(state.jobs)state.jobs=state.jobs.filter(j=>j.id!==msg.id);state.session=state.session.filter(r=>r.id!==op);}
+          if(msg.command==='cancelBatch'){(state.batchCommands=state.batchCommands||[]).push({id:msg.id});if(state.batchGate)await state.batchGate;if(state.failBatch){if(state.failStores)state.batches=(state.batches||[]).map(b=>b.id===msg.id?{...b,cancelRequested:true,cancelling:true}:b);return {success:false,error:'STORAGE_FAILED'};}state.batches=(state.batches||[]).map(b=>b.id===msg.id?{...b,cancelRequested:true,cancelling:true}:b);}
           return {success:true,jobs:state.jobs || state.session.map(r=>({id:r.id,op:r.id,managed:false,filename:r.filename || 'media',state:r.state==='saving'?'receiving':r.state==='interrupted'?'failed':r.state,received:1024,total:r.state==='saving'?null:2048,speed:0,error:'',ready:false})).reverse(),paused:false,...(state.batches?{batches:state.batches}:{})};
         }
         if (msg.action === 'FEEDBACK_LIST') {
@@ -1386,11 +1387,11 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
       {
         const p = await mk({ jobs: [job('single', 'complete'), job('m1', 'complete', { batch: 'batch-1' }), job('m2', 'failed', { batch: 'batch-1' }), job('m3', 'receiving', { batch: 'batch-1' })], batches: [batch()] });
         const summaries = p.qa('[data-slot="batch-summary"]');
-        assert(summaries.length === 1 && summaries[0].textContent.replace(/\s+/g, ' ').trim() === `${t.title} · ${t.saved(2, 4)} · ${t.failed(1)} · ${t.remaining(1)}`, `R27a ${kind}/${lang}: one localized summary with distinct saved / failed / in-progress counts (${summaries[0] && summaries[0].textContent})`);
+        assert(summaries.length === 1 && summaries[0].querySelector('[role="status"]').textContent.replace(/\s+/g, ' ').trim() === `${t.title} · ${t.saved(2, 4)} · ${t.failed(1)} · ${t.remaining(1)}`, `R27a ${kind}/${lang}: one localized summary with distinct saved / failed / in-progress counts (${summaries[0] && summaries[0].textContent})`);
         const order = p.qa('[data-slot="download-jobs"] > li').map((li) => li.getAttribute('data-batch') ? 'S' : li.getAttribute('data-job'));
         assert(order.join(',') === 'single,S,m1,m2,m3' || order.join(',') === 'S,m1,m2,m3,single', `R27b ${kind}/${lang}: the summary heads its own rows and the unrelated row stays outside (${order.join(',')})`);
         assert(p.qa('[data-job]').length === 4 && p.q('[data-job="m2"] button[aria-label="' + t.retry + '"]') && p.q('[data-job="m3"] button[aria-label="' + t.cancel + '"]') && p.q('progress[value="1024"]'), `R27c ${kind}/${lang}: individual rows keep their progress and Cancel / Retry`);
-        assert(!/\/s|%|MB|KB|[0-9] s\b/.test(summaries[0].textContent) && summaries[0].querySelector('[role="status"]') && !summaries[0].querySelector('progress, button, a'), `R27d ${kind}/${lang}: the summary has no byte, speed, percentage or ETA and no control`);
+        assert(!/\/s|%|MB|KB|[0-9] s\b/.test(summaries[0].querySelector('[role="status"]').textContent) && !summaries[0].querySelector('progress, a, [role="status"] button') && [...summaries[0].querySelectorAll('button')].every((b) => b.getAttribute('data-slot') === 'batch-cancel'), `R27d ${kind}/${lang}: the status line has no byte, speed, percentage or ETA and no control; the only action of the summary is Cancel remaining`);
         await p.unmount();
       }
       // finished: all saved is only said when every file is saved; a mixed result is a count, not "complete"
@@ -1444,12 +1445,12 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     for (const lang of ['en', 'ru']) for (const kind of ['quick', 'full']) {
       const t = T[lang];
       const mk = (state) => page(kind, { session: [], history: [], local: { uiLanguage: lang }, ...state }, kind === 'full' ? { hash: '#downloads' } : {});
-      const text = (p) => p.q('[data-slot="batch-summary"]').textContent.replace(/\s+/g, ' ').trim();
+      const text = (p) => p.q('[data-slot="batch-summary"] [role="status"]').textContent.replace(/\s+/g, ' ').trim();
       const rows = (extra) => [job('m1', 'complete', { batch: 'batch-g', ...extra }), job('m2', 'failed', { batch: 'batch-g' }), job('m3', 'receiving', { batch: 'batch-g' })];
       for (const site of ['pixiv', 'pawchive']) {
         const p = await mk({ jobs: rows(), batches: [batch({ site })] });
         assert(p.qa('[data-slot="batch-summary"]').length === 1 && text(p) === `${t.title[site]} · ${t.saved(2, 4)} · ${t.failed(1)} · ${t.remaining(1)}`, `R28a ${kind}/${lang}/${site}: one summary with the service's own label and the committed counts (${text(p)})`);
-        assert(p.q('[data-job="m2"] button[aria-label="' + t.retry + '"]') && p.qa('[data-job]').length === 3 && !p.q('[data-slot="batch-summary"] button, [data-slot="batch-summary"] a, [data-slot="batch-summary"] progress'), `R28b ${kind}/${lang}/${site}: the file rows keep their own actions and the summary has no control`);
+        assert(p.q('[data-job="m2"] button[aria-label="' + t.retry + '"]') && p.qa('[data-job]').length === 3 && !p.q('[data-slot="batch-summary"] [role="status"] button, [data-slot="batch-summary"] a, [data-slot="batch-summary"] progress'), `R28b ${kind}/${lang}/${site}: the file rows keep their own actions and the status line has no control`);
         await p.unmount();
       }
       const all = await mk({ jobs: [job('a', 'complete', { batch: 'batch-g' }), job('b', 'complete', { batch: 'batch-g' }), job('c', 'complete', { batch: 'batch-g' })], batches: [batch({ site: 'pixiv', count: 3, saved: 3, failed: 0, remaining: 0 })] });
@@ -1467,6 +1468,96 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
       const legacy = await mk({ jobs: [job('a', 'complete', { batch: 'batch-g' })], batches: [batch({ site: 'reddit', count: 1, saved: 1, failed: 0, remaining: 0 }), batch({ id: 'batch-h', site: 'x', count: 1, saved: 1, failed: 0, remaining: 0 })] });
       assert(legacy.qa('[data-slot="batch-summary"]').length >= 1 && legacy.text().includes(t.title.reddit), `R28g ${kind}/${lang}: the earlier X and Reddit labels are unchanged`);
       await legacy.unmount();
+    }
+  }
+
+  // MANAGER-BATCH-CANCEL-01: one "Cancel remaining" action on a batch summary that still has unfinished work, in the popup and the full manager.
+  {
+    const T = {
+      en: { cancel: 'Cancel remaining', cancelling: 'Cancelling…', failed: 'Could not cancel the remaining files. Try again.', title: { x: 'x.com post', reddit: 'Reddit post', pixiv: 'Pixiv post', pawchive: 'Pawchive post' } },
+      ru: { cancel: 'Отменить оставшиеся', cancelling: 'Отмена…', failed: 'Не удалось отменить оставшиеся файлы. Повторите попытку.', title: { x: 'Пост x.com', reddit: 'Пост Reddit', pixiv: 'Пост Pixiv', pawchive: 'Пост Pawchive' } },
+    };
+    const job = (id, state, over = {}) => ({ id, filename: id + '.png', state, received: state === 'complete' ? 2048 : 1024, total: state === 'receiving' ? 4096 : 2048, speed: state === 'receiving' ? 512 : 0, error: '', ...over });
+    const batch = (over = {}) => ({ id: 'batch-1', site: 'pixiv', count: 4, saved: 1, failed: 0, cancelled: 0, skipped: 0, remaining: 3, createdAt: 5, ...over });
+    for (const lang of ['en', 'ru']) for (const kind of ['quick', 'full']) {
+      const t = T[lang];
+      const mk = (state) => page(kind, { session: [], history: [], local: { uiLanguage: lang }, ...state }, kind === 'full' ? { hash: '#downloads' } : {});
+      const rows = [job('a', 'complete', { batch: 'batch-1' }), job('b', 'receiving', { batch: 'batch-1' })];
+      // every service gets the action while something is unfinished, and only then
+      {
+        const sites = ['x', 'reddit', 'pixiv', 'pawchive'];
+        const p = await mk({ jobs: sites.flatMap((s, i) => [job('r' + i, 'receiving', { batch: 'b' + i })]).concat([job('done', 'complete', { batch: 'bd' })]), batches: sites.map((s, i) => batch({ id: 'b' + i, site: s })).concat([batch({ id: 'bd', site: 'x', count: 2, saved: 2, remaining: 0 })]) });
+        const buttons = p.qa('[data-slot="batch-cancel"]');
+        assert(buttons.length === 4 && buttons.every((b, i) => b.textContent.trim() === t.cancel && b.getAttribute('aria-label') === `${t.cancel}: ${t.title[sites[i]]}`), `R29a ${kind}/${lang}: one localized Cancel remaining per unfinished batch, named for its post (${buttons.map((b) => b.getAttribute('aria-label'))})`);
+        assert(!p.q('[data-batch="bd"] [data-slot="batch-cancel"]') && p.qa('[data-slot="batch-summary"]').every((s) => !s.querySelector('progress')), `R29b ${kind}/${lang}: a finished batch has no action; the summary still aggregates no bytes`);
+        assert(p.qa('[data-job] button[aria-label]').length >= 4, `R29c ${kind}/${lang}: the file rows keep their own actions`);
+        await p.unmount();
+      }
+      // pending: the request is in flight; focus stays on the button, a second activation is ignored
+      {
+        let release; const state = { jobs: rows, batches: [batch()], batchGate: new Promise((resolve) => { release = resolve; }) };
+        const p = await mk(state);
+        const btn = p.q('[data-slot="batch-cancel"]'); btn.focus();
+        await p.click(btn);
+        const pending = p.q('[data-slot="batch-cancel"]');
+        assert(pending === btn && pending.getAttribute('aria-disabled') === 'true' && pending.textContent.trim() === t.cancelling && p.doc.activeElement === btn && !pending.disabled, `R29d ${kind}/${lang}: while pending the button says so, stays focusable and keeps focus`);
+        await p.click(btn); await p.click(btn);
+        assert((p.state.batchCommands || []).length === 1 && p.state.batchCommands[0].id === 'batch-1', `R29e ${kind}/${lang}: one command for the exact batch id, repeated activation ignored (${JSON.stringify(p.state.batchCommands)})`);
+        assert(p.qa('[data-job] button[title]').length > 0 && p.qa('[data-job] button[title]').every((b) => b.disabled), `R29f ${kind}/${lang}: the row actions wait for the result`);
+        release(); await p.settle(8);
+        const accepted = p.q('[data-slot="batch-cancel"]');
+        assert(accepted && accepted.getAttribute('aria-disabled') !== 'true' && accepted.textContent.trim() === t.cancel && p.q('[data-slot="batch-summary"] [role="status"]').textContent.includes(t.cancelling) && !p.q('[data-slot="downloads-error"]'), `R29g ${kind}/${lang}: once accepted, the summary says it is cancelling until the running items have stopped; the action stays available (it is not the busy state)`);
+        // the worker finishes: the action goes away and the focus goes to the summary, not to nowhere
+        p.state.batches = [batch({ cancelRequested: true, saved: 1, cancelled: 3, remaining: 0 })]; p.state.jobs = [job('a', 'complete', { batch: 'batch-1' }), job('b', 'cancelled', { batch: 'batch-1', error: 'CANCELLED' })];
+        accepted.focus();
+        await p.U.act(async () => { for (const cb of p.state.msgListeners || []) cb({ action: 'DOWNLOADS_CHANGED' }); await sleep(5); }); await p.settle(8);
+        assert(!p.q('[data-slot="batch-cancel"]') && p.doc.activeElement === p.q('[data-slot="batch-summary"]'), `R29h ${kind}/${lang}: after settlement no action is offered and focus moved to the summary`);
+        await p.unmount();
+      }
+      // a refused command: the counts are unchanged, the action is available again and keeps focus, the error is announced
+      {
+        const state = { jobs: rows, batches: [batch()], failBatch: true };
+        const p = await mk(state);
+        const btn = p.q('[data-slot="batch-cancel"]'); btn.focus(); await p.click(btn); await p.settle(6);
+        const alert = p.q('[data-slot="downloads-error"]');
+        assert(alert && alert.textContent.includes(t.failed) && alert.getAttribute('role') === 'alert', `R29i ${kind}/${lang}: a failed cancellation is an error`);
+        const again = p.q('[data-slot="batch-cancel"]');
+        assert(again === btn && again.getAttribute('aria-disabled') !== 'true' && again.textContent.trim() === t.cancel && p.doc.activeElement === btn && p.q('[data-slot="batch-summary"]').textContent.includes(t.title.pixiv), `R29j ${kind}/${lang}: nothing changed: the action is back and keeps focus`);
+        p.state.failBatch = false; await p.click(btn); await p.settle(6);
+        assert(!p.q('[data-slot="downloads-error"]') && (p.state.batchCommands || []).length === 2, `R29k ${kind}/${lang}: the click can be repeated and clears the error`);
+        await p.unmount();
+      }
+      // F1: a command that failed after the intent was stored: the error is announced, the committed state is shown, and the action can be repeated
+      {
+        const state = { jobs: rows, batches: [batch()], failBatch: true, failStores: true };
+        const p = await mk(state);
+        const btn = p.q('[data-slot="batch-cancel"]'); btn.focus(); await p.click(btn); await p.settle(8);
+        const again = p.q('[data-slot="batch-cancel"]');
+        assert(p.q('[data-slot="downloads-error"]')?.textContent.includes(t.failed) && p.q('[data-slot="batch-summary"] [role="status"]').textContent.includes(t.cancelling) && again === btn && again.getAttribute('aria-disabled') !== 'true' && again.textContent.trim() === t.cancel && p.doc.activeElement === btn, `R29n ${kind}/${lang}: after a partial failure the error and the committed cancellation are both shown, the action is available and keeps focus`);
+        p.state.failBatch = false; await p.click(btn); await p.settle(8);
+        assert((p.state.batchCommands || []).length === 2 && !p.q('[data-slot="downloads-error"]') && p.q('[data-slot="batch-cancel"]') === btn, `R29o ${kind}/${lang}: the repeated click is sent and clears the error`);
+        await p.unmount();
+      }
+      // a batch the worker is already cancelling (reopened popup): the state is shown and the action can be repeated (an earlier click may have failed halfway)
+      {
+        const state = { jobs: rows, batches: [batch({ cancelRequested: true, cancelling: true })] };
+        const p = await mk(state);
+        const btn = p.q('[data-slot="batch-cancel"]');
+        assert(btn && btn.getAttribute('aria-disabled') !== 'true' && btn.textContent.trim() === t.cancel && p.q('[data-slot="batch-summary"] [role="status"]').textContent.includes(t.cancelling), `R29l ${kind}/${lang}: a reopened manager shows the accepted cancellation and still offers the action`);
+        await p.click(btn); await p.settle(6);
+        assert((p.state.batchCommands || []).length === 1 && p.state.batchCommands[0].id === 'batch-1', `R29m ${kind}/${lang}: a repeated click is sent for the exact batch id`);
+        await p.unmount();
+      }
+      // F1: the cancellation was accepted earlier, the user then retried a file: only that running file is left; that is not "Cancelling"
+      {
+        const state = { jobs: rows, batches: [batch({ cancelRequested: true, saved: 1, cancelled: 2, remaining: 1 })] };
+        const p = await mk(state);
+        const btn = p.q('[data-slot="batch-cancel"]');
+        assert(btn && btn.getAttribute('aria-disabled') !== 'true' && btn.textContent.trim() === t.cancel && !p.q('[data-slot="batch-summary"]').textContent.includes(t.cancelling), `R29p ${kind}/${lang}: a retried running file is not called Cancelling; the action is available`);
+        await p.click(btn); await p.settle(6);
+        assert((p.state.batchCommands || []).length === 1 && p.q('[data-slot="batch-summary"] [role="status"]').textContent.includes(t.cancelling), `R29q ${kind}/${lang}: a click covers it again and the committed state says so`);
+        await p.unmount();
+      }
     }
   }
 

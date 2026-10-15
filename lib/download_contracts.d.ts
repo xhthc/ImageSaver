@@ -31,13 +31,17 @@ export interface DownloadBatch {
   skipped: number;
   /** Not finished yet: proven but not started, resolving, receiving, checking or exporting. */
   remaining: number;
+  /** "Cancel remaining" was accepted for this batch: its unstarted items are cancelled and its running ones stop cooperatively (counts stay the committed outcomes). */
+  cancelRequested?: boolean;
+  /** Work covered by an accepted cancellation is still unfinished (a file the user retried afterwards is not). Only this says "Cancelling"; the action stays available to repeat it. */
+  cancelling?: boolean;
   /** Pawchive only: the post declares originals the site has not imported. `count` is still only the downloadable items; the number missing is not known here. */
   partial?: boolean;
   createdAt: number;
 }
 
 export interface DownloadSnapshot { jobs: DownloadJob[]; paused: boolean; batches?: DownloadBatch[] }
-export type DownloadCommand = 'pause' | 'cancel' | 'retry' | 'remove';
+export type DownloadCommand = 'pause' | 'cancel' | 'retry' | 'remove' | 'cancelBatch';
 export type DownloadRequest =
   | { action: 'DOWNLOADS_LIST' }
   | { action: 'DOWNLOADS_COMMAND'; command: DownloadCommand; id?: string };
@@ -58,8 +62,10 @@ export interface DownloadsChrome {
 export interface DownloadsViewState extends DownloadSnapshot {
   batches: DownloadBatch[];
   status: 'loading' | 'ready' | 'error';
-  error: '' | 'downloads.unavailable' | 'downloads.commandFailed';
+  error: '' | 'downloads.unavailable' | 'downloads.commandFailed' | 'downloads.batchCancelFailed';
   busy: boolean;
+  /** The batch whose "Cancel remaining" is waiting for the worker. */
+  pendingBatch: string;
   removingIds: string[];
   dismissedIds: string[];
 }

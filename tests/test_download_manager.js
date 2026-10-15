@@ -5,6 +5,8 @@ const {sniffMediaMagicBytes,isMalformedMediaContainer}=require('../offscreen.js'
 const {createManager}=MediaLatchDownloads,{createStaging}=MediaLatchStaging;
 const wait=()=>new Promise(r=>setTimeout(r,5));
 async function until(fn){for(let i=0;i<1000;i++){if(await fn())return;await wait();}throw Error('TEST_TIMEOUT');}
+// MANAGER-BATCH-CANCEL-01 F2: each case reports its own failure and the next one still runs (failing-before evidence lists every case)
+const f2=async(name,fn)=>{try{await fn();}catch(x){console.log('FAIL f2 '+name+': '+String(x.message).split(String.fromCharCode(10))[0]);process.exitCode=1;}};
 const png=require('node:fs').readFileSync('icons/128.png');
 function disk(fetcher,quota=1e8){
   const files=new Map(), writes=[];let fetches=0,objects=[];
@@ -351,6 +353,221 @@ function env(stored={jobs:[],paused:false}) {
       e.native.get(101).state='complete';await m.drain();
       assert.deepEqual(counts((await m.list()).batches.find(x=>x.id===b2)),{saved:0,failed:1,cancelled:0,skipped:1,remaining:1},'the other batch is untouched');
     }
+    // MANAGER-BATCH-CANCEL-01: "Cancel remaining" persists its intent first, settles the unstarted slots, refuses late enqueues, and cancels the batch's own jobs through the per-job path
+    {
+      const e=env({jobs:[],paused:false});const failed=[];e.d.failed=async j=>{failed.push([j.op,j.state]);};
+      const holds=new Map(),stage=e.d.stage;
+      e.d.stage=async(j,signal)=>j.source.includes('/h')?new Promise((resolve,reject)=>{holds.set(j.id,()=>resolve({size:png.length,mime:'image/png'}));signal.addEventListener('abort',()=>reject(Error('CANCELLED')),{once:true});}):stage(j,signal,async()=>{});
+      const m=createManager(e.d);await m.ready;
+      const id=await m.openBatch('x',6),ref=i=>({id,i});
+      const other=await m.openBatch('reddit',2);
+      await item(m,ref(0),'op-0','https://media.test/0','0.png');await m.drain();
+      const held=[1,2,3].map(i=>item(m,ref(i),'op-'+i,'https://h.test/h'+i,i+'.png').catch(x=>x.message));
+      await until(()=>holds.size===2);await m.bindSlot(ref(4),'op-4');
+      await item(m,{id:other,i:0},'op-o0','https://other.test/0','o0.png');const single=m.enqueue({url:'https://single.test/s',filename:'s.png'},{op:'op-single'});await until(async()=>(await m.list()).jobs.some(x=>x.filename==='o0.png'&&x.state==='complete'));
+      let b=(await m.list()).batches.find(x=>x.id===id);assert.deepEqual(counts(b),{saved:1,failed:0,cancelled:0,skipped:0,remaining:5},'before: one saved; two receiving, one queued, one preparing, one unstarted');assert.equal(b.cancelRequested,undefined);
+      const stagesBefore=e.stages,jobsBefore=(await m.list()).jobs.length;
+      await m.command('cancelBatch',id);
+      assert(Number.isFinite(e.data.batches.find(x=>x.id===id).cancel),'the intent is persisted');assert.equal(e.data.batches.find(x=>x.id===id).slots[5].s,'cancelled','the unstarted slot is settled by the same write');
+      await until(async()=>counts((await m.list()).batches.find(x=>x.id===id)).cancelled===4);
+      b=(await m.list()).batches.find(x=>x.id===id);assert.deepEqual(counts(b),{saved:1,failed:0,cancelled:4,skipped:0,remaining:1},'the two receiving jobs are aborted, the queued one and the unstarted slot cancelled; the preparing one is still open');assert.equal(b.cancelRequested,true);
+      assert.deepEqual(await Promise.all(held),['CANCELLED','CANCELLED','CANCELLED'],'the waiting producers see the cancellation');
+      assert((await m.list()).jobs.find(x=>x.filename==='0.png').state==='complete','the saved file stays saved');
+      await m.command('cancelBatch',id);assert.deepEqual(counts((await m.list()).batches.find(x=>x.id===id)),{saved:1,failed:0,cancelled:4,skipped:0,remaining:1},'a repeated click changes nothing');
+      await Promise.all([m.command('cancelBatch',id),m.command('cancelBatch',id)]);
+      // the preparation that was still running when the cancellation was accepted never becomes a job or an export
+      await assert.rejects(m.enqueue({url:'https://media.test/4',filename:'4.png'},{op:'op-4'}),/CANCELLED/);
+      assert.equal(e.stages,stagesBefore,'nothing was staged');assert.equal((await m.list()).jobs.length,jobsBefore,'no job was created');assert(failed.some(x=>x[0]==='op-4'&&x[1]==='cancelled'),'its operation ends cancelled, not failed');
+      await m.settleSlot(ref(4),'cancelled');assert.deepEqual(counts((await m.list()).batches.find(x=>x.id===id)),{saved:1,failed:0,cancelled:5,skipped:0,remaining:0});
+      assert(!failed.some(x=>x[0]==='op-5'),'the unstarted slot has no operation and never becomes one');
+      await m.command('cancelBatch',id);assert.deepEqual(counts((await m.list()).batches.find(x=>x.id===id)),{saved:1,failed:0,cancelled:5,skipped:0,remaining:0},'nothing left to cancel: the click is a harmless no-op');
+      // an operation that begins after the acceptance cannot bind and cannot enqueue
+      await m.bindSlot(ref(5),'op-late');await assert.rejects(m.enqueue({url:'https://media.test/late',filename:'late.png'},{op:'op-late'}),/CANCELLED/);assert(failed.some(x=>x[0]==='op-late'));
+      assert.equal(await m.stopped(ref(2)),true);assert.equal(await m.stopped({id:other,i:0}),false);assert.equal(await m.stopped({id:'batch-none',i:0}),false);
+      // other batches and single saves are untouched
+      await single;await until(async()=>(await m.list()).jobs.find(x=>x.filename==='s.png')?.state==='complete');const l=await m.list();
+      assert.deepEqual(counts(l.batches.find(x=>x.id===other)),{saved:1,failed:0,cancelled:0,skipped:0,remaining:1});assert.equal(l.batches.find(x=>x.id===other).cancelRequested,undefined);
+      assert(l.jobs.find(x=>x.filename==='s.png').state==='complete'&&l.jobs.find(x=>x.filename==='o0.png').state==='complete','a single save and another batch continue');
+      assert.equal(e.exports,3,'only the three unrelated or already finished files were exported');
+      // reopen: the accepted cancellation and its outcomes are kept
+      const again=createManager({...e.d});await again.ready;const rb=(await again.list()).batches.find(x=>x.id===id);assert.deepEqual(counts(rb),{saved:1,failed:0,cancelled:5,skipped:0,remaining:0});assert.equal(rb.cancelRequested,true);
+    }
+    // a refused write: nothing is cancelled, nothing is fenced, and the click can be repeated
+    {
+      const e=env({jobs:[],paused:true});const failed=[];e.d.failed=async j=>{failed.push([j.op,j.state]);};
+      const m=createManager(e.d);await m.ready;const id=await m.openBatch('pixiv',3),ref=i=>({id,i});
+      const queued=item(m,ref(0),'op-0','https://media.test/0','0.png').catch(x=>x.message);await until(async()=>(await m.list()).jobs.length===1);await m.bindSlot(ref(1),'op-1');
+      e.failWrite=x=>x.batches.some(b=>b.cancel);await assert.rejects(m.command('cancelBatch',id),/STORAGE_FAILED/);e.failWrite=null;
+      let b=(await m.list()).batches[0];assert.deepEqual(counts(b),{saved:0,failed:0,cancelled:0,skipped:0,remaining:3},'a refused write does not show a cancellation');assert.equal(b.cancelRequested,undefined);assert.equal(e.data.batches[0].cancel,undefined);
+      assert.equal((await m.list()).jobs[0].state,'queued','the queue was not touched');
+      const late=m.enqueue({url:'https://media.test/1',filename:'1.png'},{op:'op-1'}).catch(x=>x.message);await until(async()=>(await m.list()).jobs.length===2);assert.equal((await m.list()).jobs.length,2,'the preparing slot was not fenced by the failed attempt');
+      // global pause does not stop a cancellation from applying to queued work, and is not changed by it
+      await m.command('cancelBatch',id);assert.equal((await m.list()).paused,true);b=(await m.list()).batches[0];assert.deepEqual(counts(b),{saved:0,failed:0,cancelled:3,skipped:0,remaining:0},'queued jobs and the unstarted slot are cancelled while the queue is paused');
+      assert.equal(await queued,'CANCELLED');assert.equal(await late,'CANCELLED');assert(failed.some(x=>x[0]==='op-0')&&failed.some(x=>x[0]==='op-1'));
+    }
+    // intent persisted, a job write refused: the click is repeatable and finishes the cancellation
+    {
+      const e=env({jobs:[],paused:true});const m=createManager(e.d);await m.ready;const id=await m.openBatch('x',2),ref=i=>({id,i});
+      const q=item(m,ref(0),'op-0','https://media.test/0','0.png').catch(x=>x.message);await until(async()=>(await m.list()).jobs.length===1);
+      e.failWrite=x=>x.jobs.some(j=>j.state==='cancelled');await assert.rejects(m.command('cancelBatch',id),/STORAGE_FAILED/);e.failWrite=null;
+      assert(Number.isFinite(e.data.batches[0].cancel),'the accepted intent is kept');assert.equal((await m.list()).jobs[0].state,'queued');assert.equal((await m.list()).batches[0].cancelRequested,true,'the summary says that it is cancelling');
+      await m.command('cancelBatch',id);assert.deepEqual(counts((await m.list()).batches[0]),{saved:0,failed:0,cancelled:2,skipped:0,remaining:0});assert.equal(await q,'CANCELLED');
+    }
+    // a completed export wins; an export still in progress is cancelled; an uncertain export is reported as such, never as cancelled
+    {
+      const e=env({jobs:[],paused:false});e.autoComplete=false;const m=createManager(e.d);await m.ready;const id=await m.openBatch('reddit',4),ref=i=>({id,i});
+      await item(m,ref(0),'op-0','https://a.test/0','0.png');await item(m,ref(1),'op-1','https://b.test/1','1.png');await item(m,ref(2),'op-2','https://c.test/2','2.png');
+      e.native.get(101).state='complete';e.native.get(102).state='unknown';
+      await m.command('cancelBatch',id);await m.drain();
+      const jobs=(await m.list()).jobs,state=f=>jobs.find(x=>x.filename===f).state;
+      assert.equal(state('0.png'),'complete','a finished export stays saved even though the cancellation arrived');assert.equal(state('1.png'),'failed','an uncertain export is reported as uncertain');assert.equal(jobs.find(x=>x.filename==='1.png').error,'EXPORT_UNCERTAIN');assert.equal(state('2.png'),'cancelled');assert.equal(e.native.get(103).state,'interrupted','the browser download that was still in progress was cancelled');
+      assert.deepEqual(counts((await m.list()).batches[0]),{saved:1,failed:1,cancelled:2,skipped:0,remaining:0},'saved, failed (uncertain), cancelled (the running export and the unstarted slot)');
+    }
+    // explicit per-file retry after a cancellation: the same slot, no restart of the cancelled producer, no other slot
+    {
+      const e=env({jobs:[],paused:false});let fail=true;const stage=e.d.stage;e.d.stage=async(...a)=>{if(fail)throw Error('NETWORK_FAILED');return stage(...a);};e.d.newAttempt=async()=>'op-retry';
+      const m=createManager(e.d);await m.ready;const id=await m.openBatch('x',3),ref=i=>({id,i});
+      await assert.rejects(item(m,ref(0),'op-0','https://media.test/0','0.png'),/NETWORK_FAILED/);await m.bindSlot(ref(1),'op-1');
+      await m.command('cancelBatch',id);assert.deepEqual(counts((await m.list()).batches[0]),{saved:0,failed:1,cancelled:1,skipped:0,remaining:1});
+      fail=false;await m.command('retry',(await m.list()).jobs[0].id);await until(async()=>(await m.list()).batches[0].saved===1);await m.drain();
+      assert.deepEqual(counts((await m.list()).batches[0]),{saved:1,failed:0,cancelled:1,skipped:0,remaining:1},'the retry saved its own slot; the cancelled slot stayed cancelled; the preparing one is still fenced');
+      await assert.rejects(m.enqueue({url:'https://media.test/1',filename:'1.png'},{op:'op-1'}),/CANCELLED/);assert.equal((await m.list()).jobs.length,1);
+    }
+    // restart: an accepted cancellation is honoured, a user's later retry is not undone, an older record without the field loads
+    {
+      const stored={jobs:[
+        {id:'job-q',op:'op-q',source:'https://media.test/q',filename:'q.png',createdAt:1,state:'queued',received:0,total:null,speed:0,prepared:false,error:'',batch:{id:'batch-c',i:1}},
+        {id:'job-r',op:'op-r',source:'https://media.test/r',filename:'r.png',createdAt:1,state:'queued',received:0,total:null,speed:0,prepared:false,error:'',retriedAt:200,batch:{id:'batch-c',i:2}},
+        {id:'job-e',op:'op-e',source:'',filename:'e.png',createdAt:1,state:'exporting',received:2,total:2,speed:0,prepared:true,mime:'image/png',exportUrl:'blob:owned-e',downloadId:501,error:'',batch:{id:'batch-c',i:3}},
+        {id:'job-d',op:'op-d',source:'',filename:'d.png',createdAt:1,state:'exporting',received:2,total:2,speed:0,prepared:true,mime:'image/png',exportUrl:'blob:owned-d',downloadId:502,error:'',batch:{id:'batch-c',i:4}}],paused:false,
+        batches:[{id:'batch-c',site:'pixiv',createdAt:1,cancel:100,slots:[{s:'saved',op:'op-0'},{s:'active',op:'op-q',job:'job-q'},{s:'active',op:'op-r',job:'job-r'},{s:'active',op:'op-e',job:'job-e'},{s:'active',op:'op-d',job:'job-d'},{s:'pending'},{s:'active',op:'op-prep'}]},
+          {id:'batch-old',site:'x',createdAt:2,slots:[{s:'pending'},{s:'saved',op:'op-9'}]}]};
+      const e=env(stored);const failed=[];e.d.failed=async j=>{failed.push([j.op,j.state]);};e.d.attach=async()=>{};e.native.set(501,{id:501,url:'blob:owned-e',state:'in_progress'});e.native.set(502,{id:502,url:'blob:owned-d',state:'complete'});
+      const m=createManager(e.d);await m.ready;await m.drain();
+      const l=await m.list(),st=f=>l.jobs.find(x=>x.filename===f).state;
+      assert.equal(st('q.png'),'cancelled','a queued job of a cancelled batch is not revived');assert.equal(st('r.png'),'complete','a job the user retried after the cancellation runs');assert.equal(e.stages,1,'only the retried job was staged');assert(e.removed.includes('job-q'));assert(failed.some(x=>x[0]==='op-q'&&x[1]==='cancelled'));
+      assert.equal(st('e.png'),'cancelled','an export still in progress is cancelled at startup');assert.equal(e.native.get(501).state,'interrupted');assert.equal(st('d.png'),'complete','an export the browser had finished is reconciled as saved');
+      const c=l.batches.find(x=>x.id==='batch-c');assert.deepEqual(counts(c),{saved:3,failed:1,cancelled:3,skipped:0,remaining:0},'saved (0, retried, finished), the interrupted preparation failed, cancelled (queued, exporting, unstarted)');assert.equal(c.cancelRequested,true);
+      const old=l.batches.find(x=>x.id==='batch-old');assert.deepEqual(counts(old),{saved:1,failed:0,cancelled:0,skipped:1,remaining:0},'an older record keeps its restart rule');assert.equal(old.cancelRequested,undefined);
+    }
+    // forged, unknown and malformed ids
+    {
+      const e=env({jobs:[],paused:false});const m=createManager(e.d);await m.ready;const id=await m.openBatch('x',2);await item(m,{id,i:0},'op-0','https://media.test/0','0.png');await until(async()=>(await m.list()).batches[0].saved===1);
+      for(const bad of ['batch-missing','',null,undefined,42,{},'../x','job-1'])await assert.rejects(m.command('cancelBatch',bad),/BATCH_NOT_FOUND/);
+      assert.deepEqual(counts((await m.list()).batches[0]),{saved:1,failed:0,cancelled:0,skipped:0,remaining:1},'nothing changed');assert.equal(e.data.batches[0].cancel,undefined);
+      await assert.rejects(m.command('cancel',id),/JOB_NOT_FOUND/,'a batch id is not a job id');
+    }
+    // MANAGER-BATCH-CANCEL-01 F1: the committed cancellation is enforced where a queued job would start, not by the order of the cleanups
+    {
+      // a first cleanup reply that is held must not let a covered queued job start (3 same-origin files: two receiving, one queued)
+      const e=env({jobs:[],paused:false});const started=[],signalled=[];let release;const gate=new Promise(r=>{release=r;});
+      e.d.stage=async(j,signal)=>{started.push(j.filename);if(j.filename==='2.png')return{size:png.length,mime:'image/png'};return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>{signalled.push(j.filename);reject(Error('CANCELLED'));},{once:true}));};
+      e.d.abort=async()=>{await gate;};const failed=[];e.d.failed=async j=>{failed.push([j.op,j.state]);};
+      const m=createManager(e.d);await m.ready;const id=await m.openBatch('x',3),ref=i=>({id,i});
+      const results=[0,1,2].map(i=>item(m,ref(i),'op-'+i,'https://same.test/'+i,i+'.png').catch(x=>x.message));
+      await until(()=>started.length===2);assert.equal((await m.list()).jobs.find(x=>x.filename==='2.png').state,'queued');
+      const cancelling=m.command('cancelBatch',id);
+      await until(async()=>(await m.list()).batches[0].cancelRequested===true);await wait();await wait();
+      try{
+        assert.deepEqual(started,['0.png','1.png'],'the queued file did not start although the capacity of the cancelled ones was free');assert.equal(e.exports,0,'nothing was exported while the first cleanup reply was held');
+        assert.equal((await m.list()).jobs.find(x=>x.filename==='2.png').state,'cancelled','the queued file is cancelled at once, without waiting for the cleanup of the running ones');
+        assert.deepEqual([...signalled].sort(),['0.png','1.png'],'both running files were signalled although the first cleanup reply was held');
+      }catch(x){release();throw x;}
+      release();await cancelling;await Promise.all(results);await m.drain();
+      assert.deepEqual(started,['0.png','1.png']);assert.equal(e.exports,0);assert.deepEqual(counts((await m.list()).batches[0]),{saved:0,failed:0,cancelled:3,skipped:0,remaining:0},'all three are cancelled');assert(failed.some(x=>x[0]==='op-2'&&x[1]==='cancelled'));
+    }
+    {
+      // intent accepted, the cancelled-state write of the queued job refused: Resume must not start it; the repeated click finishes the cancellation
+      const e=env({jobs:[],paused:true});const m=createManager(e.d);await m.ready;const id=await m.openBatch('x',2),ref=i=>({id,i});
+      const q=item(m,ref(0),'op-0','https://media.test/0','0.png').catch(x=>x.message);await until(async()=>(await m.list()).jobs.length===1);
+      e.failWrite=x=>x.jobs.some(j=>j.state==='cancelled');await assert.rejects(m.command('cancelBatch',id),/STORAGE_FAILED/);e.failWrite=null;
+      await m.command('pause');await wait();await wait();await wait();
+      assert.equal(e.exports,0,'Resume does not start a file of a cancelled batch');assert.equal(e.stages,0);let l=await m.list();assert.equal(l.jobs[0].state,'queued');assert.equal(l.batches[0].cancelRequested,true);assert.equal(l.batches[0].cancelling,true);
+      await m.command('cancelBatch',id);l=await m.list();assert.equal(l.jobs[0].state,'cancelled');assert.equal(await q,'CANCELLED');assert.equal(e.exports,0);assert.equal(l.batches[0].cancelling,undefined);assert.deepEqual(counts(l.batches[0]),{saved:0,failed:0,cancelled:2,skipped:0,remaining:0});
+    }
+    {
+      // a refused binding write must not lose the batch: the late preparation of a cancelled batch is refused, and one that is not cancelled joins its slot
+      for(const cancel of [true,false])await f2('refused-bind-keeps-association-'+(cancel?'cancelled':'not-cancelled'),async()=>{
+        const e=env({jobs:[],paused:false});const failed=[];e.d.failed=async j=>{failed.push([j.op,j.state]);};
+        const m=createManager(e.d);await m.ready;const id=await m.openBatch('pixiv',2),ref=i=>({id,i});
+        let refuse=true;e.failWrite=x=>refuse&&x.batches.some(b=>b.slots.some(s=>s.op==='op-prep'));
+        await assert.rejects(m.bindSlot(ref(0),'op-prep'),/STORAGE_FAILED/);refuse=false;e.failWrite=null;
+        assert.deepEqual(m.slotInfo(ref(0)),{state:'active',op:'op-prep',job:undefined},'F2: the refused write stored nothing, but the association is kept');assert(m.isBatchOp('op-prep'));
+        if(cancel){
+          await m.command('cancelBatch',id);
+          await assert.rejects(m.enqueue({url:'https://media.test/late',filename:'late.png'},{op:'op-prep'}),/CANCELLED/);
+          assert.equal(e.exports,0,'no ungrouped export');assert.equal((await m.list()).jobs.length,0,'no ungrouped job');assert(failed.some(x=>x[0]==='op-prep'&&x[1]==='cancelled'),'its operation ends cancelled');
+          assert.deepEqual(counts((await m.list()).batches[0]),{saved:0,failed:0,cancelled:1,skipped:0,remaining:1},'its slot stays open until the worker settles it, like any preparation');
+          await m.settleSlot(ref(0),'cancelled');assert.deepEqual(counts((await m.list()).batches[0]),{saved:0,failed:0,cancelled:2,skipped:0,remaining:0});
+        }else{
+          await m.enqueue({url:'https://media.test/late',filename:'late.png'},{op:'op-prep'});await m.drain();
+          const l=await m.list();assert.equal(l.jobs[0].batch,id,'the job joined its slot although the binding write was refused');await until(async()=>(await m.list()).batches[0].saved===1);assert.deepEqual(counts((await m.list()).batches[0]),{saved:1,failed:0,cancelled:0,skipped:0,remaining:1});
+          await m.enqueue({url:'https://media.test/x',filename:'x.png'},{op:'op-x'});assert.equal((await m.list()).jobs.find(x=>x.filename==='x.png').batch,undefined,'an operation that never bound is an ordinary save');
+        }
+      });
+    }
+    {
+      // a file the user retried after the cancellation is not "Cancelling"; a repeated click covers it
+      const e=env({jobs:[],paused:false});let fail=true;const stage=e.d.stage;let release;const gate=new Promise(r=>{release=r;});
+      e.d.stage=async(j,signal)=>{if(fail)throw Error('NETWORK_FAILED');await Promise.race([gate,new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('CANCELLED')),{once:true}))]);return stage(j,signal,async()=>{});};e.d.newAttempt=async()=>'op-retry';
+      const m=createManager(e.d);await m.ready;const id=await m.openBatch('x',3),ref=i=>({id,i});
+      await assert.rejects(item(m,ref(0),'op-0','https://media.test/0','0.png'),/NETWORK_FAILED/);await m.bindSlot(ref(1),'op-1');
+      await m.command('cancelBatch',id);fail=false;await m.command('retry',(await m.list()).jobs[0].id);await until(async()=>(await m.list()).jobs[0].state==='receiving');
+      let b=(await m.list()).batches[0];assert.equal(b.cancelRequested,true);assert.equal(b.cancelling,true,'the preparation of slot 1 is still covered');
+      await m.settleSlot(ref(1),'cancelled');b=(await m.list()).batches[0];assert.equal(b.cancelRequested,true);assert.equal(b.cancelling,undefined,'only the retried, running file is left: that is not a cancellation in progress');assert.deepEqual(counts(b),{saved:0,failed:0,cancelled:2,skipped:0,remaining:1});
+      await m.command('cancelBatch',id);await until(async()=>(await m.list()).jobs[0].state==='cancelled');assert.deepEqual(counts((await m.list()).batches[0]),{saved:0,failed:0,cancelled:3,skipped:0,remaining:0},'the repeated click covers the retried file');release();
+    }
+    // MANAGER-BATCH-CANCEL-01 F2: admission sees committed intent only (a rejected write must not hide eligible work), and a preparation keeps its slot when its binding write was refused
+    for(const commit of [false,true])await f2('rejected-intent-'+(commit?'accepted':'refused'),async()=>{
+      // a rate-limited queued job's deadline arrives while the cancellation intent is still being written; the write is then refused (or accepted)
+      let wake,finishWrite,intent=false,first=true;const pumpGate=new Promise(r=>{wake=r;}),writeGate=new Promise(r=>{finishWrite=r;});
+      const stored={paused:false,jobs:[{id:'job-q',op:'op-q',source:'https://x.test/q',filename:'q.png',state:'queued',createdAt:1,received:0,total:null,speed:0,prepared:false,error:'RATE_LIMIT',retryAt:Date.now()+250,batch:{id:'batch-q',i:0}}],batches:[{id:'batch-q',site:'x',createdAt:1,slots:[{s:'active',op:'op-q',job:'job-q'}]}]};
+      const e=env(stored),set=e.d.store.set,failed=[];e.d.failed=async j=>{failed.push([j.op,j.state]);};
+      e.d.store.set=async v=>{if(v.batches.some(b=>b.cancel)){intent=true;await writeGate;if(!commit)throw Error('STORAGE_FAILED');}return set(v);};
+      e.d.sleep=async()=>{if(first){first=false;return pumpGate;}return wait();};
+      const m=createManager(e.d);await m.ready;
+      const result=m.command('cancelBatch','batch-q').then(()=>'ok',x=>x.message);
+      await until(()=>intent);await new Promise(r=>setTimeout(r,300));       // the deadline passes while the intent is tentative
+      wake();await wait();await wait();await wait();
+      assert.equal(e.stages,0,'nothing is admitted on the tentative intent');
+      finishWrite();assert.equal(await result,commit?'ok':'STORAGE_FAILED');
+      if(commit){
+        await wait();await wait();assert.equal(e.stages,0);assert.equal(e.exports,0);const l=await m.list();assert.equal(l.jobs[0].state,'cancelled','an accepted intent is honoured');assert.equal(l.batches[0].cancelRequested,true);
+      }else{
+        // no Pause/Resume, no second save, no new enqueue: the pump goes on by itself
+        await until(async()=>(await m.list()).jobs[0].state==='complete');const l=await m.list();
+        assert.equal(l.paused,false);assert.equal(e.exports,1,'the eligible file was exported');assert.equal(l.batches[0].cancelRequested,undefined,'the refused intent is gone');assert.deepEqual(failed,[]);
+      }
+    });
+    await f2('refused-bind-survives-pruning',async()=>{
+      // a refused binding write keeps the association through the normal snapshot pruning; the late preparation of the cancelled batch is refused
+      const e=env({jobs:[],paused:true}),set=e.d.store.set,failed=[];e.d.failed=async j=>{failed.push([j.op,j.state]);};
+      const m=createManager(e.d);await m.ready;const id=await m.openBatch('pixiv',2),ref=i=>({id,i});
+      let refuse=true;e.failWrite=x=>refuse&&x.batches.some(b=>b.slots.some(s=>s.op==='op-preparing'));
+      await assert.rejects(m.bindSlot(ref(0),'op-preparing'),/STORAGE_FAILED/);refuse=false;e.failWrite=null;
+      await m.command('cancelBatch',id);
+      // the pruning of background.downloadManagerSnapshot: feedback-only preparations give their operation ids
+      let pruned=await m.pruneBatches(new Set(['op-preparing']));assert.equal(pruned.length,1,'the batch survives pruning while its preparation is unfinished');assert.deepEqual(counts(pruned[0]),{saved:0,failed:0,cancelled:1,skipped:0,remaining:1});assert.equal(pruned[0].cancelling,true);
+      pruned=await m.pruneBatches(new Set());assert.equal(pruned.length,1,'also when the snapshot has no row for it');
+      await assert.rejects(m.enqueue({url:'https://media.test/late',filename:'late.png'},{op:'op-preparing'}),/CANCELLED/);
+      assert.equal(e.exports,0);assert.equal((await m.list()).jobs.length,0,'no ungrouped job');assert(failed.some(x=>x[0]==='op-preparing'&&x[1]==='cancelled'));
+      await m.settleSlot(ref(0),'cancelled');assert.equal((await m.pruneBatches(new Set())).length,0,'a finished batch without rows is pruned as before');
+    });
+    await f2('refused-write-stored-by-next-save',async()=>{
+      // the refused write stores nothing; the next save stores the kept association together with whatever it saves
+      const e=env({jobs:[],paused:true}),m=createManager(e.d);await m.ready;const id=await m.openBatch('pixiv',1);
+      e.failWrite=()=>true;await assert.rejects(m.bindSlot({id,i:0},'op-a'),/STORAGE_FAILED/);e.failWrite=null;
+      assert.equal(e.data.batches[0].slots[0].s,'pending','the refused write stored nothing');
+      await m.settleSlot({id,i:0},'failed');assert.equal(e.data.batches[0].slots[0].s,'failed');assert.equal(e.data.batches[0].slots[0].op,'op-a','the next save stores the kept association with the result');
+    });
+    await f2('keepSlot',async()=>{
+      // keepSlot: the caller's bindSlot call failed without reaching the write (any other reason); the same step is applied (repeating it changes nothing) and never over a cancelled batch
+      const e=env({jobs:[],paused:true}),m=createManager(e.d);await m.ready;const id=await m.openBatch('pixiv',2),ref=i=>({id,i});
+      await m.keepSlot(ref(0),'op-k');assert.deepEqual(m.slotInfo(ref(0)),{state:'active',op:'op-k',job:undefined});assert(m.isBatchOp('op-k'));
+      await m.keepSlot(ref(0),'op-k');assert.deepEqual(m.slotInfo(ref(0)),{state:'active',op:'op-k',job:undefined},'repeating it changes nothing');
+      await m.command('cancelBatch',id);await m.keepSlot(ref(1),'op-late');assert.equal(m.slotInfo(ref(1)).op,undefined,'nothing binds to a cancelled batch');assert.equal(m.isBatchOp('op-late'),false);
+      await assert.rejects(m.enqueue({url:'https://media.test/l',filename:'l.png'},{op:'op-late'}),/CANCELLED/);
+    });
     // MANAGER-BATCH-PROGRESS-02: Pixiv and Pawchive groups use the same slots; "partial" (Pawchive) is only the boolean true, never a count of missing files
     {
       const e=env({jobs:[],paused:false});e.autoComplete=false;const m=createManager(e.d);await m.ready;
@@ -483,8 +700,9 @@ function env(stored={jobs:[],paused:false}) {
   {
     const e=env({jobs:[],paused:true}),m=createManager(e.d);await m.ready;const id=await m.openBatch('x',2);
     e.failWrite=()=>true;await assert.rejects(m.bindSlot({id,i:0},'op-uncommitted'),/STORAGE_FAILED/);e.failWrite=null;
-    assert.equal(m.batchOf('op-uncommitted'),undefined);
-    assert.equal(m.isBatchOp('op-uncommitted'),false,'a rejected binding cannot suppress an ordinary operation notice');
+    // F2: the operation keeps its slot although the write was refused: its result counts in the batch, whose card announces it (an ordinary notice would duplicate that card)
+    assert.equal(m.batchOf('op-uncommitted'),id);
+    assert.equal(m.isBatchOp('op-uncommitted'),true,'a rejected binding keeps the operation a batch member');
     const store=e.d.store.set;let entered,release;const writing=new Promise(r=>entered=r),gate=new Promise(r=>release=r);
     e.d.store.set=async value=>{entered();await gate;throw Error('STORAGE_FAILED');};
     const change=m.settleSlot({id,i:0},'failed').catch(e=>e.message);await writing;

@@ -137,6 +137,7 @@ function makeEnv({ session = {}, local = {}, downloadsDb = null, noNotifications
         const item = query && env.downloadsDb.get(query.id);
         return item ? [JSON.parse(JSON.stringify(item))] : [];
       },
+      cancel: async (id) => { const item = env.downloadsDb.get(id); if (item && item.state === 'in_progress') await env.finish(id, { state: 'interrupted', error: 'USER_CANCELED' }); },
       show: (id) => env.shown.push(id)
     },
     // a Russian browser UI with no saved language: notifications use the Russian catalogue (UI-LOCALIZATION-01)
@@ -2980,6 +2981,295 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       assert(s.batches.map((b) => b.site).sort().join() === 'pawchive,pawchive,pixiv' && s.batches.filter((b) => b.partial).length === 1, '34an: concurrent groups stay separate');
       await until(() => e.batchNotes().filter((x) => x.opts.final).length >= 3, 'three final cards');
       assert(new Set(e.batchNotes().map((x) => x.opts.batch)).size === 3 && ['Pawchive post', 'Pixiv post'].every((t) => e.batchNotes().some((x) => x.opts.title === t)), '34ao: one card per post with the right service label');
+    }
+
+    // ---- 35. Cancel remaining (MANAGER-BATCH-CANCEL-01): the trusted command route, the manager, the producers and the pipeline, connected ----
+    // Production: the Save all / Pixiv / Pawchive loops, onContextMenuClicked, the tracker, the durable queue, DOWNLOADS_COMMAND, the notice transport, statistics.
+    // Fixtures: the document's answers, offscreen staging, the browser's downloads and the media pipeline tail up to managedDownload.
+    console.log('\n--- 35. Cancel remaining: one batch, the rest of the work continues ---');
+    const POPUP_PAGE = { id: 'testid', url: 'chrome-extension://testid/popup/popup.html' };
+    const cmd = (e, command, id, sender = POPUP_PAGE) => new Promise((resolve) => { for (const cb of e.messageListeners) { if (cb({ action: 'DOWNLOADS_COMMAND', command, id }, sender, resolve) === true) return; } setTimeout(() => resolve(null), 50); });
+    const stats35 = async (e) => { await e.tracker.flush(); return new Promise((resolve) => { for (const cb of e.messageListeners) { if (cb({ action: 'STATISTICS_LIST' }, POPUP_PAGE, resolve) === true) return; } }); };
+    const downloadFor = (e, fragment) => [...e.downloadsDb.entries()].filter(([, item]) => String(item.url).includes(fragment));
+
+    // X1: a batch with a saved file, two exports in progress, a queued job, a preparation that has not reached the queue and an unstarted item; another post and a single save around it
+    {
+      const idbC = idbDouble();
+      const e = nworker({ indexedDB: idbC, local: { historyEnabled: true } });
+      e.sandbox.console.info = () => {};
+      await e.ready(); await e.manager.ready;
+      e.gates.set('IMG1', new Promise((resolve) => { e.openGate = resolve; }));
+      e.gates.set('IMGB0', new Promise((resolve) => { e.openGateB = resolve; }));
+      e.document('2090', [img(0), img(1), img(2), img(3), img(4), img(5)]);
+      e.document('2091', [img('B0'), img('B1')]);
+      const asked = [], inner = e.tabsMsgHandler;
+      e.tabsMsgHandler = async (tabId, msg) => { if (msg.action === 'X_INLINE_OWNER_ITEM' && tabId === 7) asked.push(msg.index); return inner(tabId, msg); };
+      e.saveAll(7, '2090');
+      await until(async () => { const s = await e.snapshot(); return s.jobs.length >= 1 && e.plan.includes(img(1)); }, 'first file exporting and one preparation held');
+      await e.finish(e.downloadsDb.keys().next().value);
+      await until(async () => { const s = await e.snapshot(), b = s.batches[0]; return b && b.saved === 1 && s.jobs.filter((j) => j.batch === b.id && j.managed !== false).length === 4; }, 'saved, two in progress and one queued');   // preparation rows (managed:false) come and go with the loop's pace: count the queue's own jobs
+      e.saveAll(8, '2091');
+      await until(() => e.plan.includes(img('B0')), 'the other post is preparing');
+      let b = (await summary(e, 'x'))[0];
+      assert(b.count === 6 && counts(b) === '1/0/0/0/5' && b.cancelRequested === undefined, `35a: before: one saved, five unfinished (${counts(b)})`);
+      const states = (await e.snapshot()).jobs.filter((j) => j.batch === b.id).map((j) => j.state).sort().join();
+      assert(/complete/.test(states) && /queued/.test(states), `35b: the saved file, running exports and a queued job (${states})`);
+      const requestsBefore = e.plan.length, downloadsBefore = e.downloadsDb.size;
+      // two quick clicks; the second is harmless
+      const [r1, r2] = await Promise.all([cmd(e, 'cancelBatch', b.id), cmd(e, 'cancelBatch', b.id)]);
+      assert(r1.success === true && r2.success === true, '35c: the trusted route accepts the command, a repeated click too');
+      assert((await e.manager.list()).batches.find((x) => x.id === b.id).cancelRequested === true, '35d: the accepted cancellation is in the committed batch record');
+      e.single = { url: img('S1'), tweet: '2090' }; e.saveOne(7, '2090');
+      e.openGate();                                          // the held preparation reaches the queue after the cancellation
+      // no download is finished by the test here: the cancellation itself must stop the two exports that are in progress (a completed export would win, which 35h and 35e would show)
+      await until(async () => { const x = (await summary(e, 'x')).find((y) => y.id === b.id); return counts(x) === '1/0/5/0/0'; }, 'cancelled batch settled');
+      b = (await summary(e, 'x')).find((y) => y.id === b.id);
+      assert(counts(b) === '1/0/5/0/0' && b.cancelRequested === true, `35e: one file saved, five cancelled, nothing left running (${counts(b)})`);
+      assert(!e.plan.slice(requestsBefore).includes(img(5)) && !e.plan.includes(img(5)), '35f: the unstarted item was never requested');
+      assert(Math.max(...asked) === 4 && !asked.includes(5), `35f2: the loop stopped asking the page for items once the cancellation was accepted (${asked})`);
+      const mine = (await e.snapshot()).jobs.filter((j) => j.batch === b.id);
+      assert(mine.length === 4 && mine.filter((j) => j.state === 'complete').length === 1 && mine.filter((j) => j.state === 'cancelled').length === 3, `35g: no job exists for the held preparation or the unstarted item; the saved file is untouched (${mine.map((j) => j.state)})`);
+      const mineDownloads = [...e.downloadsDb.values()].filter((x) => x.state === 'interrupted');
+      assert(mineDownloads.length === 2 && [...e.downloadsDb.values()].filter((x) => x.state === 'complete').length >= 1, '35h: the two exports that were still in progress were cancelled in the browser; the finished file was not');
+      const held = (await e.tracker.list()).filter((r) => r.state === 'cancelled');
+      assert(held.length === 4, `35i: the four operations of cancelled work end cancelled, not failed (${held.length})`);
+      await waitFinal(e, b.id, 'Saved 1 of 6 · 5 cancelled');
+      assert(e.batchNotes().filter((x) => x.opts.batch === b.id).every((x) => x.opts.title === 'x.com post'), '35j: the page notice follows the committed counts');
+      // the other post and the single save continue and finish
+      e.openGateB();
+      await finishLoop(e, async () => { const s = await e.snapshot(); const o = s.batches.find((x) => x.id !== b.id); return o && o.remaining === 0 && o.saved === 2 && s.jobs.some((j) => j.filename && !j.batch && j.state === 'complete'); }, 'other post and single save finished');
+      const other = (await e.snapshot()).batches.find((x) => x.id !== b.id);
+      assert(counts(other) === '2/0/0/0/0' && other.cancelRequested === undefined, '35k: another batch is untouched and completes');
+      const st = await stats35(e);
+      assert(st.stats.cancelled === 4 && st.stats.success === 1 + 2 + 1 && st.stats.total === 4 + 4, `35l: statistics count the operations that existed (4 cancelled, 4 saved); the batch action and the unstarted item add none (${JSON.stringify([st.stats.cancelled, st.stats.success, st.stats.total])})`);
+      // storage race: a refused write leaves everything as it was
+      const idbF = idbDouble();
+      const failB = nworker({ indexedDB: idbF, local: { historyEnabled: true } });
+      failB.sandbox.console.info = () => {};
+      await failB.ready(); await failB.manager.ready;
+      failB.gates.set('IMG1', new Promise(() => {}));
+      failB.document('2090', [img(0), img(1), img(2)]);
+      failB.saveAll(7, '2090');
+      await until(async () => failB.plan.includes(img(1)), 'preparation held');
+      const fb = (await summary(failB, 'x'))[0];
+      idbF.fail = true;
+      const refused = await cmd(failB, 'cancelBatch', fb.id);
+      assert(refused.success === false && !(await summary(failB, 'x'))[0].cancelRequested, '35m: a refused write is an error, not a cancellation');
+      const retry = await cmd(failB, 'cancelBatch', fb.id);
+      assert(retry.success === true && (await summary(failB, 'x'))[0].cancelRequested === true, '35n: the click can be repeated');
+      // popup close/reopen and worker restart: the accepted cancellation cannot be revived
+      const again = nworker({ indexedDB: idbC, session: e.session, local: e.local, downloadsDb: e.downloadsDb });
+      await again.ready(); await again.manager.ready;
+      const ab = (await summary(again, 'x')).find((x) => x.id === b.id);
+      assert(ab && counts(ab) === '1/0/5/0/0' && ab.cancelRequested === true && again.plan.length === 0 && again.downloadCalls.length === 0, '35o: after a restart the cancelled batch is unchanged and nothing was resumed or fetched');
+    }
+    // X2: the command route: only the extension's own pages, only an exact existing batch
+    {
+      const e = nworker({ local: { historyEnabled: true } });
+      e.sandbox.console.info = () => {};
+      await e.ready(); await e.manager.ready;
+      e.gates.set('IMG1', new Promise(() => {}));
+      e.document('2090', [img(0), img(1), img(2)]);
+      e.saveAll(7, '2090');
+      await until(async () => e.plan.includes(img(1)), 'held');
+      const bid = (await summary(e, 'x'))[0].id;
+      for (const sender of [{ id: 'evil', url: POPUP_PAGE.url }, { id: 'testid', url: 'https://x.com/someone/status/2090' }, { id: 'testid', url: 'chrome-extension://testid/offscreen.html' }, { id: 'testid', frameId: 0, tab: { id: 7 }, url: 'https://www.reddit.com/' }]) {
+        const r = await cmd(e, 'cancelBatch', bid, sender);
+        assert(r && r.success === false && r.error === 'FORBIDDEN', '35p: a page, a content script or a foreign sender cannot cancel');
+      }
+      assert(!(await summary(e, 'x'))[0].cancelRequested, '35q: nothing changed');
+      for (const bad of ['batch-nothere', '', 'x'.repeat(80), 7, null, (await e.snapshot()).jobs[0]?.id || 'job-x']) {
+        const r = await cmd(e, 'cancelBatch', bad);
+        assert(r && r.success === false, '35r: an unknown or malformed id is an error');
+      }
+      assert(!(await summary(e, 'x'))[0].cancelRequested && (await e.snapshot()).batches.length === 1, '35s: still nothing changed');
+    }
+
+    // PX: Pixiv, two preparations held, the loop waiting for a handler: the pages it has not started are never requested
+    {
+      const e = pworker(PXPAGE, { local: { historyEnabled: true } });
+      await e.ready(); await e.manager.ready;
+      e.gates.set('_p1.jpg', new Promise((resolve) => { e.open1 = resolve; })); e.gates.set('_p2.jpg', new Promise((resolve) => { e.open2 = resolve; }));
+      const run = e.pixiv([PX(0), PX(1), PX(2), PX(3), PX(4), PX(5)]);
+      await until(async () => e.plan.includes(PX(2)) && (await e.manager.list()).jobs.length === 1, 'one page exporting, two held');
+      await e.finish(e.downloadsDb.keys().next().value);
+      await until(async () => (await summary(e, 'pixiv'))[0]?.saved === 1, 'first page saved');
+      const b = (await summary(e, 'pixiv'))[0];
+      assert(counts(b) === '1/0/0/0/5', `35t: one saved, two held preparations, three not started (${counts(b)})`);
+      assert((await cmd(e, 'cancelBatch', b.id)).success === true, '35u: accepted');
+      assert(counts((await summary(e, 'pixiv'))[0]) === '1/0/3/0/2', '35v: the three unstarted pages are cancelled at once; the two held ones stay open until they stop');
+      e.open1(); e.open2(); await run;
+      const after = (await summary(e, 'pixiv'))[0];
+      assert(counts(after) === '1/0/5/0/0' && e.plan.length === 3 && !e.plan.includes(PX(3)), `35w: the held pages end cancelled, the loop stopped without requesting another page (${counts(after)}; ${e.plan.length} requested)`);
+      await waitFinal(e, b.id, 'Saved 1 of 6 · 5 cancelled');
+      assert(e.singleNotes().length === 0 && (await e.manager.list()).jobs.length === 1, '35x: no ordinary notice and no job for a cancelled page');
+    }
+    // PW: Pawchive partial post: the probe of the next original is in flight; no further file is probed or saved; the diagnostic and the partial flag stay
+    {
+      const e = pworker(PWCARD, { local: { historyEnabled: true } });
+      await e.ready(); await e.manager.ready;
+      e.gates.set(hexOf(1), new Promise((resolve) => { e.open1 = resolve; }));
+      const probe = e.fetchImpl; e.probeGate = new Promise((resolve) => { e.openProbe = resolve; });
+      e.fetchImpl = async (url) => { if (url.includes(hexOf(2))) await e.probeGate; return probe(url); };
+      const run = e.pawchive([PW(0), PW(1), PW(2), PW(3)], 'NOT_ARCHIVED_P1_V0');
+      await until(async () => e.plan.includes(PW(1)) && (await e.manager.list()).jobs.length === 1, 'one original exporting, one held, the next one being probed');
+      await e.finish(e.downloadsDb.keys().next().value);
+      await until(async () => (await summary(e, 'pawchive'))[0]?.saved === 1, 'first original saved');
+      const b = (await summary(e, 'pawchive'))[0];
+      assert(counts(b) === '1/0/0/0/3' && b.partial === true, `35y: one saved; one held, two not started; flagged partial (${counts(b)})`);
+      assert((await cmd(e, 'cancelBatch', b.id)).success === true && counts((await summary(e, 'pawchive'))[0]) === '1/0/2/0/1', '35z: accepted; the two unstarted originals are cancelled');
+      e.openProbe(); e.open1(); await run;
+      const after = (await summary(e, 'pawchive'))[0];
+      assert(counts(after) === '1/0/3/0/0' && after.partial === true && after.cancelRequested === true && !e.plan.includes(PW(2)) && !e.plan.includes(PW(3)), `35aa: nothing more was saved; the partial flag is unchanged (${counts(after)})`);
+      const diag = (await e.tracker.list()).filter((r) => r.failure && r.failure.code === 'NOT_ARCHIVED_P1_V0');
+      assert(diag.length === 1 && !e.manager.isBatchOp(diag[0].id), '35ab: the NOT_ARCHIVED diagnostic is still reported once, outside the slots');
+      await waitFinal(e, b.id, 'Saved 1 of 4 · 3 cancelled · some originals not imported');
+      assert((await e.manager.list()).jobs.length === 1, '35ac: no job was created after the cancellation');
+    }
+    // retry after a cancellation: explicit and per file; the cancelled producer and the other slots are not restarted
+    {
+      const e = pworker(PXPAGE, { local: { historyEnabled: true } });
+      await e.ready(); await e.manager.ready;
+      e.stagingFails.add('_p0.jpg');
+      e.gates.set('_p1.jpg', new Promise((resolve) => { e.open1 = resolve; }));
+      const run = e.pixiv([PX(0), PX(1), PX(2)]);
+      await until(async () => (await summary(e, 'pixiv'))[0]?.failed === 1 && e.plan.includes(PX(1)), 'one page failed, one held');
+      const b = (await summary(e, 'pixiv'))[0];
+      assert((await cmd(e, 'cancelBatch', b.id)).success === true, '35ad: accepted');
+      e.open1(); await run;
+      e.stagingFails.clear();
+      const failedJob = (await e.snapshot()).jobs.find((j) => j.state === 'failed' && j.batch === b.id);
+      const planBefore = e.plan.length;
+      assert(failedJob && (await cmd(e, 'retry', failedJob.id)).success === true, '35ae: the supported per-file retry is accepted after the cancellation');
+      await finishLoop(e, async () => (await summary(e, 'pixiv'))[0].saved === 1, 'retry saved');
+      const r = (await summary(e, 'pixiv'))[0];
+      assert(counts(r) === '1/0/2/0/0' && e.plan.length === planBefore, `35af: only the retried page was saved; the cancelled pages stayed cancelled and were not requested again (${counts(r)})`);
+    }
+    // F1 (correction): the same production path under a delayed cleanup reply and a refused binding write
+    {
+      // offscreen staging: files whose address matches `held` wait for the cancellation signal; the cleanup reply (STAGING_ABORT without an attempt id) is held until opened
+      const holdStaging = (e, held) => {
+        const calls = [], waiting = new Map(); let openCleanup; const gate = new Promise((resolve) => { openCleanup = resolve; });
+        const base = e.staging;
+        e.staging = async (msg) => {
+          if (msg.action === 'STAGING_PREPARE') { calls.push(msg.job.source); if (held(msg.job.source)) return new Promise((resolve) => waiting.set(msg.job.id, resolve)); }
+          if (msg.action === 'STAGING_ABORT') { if (!msg.attempt) await gate; waiting.get(msg.id)?.({ success: false, error: 'CANCELLED' }); return { success: true }; }
+          return base(msg);
+        };
+        return { calls, openCleanup };
+      };
+      const refuseBind = (e, slotIndex) => { const real = e.manager.bindSlot.bind(e.manager); e.manager.bindSlot = async (ref, op) => { if (ref.i === slotIndex) throw new Error('STORAGE_FAILED'); return real(ref, op); }; };
+      // a single save of the same host holds one of the two transfers of the host: of the batch, one file is receiving and one waits in the queue; the first cleanup reply is slow after the cancellation was committed
+      {
+        const e = pworker(PXPAGE, { local: { historyEnabled: true } });
+        await e.ready(); await e.manager.ready;
+        const s = holdStaging(e, (src) => /150000002_p0|150000001_p0/.test(src));
+        e.pixiv([PX(0, '150000002')], '150000002');
+        await until(() => s.calls.length === 1, 'the single save is receiving');
+        const run = e.pixiv([PX(0), PX(1)]);
+        await until(async () => s.calls.length === 2 && (await e.manager.list()).jobs.some((j) => j.state === 'queued'), 'one batch file receiving, the other queued');
+        const id = (await summary(e, 'pixiv')).find((x) => x.count === 2).id, mine = async () => (await summary(e, 'pixiv')).find((x) => x.id === id);
+        const cancelling = cmd(e, 'cancelBatch', id);
+        await until(async () => (await mine()).cancelRequested === true, 'cancellation committed');
+        await sleep(150);
+        assert(s.calls.length === 2 && e.downloadCalls.length === 0, `35ag: the queued file was neither staged nor exported while the first cleanup reply was slow (${s.calls.length} staged, ${e.downloadCalls.length} exported)`);
+        s.openCleanup();
+        const r = await cancelling; await run;
+        const b = await mine(), other = (await e.snapshot()).jobs.find((j) => j.batch !== id);
+        assert(r.success === true && counts(b) === '0/0/2/0/0' && s.calls.length === 2 && e.downloadCalls.length === 0, `35ah: the slow cleanup then finishes the cancellation; nothing was started, saved or exported (${counts(b)})`);
+        assert(other && other.state === 'receiving' && !(await summary(e, 'pixiv')).find((x) => x.id !== id).cancelRequested, '35ai: the other save of the host is untouched');
+      }
+      // the binding write of one item is refused, then its batch is cancelled before its preparation reaches the queue
+      {
+        const e = pworker(PXPAGE, { local: { historyEnabled: true } });
+        await e.ready(); await e.manager.ready;
+        refuseBind(e, 1);
+        e.gates.set('_p1.jpg', new Promise((resolve) => { e.open1 = resolve; }));
+        const run = e.pixiv([PX(0), PX(1)]);
+        await until(async () => e.plan.includes(PX(1)) && (await e.manager.list()).jobs.length === 1, 'one file exporting, the other prepared but not queued');
+        const id = (await summary(e, 'pixiv'))[0].id;
+        assert((await cmd(e, 'cancelBatch', id)).success === true, '35aj: the batch is cancelled');
+        e.open1(); await run;
+        await until(async () => (await e.snapshot()).jobs.some((j) => j.batch === id && j.state === 'cancelled'), 'the export in progress was cancelled');
+        await e.tracker.flush();
+        const snap = await e.snapshot(), b = (await summary(e, 'pixiv'))[0];
+        assert(counts(b) === '0/0/2/0/0' && snap.jobs.length === 1 && e.downloadCalls.length === 1, `35ak: the late preparation neither exported nor became an ungrouped file (${counts(b)}; ${snap.jobs.length} jobs, ${e.downloadCalls.length} exports)`);
+        assert((await e.tracker.list()).filter((x) => x.state === 'cancelled').length === 2, '35al: its operation ended cancelled');
+      }
+      // the same refused write without a cancellation: the file still joins its slot and is counted in the batch
+      {
+        const e = pworker(PXPAGE, { local: { historyEnabled: true } });
+        await e.ready(); await e.manager.ready;
+        refuseBind(e, 1);
+        await runGroup(e, 'pixiv', () => e.pixiv([PX(0), PX(1)]));
+        const snap = await e.snapshot(), b = snap.batches[0];
+        assert(counts(b) === '2/0/0/0/0' && snap.jobs.length === 2 && snap.jobs.every((j) => j.batch === b.id), `35am: no ungrouped job: the file whose binding write was refused is saved in its batch (${counts(b)})`);
+      }
+      // F2: each case reports its own failure and the next one still runs
+      const guard = async (name, fn) => { try { await fn(); } catch (x) { assert(false, `${name}: ${x.message}`); } };
+      // F2: a refused binding write keeps the preparation's batch through the normal snapshot pruning (the cancel command's own response included); its late preparation is refused
+      await guard('35an-35aq', async () => {
+        const e = pworker(PXPAGE, { local: { historyEnabled: true } });
+        await e.ready(); await e.manager.ready;
+        refuseBind(e, 0);
+        e.gates.set('_p0.jpg', new Promise((resolve) => { e.open0 = resolve; }));
+        const run = e.pixiv([PX(0)]);
+        await until(() => e.plan.includes(PX(0)), 'the only page is preparing');
+        const id = (await summary(e, 'pixiv'))[0].id;
+        const r = await cmd(e, 'cancelBatch', id);
+        assert(r.success === true && r.batches.some((x) => x.id === id && x.remaining === 1 && x.cancelRequested === true && x.cancelling === true), `35an: the cancel command's own snapshot still lists the batch whose preparation is unfinished (${JSON.stringify(r.batches)})`);
+        assert((await e.snapshot()).batches.some((x) => x.id === id), '35ao: so does an ordinary refresh');
+        e.open0(); await run; await e.tracker.flush();
+        const snap = await e.snapshot(), st = (await e.stats()).stats;
+        assert(e.downloadCalls.length === 0 && snap.jobs.length === 0, `35ap: the late preparation neither exported nor became an ungrouped file (${e.downloadCalls.length} exports, ${snap.jobs.length} rows)`);
+        assert(st.cancelled === 1 && st.success === 0 && st.failed === 0 && e.singleNotes().length === 0, `35aq: its operation ended cancelled in the statistics, with no ordinary notice (${JSON.stringify([st.cancelled, st.success, st.failed])}; ${e.singleNotes().length} notices)`);
+        await waitFinal(e, id, 'Saved 0 of 1 · 1 cancelled');
+      });
+      // F2: a failure before the queue (a real probe failure) of an operation whose binding write was refused is that slot's real result: rows, counts, notice and statistics agree
+      for (const cancel of [false, true]) await guard('35ar-35av ' + cancel, async () => {
+        const e = pworker(PXPAGE, { local: { historyEnabled: true } });
+        await e.ready(); await e.manager.ready;
+        refuseBind(e, 1);
+        let release, entered = false;
+        const gate = new Promise((resolve) => { release = resolve; }), verify = e.sandbox.verifyFinalMediaMime;
+        e.sandbox.verifyFinalMediaMime = async (url, plan, ...args) => { if (url === PX(1)) { entered = true; await gate; plan._probeFailed = true; plan._probeNetworkError = 'NETWORK_ERROR'; return null; } return verify(url, plan, ...args); };
+        const run = e.pixiv([PX(0), PX(1)]);
+        await until(() => entered, 'the second MIME probe entered');
+        await finishLoop(e, async () => (await summary(e, 'pixiv'))[0]?.saved === 1, 'the first page saved');
+        const id = (await summary(e, 'pixiv'))[0].id;
+        if (cancel) assert((await cmd(e, 'cancelBatch', id)).success === true, `35ar ${cancel}: accepted while the probe runs`);
+        release();
+        await finishLoop(e, async () => (await summary(e, 'pixiv'))[0]?.remaining === 0, 'settled'); await run;
+        await e.tracker.flush(); await sleep(100);
+        const snap = await e.snapshot(), b = snap.batches[0], st = (await e.stats()).stats, records = await e.tracker.list();
+        assert(snap.batches.length === 1 && counts(b) === '1/1/0/0/0' && (b.cancelRequested === true) === cancel, `35as ${cancel}: the group counts the real failure of its page, not a skip or a cancellation (${counts(b)})`);
+        assert(snap.jobs.length === 2 && snap.jobs.every((j) => j.batch === b.id) && snap.jobs.some((j) => j.managed === false && j.state === 'failed' && j.error === 'NETWORK_ERROR'), `35at ${cancel}: the failed page's row belongs to its group (${JSON.stringify(snap.jobs.map((j) => [j.state, j.batch, j.managed]))})`);
+        assert(records.every((x) => e.manager.isBatchOp(x.id)) && st.success === 1 && st.failed === 1 && st.cancelled === 0, `35au ${cancel}: statistics count the same terminal result (${JSON.stringify([st.success, st.failed, st.cancelled])})`);
+        await waitFinal(e, b.id, 'Saved 1 of 2 · 1 failed');
+        assert(e.singleNotes().length === 0, `35av ${cancel}: no ordinary notice duplicates the group's card (${e.singleNotes().map((x) => x.opts.title)})`);
+      });
+      // F2: a cancellation whose write is delayed and then refused does not strand a rate-limited queued file: the queue goes on by itself, without Pause/Resume
+      await guard('35aw-35ay', async () => {
+        const idb = idbDouble();
+        const e = pworker(PXPAGE, { indexedDB: idb, local: { historyEnabled: true } });
+        await e.ready(); await e.manager.ready;
+        const base = e.staging; let limited = false, prepares = 0;
+        e.staging = async (msg) => { if (msg.action === 'STAGING_PREPARE') prepares++; if (msg.action === 'STAGING_PREPARE' && !limited) { limited = true; return { success: false, error: 'RATE_LIMIT', retryAt: Date.now() + 250 }; } return base(msg); };
+        const run = e.pixiv([PX(0)]);
+        await until(async () => (await e.manager.list()).jobs.some((j) => j.state === 'queued' && j.error === 'RATE_LIMIT'), 'the file waits for its rate-limit deadline');
+        const id = (await summary(e, 'pixiv'))[0].id;
+        idb.hold = true;
+        const cancelling = cmd(e, 'cancelBatch', id);
+        await until(() => idb.commits.length > 0, 'the intent write is pending');
+        await sleep(1300);                                                   // the deadline passes and the queue wakes while the intent is only tentative
+        assert(prepares === 1 && e.downloadCalls.length === 0, `35aw: nothing was admitted on the tentative intent (${prepares} preparations, ${e.downloadCalls.length} exports)`);
+        idb.hold = false; idb.fail = true; for (const commit of idb.commits.splice(0)) commit();
+        const r = await cancelling;
+        assert(r.success === false && !(await e.manager.list()).batches[0].cancelRequested, '35ax: the refused write is an error and leaves no intent');
+        await finishLoop(e, async () => (await summary(e, 'pixiv'))[0]?.saved === 1, 'the file saved by itself');
+        assert((await e.manager.list()).paused === false && e.downloadCalls.length === 1, '35ay: it went on without Pause, Resume or another click');
+        await run;
+      });
     }
   }
 
