@@ -1,6 +1,6 @@
 # Release preparation
 
-The current GitHub pre-release is v2.5.2. It includes the reviewed project organization, original sidebar without category captions, optional Instagram `kkclip.com` previews and scoped media-request guards. GitHub release assets contain only the runtime ZIP, SHA-256 file and per-file provenance JSON. Chrome Web Store artwork and upload materials are kept separately. Store preparation, submission and approval are separate states; this document does not claim store approval or complete browser acceptance.
+The current GitHub pre-release is v2.5.3. It includes shared post-batch progress/notices for X, Reddit, Pixiv and Pawchive, compact per-site statistics with preserved totals, and clearer download-row actions. Existing organization, preview hosts and request guards remain. GitHub release assets contain only the runtime ZIP, SHA-256 file and per-file provenance JSON. Chrome Web Store artwork and upload materials are kept separately. Store preparation, submission and approval are separate states; this document does not claim store approval or complete browser acceptance.
 
 ## Build and package
 
@@ -35,7 +35,7 @@ Privacy URL: https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md
 
 Support URL: https://github.com/xhthc/MediaLatch/issues
 
-The v2.5.2 preview keeps the Explorer companion, folder-location controls and native messaging permission removed. It includes the redesigned four-theme interface, compact Embed grid, violet gradient branding, reviewed refactor, first-install welcome, theme icons, author folders for x.com/Reddit/Pixiv and selected-media scroll continuity. Saving to a selected directory remains browser-only. Validate the exact committed runtime ZIP, including imported worker modules; no companion archive is produced. Limited user Helium checks and isolated startup/UI/statistics migration checks passed; exhaustive crash/restart, quota, codecs/audio and store approval remain separate gates.
+The v2.5.3 preview keeps the Explorer companion, folder-location controls and native messaging permission removed. It retains the four-theme interface, compact Embed grid, branding, first-install welcome, theme icons, author folders and selected-media continuity. New group summaries/notices and site counters preserve those settings and workflows. Saving to a selected directory remains browser-only. Validate the exact committed runtime ZIP, including imported worker modules; no companion archive is produced. Limited user Helium checks and isolated startup/UI/statistics migration checks passed; exhaustive crash/restart, quota, codecs/audio and store approval remain separate gates.
 
 ## Permission and privacy disclosures
 
@@ -45,7 +45,9 @@ All executed JavaScript and binary-processing libraries are bundled locally. Git
 
 ## Validation and remaining store gates
 
-The 2.5.2 runtime passed 77 combined checks and an exact-ZIP disposable Helium check: startup, actual PNG byte equality, saved settings, four themes in both languages and worker/popup command refusals. Production dependency advisory counts were zero at the preparation check. Security review remains scoped: literal-private admission, refused unchecked redirects and bounded Zerochan metadata do not establish DNS-rebinding protection or a full security audit. User-reported live X/Reddit/RedGIFs checks predate the final guards; repetition and Google Chrome coverage remain separate.
+The accepted feature source passed 77 combined checks on GitHub at cf48814017c8cfb381bdb73e93d13b03ff122bf3. Independent reviews and disposable Helium fixtures cover batch accounting/retry/restart, exact PNG export bytes, statistics migration/clear/failures and localized layouts. The user confirmed X/Reddit batches, preserved overall/site totals and live Pixiv/Pawchive files/results in Helium. The 2.5.3 change adds release version/documentation/captures; exact committed ZIP validation is recorded separately. Earlier 2.5.2 exact-ZIP startup/settings/theme/sender tests remain historical evidence, not a substitute for the new artifact check. Broad audio/codec, native quota/crash, Google Chrome, DNS rebinding and full security certification remain unclaimed.
+
+The user reports that 2.5.2 was submitted to Chrome Web Store. This GitHub 2.5.3 publication does not change that submitted archive, its review status or the listing; a store update needs its own submission. GitHub releases contain only the runtime ZIP, SHA-256 and source/per-file provenance JSON.
 
 - Inspect final-package code/CSP, all privileged message/job boundaries, URL/redirect/private-network admission, resource limits, minimum permissions and dependencies/supply-chain integrity. The scoped release review is not a complete security audit.
 - Load the exact runtime ZIP in a clean Chromium profile. Confirm installation, permissions, popup/settings/history, unchanged first-click Save media and actual saved files.

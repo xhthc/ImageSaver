@@ -3,14 +3,14 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.2"><img src="https://img.shields.io/badge/pre--release-v2.5.2-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.2"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.3"><img src="https://img.shields.io/badge/pre--release-v2.5.3-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.3"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.2"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.3"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
     <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Chrome Web Store distribution planned; not yet available">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
@@ -19,13 +19,13 @@
 
 MediaLatch (formerly Image Saver) saves accessible original images, videos and GIFs directly from your browser. Choose the media you want, follow the save in the download manager and find the file where you expect it. No companion application is needed.
 
-> **Current pre-release: [v2.5.2](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.2).** Includes the refined interface, optional Instagram `kkclip.com` preview links and tighter media-request checks. [What changed](CHANGELOG.md).
+> **Current pre-release: [v2.5.3](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.3).** Adds post-batch progress and updating notices for X, Reddit, Pixiv and Pawchive, plus compact site statistics. [What changed](CHANGELOG.md).
 
 | What you want to do | What MediaLatch offers |
 |---|---|
 | Save selected media | Context-menu actions and inline controls on supported sites |
 | Keep files organized | One folder, site/type folders or optional X, Reddit and Pixiv author folders |
-| Follow each download | Progress, cancellation, supported retries and clear error explanations |
+| Follow each download | Per-file progress, post-batch totals, cancellation, retries and clear errors |
 | Make it yours | Violet, Blue, Dark and Light themes; English and Russian |
 | Keep records on this device | Opt-in local statistics and Debug; no analytics or automatic report upload |
 
@@ -43,7 +43,7 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 <table>
   <tr>
     <td width="50%"><img src="docs/assets/welcome.png" alt="Violet welcome screen: three short steps and one Continue button"><br><strong>Start in three steps</strong><br>A fresh install opens a short welcome screen once; Continue opens the Saving settings.</td>
-    <td width="50%"><img src="docs/assets/downloads.png" alt="Redesigned download manager showing three completed public PNG saves"><br><strong>Follow every download</strong><br>Progress, cancel, retry and plain-language failure explanations with the technical code.</td>
+    <td width="50%"><img src="docs/assets/downloads.png" alt="Current download manager showing a neutral Pixiv batch fixture"><br><strong>Follow every download</strong><br>Per-file progress and actions, post-batch totals and readable failure explanations.</td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/assets/settings-saving.png" alt="Violet Saving settings: destination, organization and example path"><br><strong>Choose where files go</strong><br>Destination, optional subfolder, author folders and a live path example.</td>
@@ -51,9 +51,11 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
   </tr>
 </table>
 
+![Local statistics with a compact site selector](docs/assets/statistics.png)
+
 </details>
 
-The screenshots and illustrated cards use the actual v2.5.1 interface captured in an isolated Chromium profile; these screens remain representative of v2.5.2. Three neutral public PNG files from this repository were saved and their exported bytes verified; folder settings were configured for the demonstration. Violet by default, with English/Russian localization and transitions that respect reduced motion.
+The download-manager and statistics captures show the v2.5.3 pages with neutral fixture data in an isolated Chromium profile; they illustrate the UI, not a live provider session. The welcome, settings and illustrated cards retain their v2.5.1 captures. Separate export-byte and user-reported browser checks are described below.
 
 ---
 
@@ -77,7 +79,7 @@ A fresh install opens a separate welcome screen with three short steps. **Contin
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.2-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.3-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -112,13 +114,15 @@ The current preview covers the workflows below. Availability depends on the page
 - Compact popup with wheel/keyboard scrolling, hidden scrollbar and one clear action for finished records; individual removal and details stay in the full manager.
 - Download manager with received/total bytes, speed and approximate remaining time when measurable. Complete files are staged locally before browser export; failed export can retry from retained bytes without another source download.
 
+Post batches on X, Reddit, Pixiv and Pawchive show saved, failed, cancelled, skipped and remaining items separately. Retry updates the same item; only confirmed export counts as saved. A partial Pawchive post qualifies the available-item result rather than claiming every original was saved. Terminal record removal is inside the expanded details in the full manager.
+
 ### Settings and diagnostics
 
 ![Your color, your language: Violet, Blue, Dark and Light with English and Russian](docs/assets/overview-themes.png)
 
-- Own MediaLatch notices on the source page, grouping bulk saves into one card with success/error counts, dismiss/manager buttons and synchronized themes. Closed or navigated tabs cannot display them; results and the failure badge remain in the extension. Success notices can be switched off independently.
+- One updating page notice per X/Reddit post batch, multi-page Pixiv artwork or multi-original Pawchive post, using the same counts as the manager. Single saves retain their existing notices; partial Pawchive imports keep their specific error. Closed or navigated tabs cannot display them; results and the failure badge remain in the extension. Success notices can be switched off independently.
 - Violet by default, with Blue, Dark and Light themes and matching MediaLatch icons in the interface and toolbar. Saved choices apply across the popup, settings and notices; existing preferences are preserved. Brief animations respect reduced motion.
-- Opt-in local statistics without an entry count or time limit, with recording and clear controls. Available old history is imported once; expired or removed records cannot be reconstructed.
+- Opt-in local statistics with All sites and only recorded services in the selector; Booru boards share one view. Totals and available old history are preserved without inventing historical attribution. Recording and clear apply to every site; clearing never deletes saved files.
 - Opt-in local Debug journal with filters, copy/export and clear controls: up to 2,000 events, 1 MiB and 24 hours. Full URLs, tokens, page text and local paths are excluded.
 - Supported post-link copying on X, Instagram, TikTok and YouTube Shorts, with optional preview-link hosts. Choose the service per platform; copying a link itself does not contact that service.
 - GitHub release checks manually or on opening Updates, at most daily. Downloaded extension code is not installed automatically.
@@ -179,11 +183,11 @@ GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output
 There is no telemetry or extension backend. Statistics and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
 
 <details>
-<summary>Validation and request safeguards in 2.5.2</summary>
+<summary>Validation and request safeguards in 2.5.3</summary>
 
 Privileged offscreen commands require the extension worker. Public selected pages cannot supply literal local/private-network media addresses, and unchecked server redirects are refused; deliberately selected local pages retain local media access. These restrictions can refuse redirect-dependent links and do not provide DNS-rebinding protection. Zerochan JSON uses a 2 MiB streaming limit with a full three-second deadline.
 
-The release includes the reviewed UI cleanup, module/fixture organization and scoped security fixes. Verification passed 77 checks with targeted fixture reruns. The exact runtime ZIP passed isolated Helium startup, real PNG byte comparison, settings persistence, all four themes in English/Russian and privileged-message refusal checks. User-reported X, Reddit and RedGIFs saves passed in Helium before the final security changes; repetition on the corrected build remains pending. Google Chrome, exhaustive audio, crash/restart and quota coverage are not established.
+The accepted batch/statistics source passed 77 automated checks on GitHub. Independent reviews and isolated Helium fixtures cover committed batch counts, retry/restart, downloaded PNG bytes, statistics migration and clear/error behavior. The user confirmed X/Reddit batches, preserved totals and live Pixiv/Pawchive results in Helium. Version packaging is checked separately; fixtures do not establish every live layout, Google Chrome, exhaustive audio, crash or quota behavior.
 
 </details>
 
@@ -197,7 +201,8 @@ Statuses distinguish implemented features from future work. They describe direct
 |---|---|---|
 | Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Booru families included in this preview; reported manual board checks passed, access/layout limits remain; image-result discovery planned |
 | Controls and selection | Small universal inline controls and optional post/media multi-selection | Planned |
-| Download manager | Extend the implemented file queue to paced post resolution, batch totals and proven transfer resume | File queue in preview; remaining work planned |
+| Download manager | File queue, per-post totals and updating notices; later deferred post resolution and proven transfer resume | Queue and X/Reddit/Pixiv/Pawchive summaries included; deferred resolution and source-range resume remain planned |
+| Local statistics | Compact per-site views with shared Booru totals and preserved historical counts | Included; global opt-in and clear, user-reported migration/count checks passed in Helium |
 | Complete-file staging | Disk-backed acquisition/validation before export and local retry; broaden native restart, quota and media checks | Included in preview; ordinary Helium checks passed, stress checks pending |
 | Batch archives | Selected-post/page batches, ZIP first; 7z only if a practical bounded implementation is justified | Planned |
 | Destination and naming | Writable base-directory selection, flat/site/type layouts and x.com/Reddit/Pixiv author folders | Included; reported flat and author-folder checks passed in Helium; broader permission-recovery checks remain |

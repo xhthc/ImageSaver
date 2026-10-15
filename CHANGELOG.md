@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.5.3 — post-batch progress and site statistics
+
+- Show one durable post summary in both managers for X/Reddit Save all, multi-page Pixiv artworks and multi-original Pawchive posts. Saved, failed, cancelled, skipped and remaining counts stay distinct; retries update the existing item.
+- Keep one updating notice per post using committed manager counts. Partial Pawchive imports retain their unavailable-original diagnostic and never claim all post files were saved.
+- Add compact local site statistics: populated services only, one Booru view, preserved all-time totals and conservative legacy attribution. Recording and clear remain global.
+- Preserve known owning-service attribution through queued retries and worker recovery, including prepared outputs after recent feedback expires.
+- Remove the repeated download-row tooltip/hover overlay and move terminal record removal into the full manager's expanded details.
+- Refresh EN/RU release documentation, roadmap status and neutral downloads/statistics captures. Permissions, dependencies and provider admission rules are unchanged.
+
+This remains a pre-release. The accepted feature code passed 77 GitHub checks, independent source reviews, isolated native byte/restart checks and bounded user Helium acceptance for X/Reddit batches, statistics and live Pixiv/Pawchive results. These do not establish exhaustive provider/audio, Google Chrome, quota or crash coverage. The submitted Chrome Web Store 2.5.2 package is a separate, unchanged build.
+
 ## 2.5.2 — media request guards and project cleanup
 
 - Include the reviewed interface cleanup and project file organization while preserving download workflows and stored preferences.
