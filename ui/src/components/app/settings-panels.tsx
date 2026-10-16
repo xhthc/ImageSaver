@@ -1,15 +1,15 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ArrowUpCircle, CheckCircle2, ChevronDown, CircleDot, CircleHelp, ExternalLink, Folder, FolderOpen, LoaderCircle, PackageCheck, RotateCcw, Save, TriangleAlert } from "lucide-react"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Panel, SectionHeader, SettingRow } from "@/components/app/section"
 import { createSettings } from "@/core/settings.js"
 import { createUpdates, isNewer, RELEASES_URL } from "@/core/updates.js"
@@ -344,11 +344,57 @@ const EMBED_FIELDS = [
   },
 ] as const
 
+/**
+ * The question icon beside a share-host label: a floating bubble (portal, so the grid, the selects and the Save bar never move).
+ * Radix opens it on hover and keyboard focus and closes it on Escape; it ignores touch and closes on a press, so the press
+ * toggles it explicitly: a tap, Enter or Space opens a closed bubble and closes an open one.
+ */
+function EmbedHelp({ label, hint }: { label: string; hint: string }) {
+  const { t } = useI18n()
+  const [open, setOpen] = useState(false)
+  const wasOpen = useRef(false) // the bubble's state when the current press began (Radix closes an open bubble on press)
+  const trigger = useRef<HTMLButtonElement>(null), content = useRef<HTMLDivElement>(null)
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const cancelLeave = () => clearTimeout(leaveTimer.current)
+  // Radix can miss the last move after a fast exit; recheck hover after the icon-to-bubble grace period.
+  const checkLeave = (e: React.PointerEvent) => {
+    if (e.pointerType !== "mouse") return
+    cancelLeave()
+    leaveTimer.current = setTimeout(() => {
+      if (!trigger.current?.matches(":hover, :focus-visible") && !content.current?.matches(":hover")) setOpen(false)
+    }, 180)
+  }
+  useEffect(() => () => clearTimeout(leaveTimer.current), [])
+  useEffect(() => { if (!open) clearTimeout(leaveTimer.current) }, [open])
+  return (
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t("embed.help") + ": " + label}
+          className="not-data-[state=closed]:text-ring pointer-coarse:size-11"
+          ref={trigger}
+          onPointerEnter={cancelLeave}
+          onPointerLeave={checkLeave}
+          onPointerDown={() => { wasOpen.current = open }}
+          onClick={(e) => { e.preventDefault(); setOpen(!(e.detail ? wasOpen.current : open)) }}
+        >
+          <CircleHelp aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent ref={content} onPointerEnter={cancelLeave} onPointerLeave={checkLeave} side="top" collisionPadding={8} className="max-w-[min(20rem,var(--radix-tooltip-content-available-width))] leading-[18px]">
+        {hint}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 /** "Embed": the four share hosts. Edited here, written by the explicit save action. */
 export function EmbedPanel({ settings }: { settings: SettingsController }) {
   const s: any = useStore(settings.store)
   const { t } = useI18n()
-  const [help, setHelp] = useState<string | null>(null)
   // a catalogue key is translated with its host; a fixed service name is shown as it is
   const optionText = (host: string, text: string) => (text.startsWith("embed.") ? t(text, { host }) : text)
   return (
@@ -358,17 +404,13 @@ export function EmbedPanel({ settings }: { settings: SettingsController }) {
       <Panel>
         <div className="grid grid-cols-1 gap-x-6 gap-y-4 p-4 sm:p-5 @min-[36rem]:grid-cols-2">
           {EMBED_FIELDS.map((f) => (
-            <Collapsible key={f.key} className="min-w-0" open={help === f.key} onOpenChange={(open) => setHelp(open ? f.key : null)}>
+            <div key={f.key} className="min-w-0">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <Label htmlFor={f.id}>{t(f.label)}</Label>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label={t("embed.help") + ": " + t(f.label)} className="data-[state=open]:text-ring pointer-coarse:size-11">
-                    <CircleHelp aria-hidden="true" />
-                  </Button>
-                </CollapsibleTrigger>
+                <EmbedHelp label={t(f.label)} hint={t(f.hint)} />
               </div>
               <Select value={s[f.key]} onValueChange={(v) => settings.setField(f.key, v)} disabled={!s.loaded}>
-                <SelectTrigger id={f.id} className="w-full" aria-describedby={help === f.key ? f.id + "Hint" : undefined}>
+                <SelectTrigger id={f.id} className="w-full">
                   <SelectValue>{s[f.key]}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
@@ -379,10 +421,7 @@ export function EmbedPanel({ settings }: { settings: SettingsController }) {
                   ))}
                 </SelectContent>
               </Select>
-              <CollapsibleContent className="pt-2">
-                <Hint id={f.id + "Hint"}>{t(f.hint)}</Hint>
-              </CollapsibleContent>
-            </Collapsible>
+            </div>
           ))}
         </div>
       </Panel>

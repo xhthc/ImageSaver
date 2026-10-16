@@ -23,7 +23,7 @@ export function LanguageSelect() {
     <div className="flex flex-col items-end gap-1" data-slot="language">
       <div className="flex items-center gap-2">
         <Languages className="size-4 text-muted-foreground" aria-hidden="true" />
-        <Label htmlFor="languageSelect" className="text-xs font-normal text-muted-foreground max-sm:sr-only">
+        <Label htmlFor="languageSelect" className="pointer-events-none text-xs font-normal text-muted-foreground max-sm:sr-only">
           {t("lang.label")}
         </Label>
         <Select value={s.lang} disabled={!s.ready || s.saving} onValueChange={(v) => { void language!.setLanguage(v) }}>

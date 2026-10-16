@@ -503,14 +503,22 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     const ids = ['xShareHostSelect', 'igShareHostSelect', 'ttShareHostSelect', 'youtubeShareHostSelect'];
     assert(ids.every((id) => { const t = p.q(`#${id}`); return t && t.getAttribute('role') === 'combobox' && p.q(`label[for="${id}"]`); }), 'R7q: the four share-host selects are labelled comboboxes');
     assert(ids.map((id) => p.q(`#${id}`).textContent).join('|') === 'fixupx.com|oginstagram.com|tnktok.com|koutube.com', 'R7r: missing preferences select the four preview defaults');
-    const helps = p.qa('[data-slot="embed"] [data-slot="collapsible-trigger"]');
-    assert(helps.length === 4 && helps.every((h, i) => h.getAttribute('aria-expanded') === 'false' && h.getAttribute('aria-label').includes(p.q('label[for="' + ids[i] + '"]').textContent)) && /Копировать ссылку/.test(p.q('[data-slot="embed"]').textContent) && /сторонние сервисы/.test(p.q('[data-slot="embed"]').textContent) && p.q('#settingsSaveBar'), 'R7s: each platform has labelled collapsed help; third-party/scope note and explicit save remain visible');
-    await p.click(helps[0]);
-    assert(helps[0].getAttribute('aria-expanded') === 'true' && p.q('#xShareHostSelectHint').textContent.includes('cunnyx.com') && !p.q('#ttShareHostSelectHint') && p.q('#xShareHostSelect').getAttribute('aria-describedby') === 'xShareHostSelectHint', 'R7s1: X help explains only its services and describes the associated select');
+    // the help is a floating Radix bubble (portal): nothing in the grid is a disclosure any more
+    const helps = p.qa('[data-slot="embed"] button[aria-label]');
+    const bubbles = () => p.qa('[data-slot="tooltip-content"]');
+    const focusHelp = async (el) => { await p.U.act(async () => { el.focus(); await sleep(0); }); await p.settle(3); };
+    assert(helps.length === 4 && helps.every((h, i) => !h.hasAttribute('aria-expanded') && h.getAttribute('aria-label').includes(p.q('label[for="' + ids[i] + '"]').textContent)) && !p.q('[data-slot="embed"] [data-slot="collapsible-trigger"]') && bubbles().length === 0 && /Копировать ссылку/.test(p.q('[data-slot="embed"]').textContent) && /сторонние сервисы/.test(p.q('[data-slot="embed"]').textContent) && p.q('#settingsSaveBar'), 'R7s: each platform has a labelled help icon and no bubble until asked; third-party/scope note and explicit save remain visible');
+    await focusHelp(helps[0]);
+    assert(bubbles().length === 1 && !p.q('[data-slot="embed"] [data-slot="tooltip-content"]') && bubbles()[0].textContent.includes('cunnyx.com') && !/tnktok/.test(bubbles()[0].textContent) && bubbles()[0].getAttribute('role') === 'tooltip' && helps[0].getAttribute('aria-describedby') === bubbles()[0].id && !p.q('#xShareHostSelect').hasAttribute('aria-describedby') && !p.q('[id$="ShareHostSelectHint"]'), 'R7s1: keyboard focus opens the X bubble outside the grid; it explains only its services and describes the help button, no dangling select description');
+    await focusHelp(helps[2]);
+    assert(bubbles().length === 1 && /не скачивание MP4/.test(bubbles()[0].textContent) && !helps[0].hasAttribute('aria-describedby') && helps[2].getAttribute('aria-describedby') === bubbles()[0].id, 'R7s2: focusing TikTok replaces the bubble and keeps its direct-embed explanation');
+    await p.key(helps[2], 'Escape');
+    assert(bubbles().length === 0 && !helps[2].hasAttribute('aria-describedby') && p.doc.activeElement === helps[2], 'R7s3: Escape dismisses the bubble, keeps focus on the icon and leaves no dangling description');
     await p.click(helps[2]);
-    assert(helps[0].getAttribute('aria-expanded') === 'false' && helps[2].getAttribute('aria-expanded') === 'true' && !p.q('#xShareHostSelectHint') && /не скачивание MP4/.test(p.q('#ttShareHostSelectHint').textContent), 'R7s2: opening TikTok closes other help and retains its direct-embed explanation');
+    assert(bubbles().length === 1 && /не скачивание MP4/.test(bubbles()[0].textContent), 'R7s4: Enter/Space (a click without a pointer) reopens a dismissed bubble');
     await p.click(helps[2]);
-    assert(helps.every(h => h.getAttribute('aria-expanded') === 'false') && !p.q('#ttShareHostSelectHint') && !p.q('#xShareHostSelect').hasAttribute('aria-describedby'), 'R7s3: per-platform details close cleanly without a dangling description');
+    assert(bubbles().length === 0 && !helps[2].hasAttribute('aria-describedby'), 'R7s5: the same key closes it again');
+    await p.U.act(async () => { helps[2].blur(); await sleep(0); }); await p.settle(3);
     const beforeEmbedChange = p.calls.localSets.length;
     await p.key(p.q('#xShareHostSelect'), 'Enter');
     await p.settle(6);
@@ -831,6 +839,8 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(tabNames(full) === 'Загрузки|Статистика|Сохранение|Уведомления|Embed|Обновления|Отладка' && full.doc.documentElement.lang === 'ru' && full.doc.title === 'MediaLatch: загрузки и настройки', 'R13a: a Russian browser with no saved choice shows the Russian page (lang and title follow)');
     const langBox = full.q('#languageSelect');
     assert(langBox && langBox.getAttribute('role') === 'combobox' && full.q('label[for="languageSelect"]').textContent === 'Язык' && /Русский/.test(langBox.textContent), 'R13b: the language choice is a labelled combobox showing the current language');
+    // :hover is forwarded from a <label for> to its control, so the header labels stay associated but take no pointer
+    assert(['themeSelect', 'languageSelect'].every((id) => { const l = full.q(`label[for="${id}"]`); return l && l.classList.contains('pointer-events-none') && full.q('#' + id).getAttribute('role') === 'combobox'; }) && !full.q('[data-slot="embed"] label.pointer-events-none'), 'R13b2: header labels stay associated with their selects but are not pointer targets, so hovering a label cannot highlight its select; other labels are unchanged');
     const quick = await page('quick', state);
     assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Настройки' && quick.doc.documentElement.lang === 'ru', 'R13c: the compact popup opens in the same language');
     assert(full.q('label[for="authorFoldersTrigger"]').textContent === 'Папки авторов' && full.q('#authorFoldersHint').textContent.includes('x.com') && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13c-labels: Russian author-folder and link-preview settings display x.com');
@@ -1364,8 +1374,10 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p.key(option, 'Enter');
     assert(p.q('#igShareHostSelect').textContent === 'kkclip.com' && p.calls.localSets.length === 0 && p.q('#settingsSaveBar').getAttribute('data-state') === 'dirty', `R26b ${lang}: selecting kkclip remains an unsaved draft`);
     await p.mousedown(p.q('[data-section="saving"]')); await p.mousedown(p.q('[data-section="embed"]'));
-    await p.click(p.qa('[data-slot="embed"] [data-slot="collapsible-trigger"]')[1]);
-    assert(p.q('#igShareHostSelect').textContent === 'kkclip.com' && p.q('#igShareHostSelectHint').textContent.includes('kkclip.com'), `R26c ${lang}: navigation retains the choice and localized help names the service`);
+    const igHelp = p.qa('[data-slot="embed"] button[aria-label]')[1];
+    await p.U.act(async () => { igHelp.focus(); await sleep(0); }); await p.settle(3);
+    assert(p.q('#igShareHostSelect').textContent === 'kkclip.com' && p.q('[data-slot="tooltip-content"]').textContent.includes('kkclip.com') && p.q('#settingsSaveBar').getAttribute('data-state') === 'dirty', `R26c ${lang}: navigation retains the choice and the localized bubble names the service without touching the draft`);
+    await p.key(igHelp, 'Escape'); await p.U.act(async () => { igHelp.blur(); await sleep(0); }); await p.settle(3);
     state.failSet = true; await p.click(p.q('#saveButton'));
     assert(p.q('#igShareHostSelect').textContent === 'kkclip.com' && state.local.igShareHost === undefined && p.q('#statusMessage').getAttribute('data-type') === 'error', `R26d ${lang}: failed Save retains the kkclip draft and error`);
     state.failSet = false; await p.click(p.q('#saveButton'));
@@ -1390,8 +1402,8 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
         const p = await mk({ jobs: [job('single', 'complete'), job('m1', 'complete', { batch: 'batch-1' }), job('m2', 'failed', { batch: 'batch-1' }), job('m3', 'receiving', { batch: 'batch-1' })], batches: [batch()] });
         const summaries = p.qa('[data-slot="batch-summary"]');
         assert(summaries.length === 1 && summaries[0].querySelector('[role="status"]').textContent.replace(/\s+/g, ' ').trim() === `${t.title} · ${t.saved(2, 4)} · ${t.failed(1)} · ${t.remaining(1)}`, `R27a ${kind}/${lang}: one localized summary with distinct saved / failed / in-progress counts (${summaries[0] && summaries[0].textContent})`);
-        const order = p.qa('[data-slot="site-jobs"] > li').map((li) => li.getAttribute('data-batch') ? 'S' : li.getAttribute('data-job'));
-        assert(order.join(',') === 'single,S,m1,m2,m3' || order.join(',') === 'S,m1,m2,m3,single', `R27b ${kind}/${lang}: the summary heads its own rows and the unrelated row stays outside (${order.join(',')})`);
+        const postRows=p.qa('[data-slot="batch-jobs"] > li').map(n=>n.getAttribute('data-job'));
+        assert(postRows.join(',')==='m1,m2,m3' && p.q('[data-slot="single-jobs"] [data-job="single"]') && !p.q('[data-slot="batch-jobs"] [data-job="single"]'), `R27b ${kind}/${lang}: the post contains only its own ordered rows; the unrelated row is in Individual files`);
         assert(p.qa('[data-job]').length === 4 && p.q('[data-job="m2"] button[aria-label="' + t.retry + '"]') && p.q('[data-job="m3"] button[aria-label="' + t.cancel + '"]') && p.q('progress[value="1024"]'), `R27c ${kind}/${lang}: individual rows keep their progress and Cancel / Retry`);
         assert(!/\/s|%|MB|KB|[0-9] s\b/.test(summaries[0].querySelector('[role="status"]').textContent) && !summaries[0].querySelector('progress, a, [role="status"] button') && [...summaries[0].querySelectorAll('button')].every((b) => ['batch-cancel','batch-toggle'].includes(b.getAttribute('data-slot'))), `R27d ${kind}/${lang}: the status line has no byte, speed, percentage or ETA and no control; the summary offers only disclosure and Cancel remaining`);
         await p.unmount();
@@ -1486,7 +1498,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert([...group('x').querySelectorAll('[data-job]')].map(n=>n.getAttribute('data-job')).join()==='x-single,x-first,x-last',`S3 ${kind}/${lang}: recent singles first; batch members in original source order`);
     assert(p.qa('[data-slot="site-toggle"]').every(t=>t.getAttribute('aria-expanded')==='false') && content('x').hidden,`S4 ${kind}/${lang}: terminal site groups start folded`);
     await p.click(toggle('x'));toggle('x').focus();
-    assert(!content('x').hidden && !group('x').querySelector('[data-slot="batch-toggle"]') && p.calls.messages.filter(m=>m==='DOWNLOADS_COMMAND').length===0,`S5 ${kind}/${lang}: one mouse disclosure reveals single/batch files with no nested post toggle or queue command`);
+    assert(!content('x').hidden && group('x').querySelector('[data-slot="batch-toggle"]') && group('x').querySelector('[data-slot="singles-toggle"]') && p.calls.messages.filter(m=>m==='DOWNLOADS_COMMAND').length===0,`S5 ${kind}/${lang}: site disclosure reveals compact post/individual subgroups without a queue command`);
     await p.click(toggle('x'));assert(content('x').hidden && p.doc.activeElement===toggle('x'),`S6 ${kind}/${lang}: collapse retains trigger focus`);
     state.jobs.push(j('x-new','twitter.com',30,{state:'receiving',total:4096}));await refresh();
     assert(order()==='x,reddit,pixiv' && p.qa('[data-slot="site-group"]').length===3 && group('x').querySelectorAll('[data-job]').length===4,`S7 ${kind}/${lang}: a new X single promotes and reuses X's existing group`);
@@ -1499,12 +1511,37 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
   }
   {
     const record=rec({filename:'linked-page.png',site:'pixiv'}),state={session:[record],history:[],local:{uiLanguage:'en'},jobs:[{id:'linked-job',op:record.id,batch:'linked-post',batchIndex:0,createdAt:1,site:'pixiv',filename:record.filename,state:'complete',received:100,total:100}],batches:[{id:'linked-post',site:'pixiv',createdAt:1,count:1,saved:1,failed:0,cancelled:0,skipped:0,remaining:0}]};
-    const p=await page('full',state,{hash:'#downloads',search:`?op=${record.id}`});assert(p.q('[data-site="pixiv"] [data-slot="site-toggle"]').getAttribute('aria-expanded')==='true' && p.q('[data-job="linked-job"] [data-slot="result-details"]'), 'S13: notification deep link expands its site and the exact diagnostic row');await p.unmount();
+    const p=await page('full',state,{hash:'#downloads',search:`?op=${record.id}`});assert(p.q('[data-site="pixiv"] [data-slot="site-toggle"]').getAttribute('aria-expanded')==='true' && p.q('[data-site="pixiv"] [data-slot="batch-toggle"]').getAttribute('aria-expanded')==='true' && p.q('[data-job="linked-job"] [data-slot="result-details"]'), 'S13: notification deep link expands its site and the exact diagnostic row');await p.unmount();
   }
 
   {
     const p=await page('quick',{session:[],history:[],local:{uiLanguage:'en'},jobs:[{id:'retained-success',site:'pixiv',filename:'retained.png',batch:'expired-failure',batchIndex:1,createdAt:2,state:'complete',received:1,total:1}],batches:[{id:'expired-failure',site:'pixiv',createdAt:1,count:22,saved:21,failed:1,cancelled:0,skipped:0,remaining:0}]});
     assert(p.q('[data-site="pixiv"] [data-slot="site-toggle"]').getAttribute('aria-expanded')==='false' && p.q('[data-site="pixiv"] [data-slot="site-toggle"]').textContent.includes('1 failed'),'S14: collapsed site retains canonical batch error after its failed preparation card expires');await p.unmount();
+  }
+
+  // A large completed post cannot bury individual saves; both surfaces use compact separate disclosures.
+  for(const kind of ['quick','full'])for(const lang of ['en','ru']) {
+    const j=(id,time,over={})=>({id,site:'pixiv',createdAt:time,filename:id+'.png',state:'complete',received:100,total:100,speed:0,error:'',...over});
+    const b=(id,time,count)=>({id,site:'pixiv',createdAt:time,count,saved:count,failed:0,cancelled:0,skipped:0,remaining:0});
+    const state={session:[],history:[],local:{uiLanguage:lang},batches:[b('long-post',30,40),b('short-post',10,2)],jobs:[j('alone-new',40),...Array.from({length:40},(_,i)=>j('page-'+i,30+i,{batch:'long-post',batchIndex:i})).reverse(),j('alone-old',5),j('short-0',10,{batch:'short-post',batchIndex:0}),j('short-1',11,{batch:'short-post',batchIndex:1})]};
+    const p=await page(kind,state,{hash:'#downloads'}),post=p.q('[data-slot="batch-group"][data-batch="long-post"]'),single=p.q('[data-slot="single-files"]');
+    const hidden=n=>n.querySelector('ul').parentElement.hidden,postToggle=()=>post.querySelector('[data-slot="batch-toggle"]'),singleToggle=()=>single.querySelector('[data-slot="singles-toggle"]');
+    await p.click(p.q('[data-site="pixiv"] [data-slot="site-toggle"]'));
+    assert(p.qa('[data-slot="single-files"]').length===1 && p.qa('[data-slot="batch-group"]').length===2 && p.qa('[data-slot="site-jobs"] > li').length===3,`U1 ${kind}/${lang}: 44 files occupy only three compact subgroups`);
+    assert(hidden(post) && hidden(single) && postToggle().getAttribute('aria-expanded')==='false' && singleToggle().textContent.includes(lang==='en'?'Individual files':'Отдельные файлы'),`U2 ${kind}/${lang}: finished post and individual groups start folded with distinct localized labels`);
+    await p.click(singleToggle());assert(!hidden(single) && hidden(post) && [...single.querySelectorAll('[data-job]')].map(n=>n.dataset.job).join()==='alone-new,alone-old',`U3 ${kind}/${lang}: expand Individual files to find only single saves, newest first`);
+    await p.click(postToggle());assert(!hidden(post) && !hidden(single) && [...post.querySelectorAll('[data-job]')].map(n=>n.dataset.job).join()===Array.from({length:40},(_,i)=>'page-'+i).join(),`U4 ${kind}/${lang}: the chosen post reveals only its 40 files in original order`);
+    postToggle().focus();await p.click(postToggle());assert(hidden(post) && !hidden(single) && p.doc.activeElement===postToggle(),`U5 ${kind}/${lang}: fold a long post without folding single saves or losing focus`);
+    await p.click(singleToggle());state.jobs.push(j('fresh-single',100));
+    await p.U.act(async()=>{for(const cb of state.msgListeners||[])cb({action:'DOWNLOADS_CHANGED'});await sleep(5)});await p.settle(5);
+    assert(!hidden(single) && hidden(post) && single.querySelectorAll('[data-job]').length===3,`U6 ${kind}/${lang}: a new individual request reopens only Individual files`);
+    await p.unmount();
+    const active={...state,batches:state.batches.map(b=>b.id==='long-post'?{...b,saved:39,remaining:1}:b),jobs:state.jobs.map(j=>j.id==='page-39'?{...j,state:'receiving'}:j)};
+    const again=await page(kind,active,{hash:'#downloads'}),ap=again.q('[data-batch="long-post"][data-slot="batch-group"]');
+    assert(again.q('[data-site="pixiv"] [data-slot="site-toggle"]').getAttribute('aria-expanded')==='true' && ap.querySelector('[data-slot="batch-toggle"]').getAttribute('aria-expanded')==='true' && again.q('[data-slot="singles-toggle"]').getAttribute('aria-expanded')==='false',`U7 ${kind}/${lang}: reopening shows active post; completed individual saves stay folded`);
+    const cancel=ap.querySelector('[data-slot="batch-cancel"]');assert(cancel && !ap.querySelector('[data-slot="batch-toggle"]').contains(cancel) && !again.q('[data-slot="single-files"] [data-slot="batch-cancel"]'),`U8 ${kind}/${lang}: Cancel remaining is a separate post action and never cancels single saves`);
+    assert(again.calls.messages.filter(m=>m==='DOWNLOADS_COMMAND').length===0,`U9 ${kind}/${lang}: disclosure interactions send no queue commands`);
+    await again.unmount();
   }
 
   // MANAGER-BATCH-CANCEL-01: one "Cancel remaining" action on a batch summary that still has unfinished work, in the popup and the full manager.

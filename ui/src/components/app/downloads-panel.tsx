@@ -25,43 +25,78 @@ function JobIcon({state}:{state:string}) {
   const [Icon,tone]=JOB_ICONS[state] || [Loader2,"animate-spin text-ring motion-reduce:animate-none"]
   return <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted" aria-hidden="true"><Icon className={cn("size-4",tone)}/></span>
 }
+/** New requests and notification targets reveal their group; progress keeps the user's choice. */
+function useGroupDisclosure(remaining:number,createdAt:number,focused:boolean) {
+  const [open,setOpen]=useState(remaining>0 || focused),previous=useRef(createdAt)
+  useEffect(()=>{if(createdAt>previous.current)setOpen(true);previous.current=createdAt},[createdAt])
+  useEffect(()=>{if(focused)setOpen(true)},[focused])
+  return [open,setOpen] as const
+}
 /** One post batch ("Save all"): counts only. "Saved" is what the browser or the chosen folder confirmed; a batch with nothing left is
  * finished, which is not the same as every file saved. No bytes, speed or ETA is aggregated across files. */
-function BatchSummary({batch:b,pending,busy,onCancel}:{batch:DownloadBatch;pending:boolean;busy:boolean;onCancel:(e:React.MouseEvent<HTMLButtonElement>)=>void}) {
-  const {t}=useI18n()
+function BatchSummary({batch:b,pending,busy,onCancel,focused,full,children}:{batch:DownloadBatch;pending:boolean;busy:boolean;onCancel:(e:React.MouseEvent<HTMLButtonElement>)=>void;focused:boolean;full:boolean;children:React.ReactNode}) {
+  const {t,locale}=useI18n()
+  const nameId=useId(),[open,setOpen]=useGroupDisclosure(b.remaining,b.createdAt,focused)
   const parts=[b.failed&&['failed',b.failed,"text-danger"],b.cancelled&&['cancelled',b.cancelled,""],b.skipped&&['skipped',b.skipped,""],b.remaining&&['remaining',b.remaining,""]].filter(Boolean) as [string,number,string][]
   const title=t('downloads.batch.title',{site:t('downloads.batch.site.'+b.site)})
   // Cancel remaining: offered while something of the batch is unfinished. It is only "busy" while its own request is pending (focusable, aria-disabled, like Retry), and
   // stays available afterwards so that a partly failed cancellation can be repeated, also from a reopened manager. "Cancelling" is said only while work that the
   // accepted cancellation covers is unfinished (b.cancelling); a file the user retried afterwards is not that.
   // When the button goes away while it has focus (the batch settled), focus moves to the summary instead of being lost.
-  const summary=useRef<HTMLLIElement>(null)
+  const summary=useRef<HTMLDivElement>(null)
   const cancelRef=useCallback((el:HTMLButtonElement|null)=>{
     const a=document.activeElement as HTMLElement|null
     if(!el && a?.getAttribute?.('data-slot')==='batch-cancel')(summary.current?.contains(a)?summary.current:a.closest('section'))?.focus()
   },[])
-  return <li ref={summary} tabIndex={-1} data-slot="batch-summary" data-batch={b.id} className="flex flex-wrap items-start gap-x-2 gap-y-1 rounded-xl bg-muted px-3 py-2 text-xs leading-4 outline-none">
+  return <li data-slot="batch-group" data-batch={b.id} className="overflow-hidden rounded-lg border">
+    <Collapsible open={open} onOpenChange={setOpen}>
+    <div ref={summary} tabIndex={-1} data-slot="batch-summary" data-batch={b.id} className="flex items-start gap-1 bg-muted/60 text-xs leading-4 outline-none">
+    <CollapsibleTrigger data-slot="batch-toggle" aria-labelledby={`${nameId}-action ${nameId}-summary${b.createdAt>0?` ${nameId}-time`:""}`} className="group flex min-w-0 flex-1 items-start gap-2 rounded-lg px-3 py-2 text-left focus-visible:-outline-offset-2">
+    <span id={`${nameId}-action`} className="sr-only">{t(open?'downloads.batch.hideFiles':'downloads.batch.showFiles')}{': '}</span>
     <Layers className="mt-px size-3.5 shrink-0 text-muted-foreground" aria-hidden="true"/>
-    <p role="status" className="min-w-0 flex-1 basis-40 tabular-nums">
+    <span className="min-w-0 flex-1 space-y-1">
+    <span id={`${nameId}-summary`} role="status" className="block tabular-nums">
       <span className="font-semibold">{title}</span>
       {' · '}{b.saved===b.count && !b.partial?t('downloads.batch.allSaved',{count:b.count}):t('downloads.batch.saved',{saved:b.saved,count:b.count})}
       {parts.map(([key,n,tone])=><span key={key} className={tone||"text-muted-foreground"}>{' · '}{t('downloads.batch.'+key,{n})}</span>)}
       {b.cancelling && !pending?<span className="text-muted-foreground">{' · '}{t('downloads.batch.cancelling')}</span>:null}
       {b.partial?<span className="text-muted-foreground">{' · '}{t('downloads.batch.partial')}</span>:null}
-    </p>
-    {b.remaining>0?<Button ref={cancelRef} type="button" variant="ghost" size="sm" data-slot="batch-cancel" aria-disabled={busy} aria-label={`${t('downloads.batch.cancel')}: ${title}`} className="-my-1 h-7 shrink-0 px-2 text-xs aria-disabled:opacity-60" onClick={onCancel}>
+    </span>
+    {b.createdAt>0?<span id={`${nameId}-time`} className="block text-[11px] text-muted-foreground tabular-nums">{full?formatDateTime(b.createdAt,locale):formatTime(b.createdAt,locale)}</span>:null}
+    </span>
+    <ChevronDown className="mt-px size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none" aria-hidden="true"/>
+    </CollapsibleTrigger>
+    {b.remaining>0?<Button ref={cancelRef} type="button" variant="ghost" size="sm" data-slot="batch-cancel" aria-disabled={busy} aria-label={`${t('downloads.batch.cancel')}: ${title}`} className="my-1 mr-1 h-auto min-h-7 max-w-32 shrink-0 px-2 text-xs whitespace-normal aria-disabled:opacity-60" onClick={onCancel}>
       {pending?<Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true"/>:<Ban aria-hidden="true"/>}{t(pending?'downloads.batch.cancelling':'downloads.batch.cancel')}
     </Button>:null}
+    </div>
+    <CollapsibleContent forceMount hidden={!open}><ul data-slot="batch-jobs" className="space-y-2 p-2">{children}</ul></CollapsibleContent>
+    </Collapsible>
+  </li>
+}
+/** Single saves stay together so a large post cannot bury them. */
+function SingleFiles({count,remaining,failed,createdAt,focused,children}:{count:number;remaining:number;failed:number;createdAt:number;focused:boolean;children:React.ReactNode}) {
+  const {t}=useI18n(),nameId=useId(),[open,setOpen]=useGroupDisclosure(remaining,createdAt,focused)
+  return <li data-slot="single-files" className="overflow-hidden rounded-lg border">
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger data-slot="singles-toggle" aria-labelledby={`${nameId}-action ${nameId}-summary`} className="group flex w-full items-start gap-2 rounded-lg bg-muted/60 px-3 py-2 text-left text-xs leading-4 focus-visible:-outline-offset-2">
+        <span id={`${nameId}-action`} className="sr-only">{t(open?'downloads.batch.hideFiles':'downloads.batch.showFiles')}{': '}</span>
+        <Download className="mt-px size-3.5 shrink-0 text-muted-foreground" aria-hidden="true"/>
+        <span id={`${nameId}-summary`} role="status" className="min-w-0 flex-1 tabular-nums"><span className="font-semibold">{t('downloads.singles')}</span><span className="text-muted-foreground">{' · '}{t('downloads.site.files',{n:count})}</span>
+          {remaining>0?<span className="text-muted-foreground">{' · '}{t('downloads.batch.remaining',{n:remaining})}</span>:null}
+          {failed>0?<span className="text-danger">{' · '}{t('downloads.batch.failed',{n:failed})}</span>:null}
+        </span>
+        <ChevronDown className="mt-px size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none" aria-hidden="true"/>
+      </CollapsibleTrigger>
+      <CollapsibleContent forceMount hidden={!open}><ul data-slot="single-jobs" className="space-y-2 p-2">{children}</ul></CollapsibleContent>
+    </Collapsible>
   </li>
 }
 /** One disclosure per site for all single and batch saves. Only a new request reopens/promotes it. */
 function SiteGroup({site,label,createdAt,count,remaining,failed,focused,full,children}:{site:string;label:string;createdAt:number;count:number;remaining:number;failed:number;focused:boolean;full:boolean;children:React.ReactNode}) {
   const {t,locale}=useI18n()
   const nameId=useId()
-  const [open,setOpen]=useState(remaining>0 || focused)
-  const previous=useRef(createdAt)
-  useEffect(()=>{if(createdAt>previous.current)setOpen(true);previous.current=createdAt},[createdAt])
-  useEffect(()=>{if(focused)setOpen(true)},[focused])
+  const [open,setOpen]=useGroupDisclosure(remaining,createdAt,focused)
   return <li data-slot="site-group" data-site={site} className="overflow-hidden rounded-xl border bg-card">
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger aria-labelledby={`${nameId}-action ${nameId}-summary${createdAt>0?` ${nameId}-time`:""}`} data-slot="site-toggle" className="group flex w-full items-start gap-2 rounded-xl bg-muted/60 px-3 py-3 text-left text-xs leading-4 focus-visible:-outline-offset-2">
@@ -184,10 +219,14 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
     const key='statistics.site.'+site,label=t(key)
     return label===key?site:label
   }
-  const batchSummary=(b:DownloadBatch)=><BatchSummary key={'batch-'+b.id} batch={b} pending={s.pendingBatch===b.id} busy={s.busy} onCancel={e=>void cancelBatch(e,b)}/>
-  const list=<ul className="space-y-2" data-slot="download-jobs">{groups.map(group=><SiteGroup key={group.site} site={group.site} label={siteLabel(group.site)} createdAt={group.createdAt} count={group.jobs.length} remaining={group.remaining} failed={group.failed} focused={!!focusId && group.jobs.some(j=>(j.op || j.id)===focusId)} full={full}>
-    {group.entries.flatMap(entry=>entry.batch?[batchSummary(entry.batch),...entry.jobs.map(row)]:entry.jobs.map(row))}
-  </SiteGroup>)}</ul>
+  const hasFocus=(jobs:typeof s.jobs)=>!!focusId && jobs.some(j=>(j.op || j.id)===focusId)
+  const list=<ul className="space-y-2" data-slot="download-jobs">{groups.map(group=>{
+    const singles=group.entries.filter(e=>!e.batch).flatMap(e=>e.jobs)
+    return <SiteGroup key={group.site} site={group.site} label={siteLabel(group.site)} createdAt={group.createdAt} count={group.jobs.length} remaining={group.remaining} failed={group.failed} focused={hasFocus(group.jobs)} full={full}>
+      {singles.length>0?<SingleFiles count={singles.length} remaining={singles.filter(j=>!TERMINAL.includes(j.state)).length} failed={singles.filter(j=>j.state==='failed').length} createdAt={singles[0].createdAt || 0} focused={hasFocus(singles)}>{singles.map(row)}</SingleFiles>:null}
+      {group.entries.map(entry=>entry.batch?<BatchSummary key={entry.id} batch={entry.batch} pending={s.pendingBatch===entry.batch.id} busy={s.busy} onCancel={e=>void cancelBatch(e,entry.batch!)} focused={hasFocus(entry.jobs)} full={full}>{entry.jobs.map(row)}</BatchSummary>:null)}
+    </SiteGroup>
+  })}</ul>
   return <section aria-label={t('downloads.heading')} tabIndex={-1} className={cn("outline-none",full?"space-y-4":"space-y-2.5")} data-slot={full?'results-section':undefined}>
     {full
       ?<SectionHeader title={t('downloads.heading')} description={t('section.downloads')}>{queueControls}</SectionHeader>
