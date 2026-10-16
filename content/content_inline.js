@@ -709,21 +709,26 @@
   }
 
   // ---- VK (https://vk.ru/*, https://vk.com/*): photos, videos and clips ----
-  // The control is Pixiv-shaped (one fixed host over the visible part of the selected media) with X/Reddit-shaped batches (every item of "Save all" is frozen at admission and proven
-  // again right before it runs). What is selected: a loaded photo <img> on a VK photo CDN host, or an opened <video> whose own source is a direct file; its EXACT address travels, the
-  // worker validates the host again and the generic context-menu pipeline resolves and saves it (no VK downloader, no rewritten address, no size guess). The nearest intrinsic signed post boundary owns the list;
-  // an attachment is a link of the /photo-, /video-,
-  // /clip- OWNER_ID route that wraps exactly one media element, and a list that cannot be proven (media no link claims, a "+N" tile, a repeated attachment, a nested post, over the cap)
-  // offers no "Save all". A video or clip tile whose source the DOM does not declare as a direct file is a failed item of the batch (never omitted, never its poster); a blob, a manifest
-  // or an unlisted host gets no control at all. The wall owner of the URL is never an author. Not verified against the live DOM: see the handoff (feed posts, comments, video transport).
+  // The control is X/Reddit-shaped: one host attached INSIDE the selected media's own positioned container at a constant offset from the upper-left corner of the media's frame (a slide,
+  // a tile), so scrolling moves it with its media; it is hidden, never clamped to the viewport, when that corner is not visible. Batches are X/Reddit-shaped too (every item of
+  // "Save all" is frozen at admission and proven again right before it runs). What is selected: a loaded photo <img> on a VK photo CDN host, or an opened <video> whose own source is a
+  // direct file; its EXACT address travels, the worker validates the host again and the generic context-menu pipeline resolves and saves it (no VK downloader, no rewritten address, no
+  // size guess). The owner of a list is the post box that names itself with an intrinsic, exact identity (data-post-id; never the page address, so feeds and opened posts alike); an
+  // attachment is a link of the /photo-, /video-, /clip- OWNER_ID route that wraps exactly one media element. A list is offered only when the post's attachments are exactly the members
+  // of ONE group the page itself declares: a carousel whose every slide is labelled "k of N" (N slides rendered, the badge agreeing) or a media-grid of tiles with no overflow tile.
+  // Anything else (a lazy slide, a "+N" tile, loose attachments, a repeated attachment, media no link claims, a nested post, over the cap) offers no "Save all"; the journal says which.
+  // A video or clip tile whose source the DOM does not declare as a direct file is a failed item of the batch (never omitted, never its poster); a blob, a manifest or an unlisted host
+  // gets no control at all. The wall owner of the URL is never an author.
   function vkHandler() {
-    const VK = { ...K, SETTLE_MS: 150, TOL: 1, Z: 2147483000, DEPTH: 60, ANCHORS: 400 };
+    const VK = { ...K, SETTLE_MS: 150, TOL: 1, Z: 10, DEPTH: 60, ANCHORS: 400, TIGHT: 4, COUNT_MS: 120 };
     const PHOTO_HOST = /(?:^|\.)(?:vkuserphoto\.ru|userapi\.com)$/;
     // the media hosts the page's own CSP names (not checked against the three example posts): a video from any other host gets no control
     const VIDEO_HOST = /(?:^|\.)(?:vkvideo\.ru|userapi\.com|vkuser\.net|okcdn\.ru|mycdn\.me|cdn-vk\.ru|vk\.com|vk\.ru)$/;
     const SITE_HOST = /^(?:vk\.ru|vk\.com)$/;
     const ATTACHMENT = /^\/(photo|video|clip)(-?\d{1,12})_(\d{1,12})\/?$/;
     const FILE = /\.(?:mp4|webm|ogv|mov|m4v)$/i;
+    const SLIDE = /^carousel-slide-(\d{1,3})$/;
+    const POSITION = /(\d{1,3})\D{1,24}?(\d{1,3})\s*$/; // "2 of 5", "2 из 5", "2/5": the position and the total
     const NO_OWNER = { deref: () => null };
     const MODAL = 'dialog, [role="dialog"], [aria-modal="true"]';
     const noted = new WeakSet();
@@ -739,10 +744,11 @@
       const tile = el.closest('[data-testid="media-grid-item"]');
       return el.tagName === 'IMG' && routeOf(anchorOf(el))?.kind === 'photo' && tile?.closest('[data-testid="media-grid"]') ? VK.MIN_H : VK.MIN_W;
     }
-    function photoOk(img) {
+    function photoDeclared(img) {
       try {
         const u = urlOf(img.currentSrc || img.src || '');
-        if (!u || !PHOTO_HOST.test(u.hostname) || !img.complete || !(img.naturalWidth > 0)) return false;
+        if (!u || !PHOTO_HOST.test(u.hostname)) return false;
+        if (/blur/.test(window.getComputedStyle(img).filter || '')) return false; // a blurred layer is decoration, never the media
         const a = anchorOf(img);
         if (a && !routeOf(a)) {
           const linked = urlOf(a.getAttribute('href') || '');
@@ -752,6 +758,8 @@
         return r.width >= minWidthOf(img) && r.height >= VK.MIN_H; // an avatar, an emoji or a badge is smaller than a media tile
       } catch (_) { return false; }
     }
+    // Offscreen lazy slides declare sources before decoding; only pointer/focus selection needs loaded pixels.
+    const photoOk = (img) => img.complete && img.naturalWidth > 0 && photoDeclared(img);
     // the source of an opened <video> that the browser itself plays: a direct https file on a VK media host (never blob:, a manifest, a poster or another host)
     function directVideo(v) {
       const u = urlOf(v.currentSrc || v.src || '');
@@ -764,15 +772,7 @@
     }
     const anchorOf = (el) => (el && typeof el.closest === 'function' ? el.closest('a[href]') : null);
 
-    // ---- the post: the key the page names, found in attribute values only ----
-    function pageKey() {
-      try {
-        const u = new URL(location.href);
-        const m = /^\/wall(-?\d{1,12})_(\d{1,12})\/?$/.exec(u.pathname) || /^wall(-?\d{1,12})_(\d{1,12})$/.exec(u.searchParams.get('w') || '');
-        return m ? `${m[1]}_${m[2]}` : '';
-      } catch (_) { return ''; }
-    }
-    // Only intrinsic, exact post identity can establish a boundary; references in outer app URLs cannot own a post.
+    // ---- the post: an exact identity the page itself declares on the post box (never the page address) ----
     function postIdentity(el) {
       const ids = new Set();
       for (const name of ['id', 'data-post-id', 'data-post', 'data-wall-post-id']) {
@@ -781,13 +781,20 @@
       }
       return ids.size === 1 ? [...ids][0] : (ids.size ? 'ambiguous' : '');
     }
-    function rootOf(el, key) {
-      if (!key) return null;
+    // { root, key } of the post a media element belongs to, or null. The nearest identity decides: a post nested in a post (a repost, nesting level above 0) and an ambiguous identity own
+    // nothing here. VK repeats the key on inner elements of the same post, so the owner is the highest unbroken ancestor that names the same key.
+    function ownerOf(el) {
+      let key = '', root = null;
       for (let p = el.parentElement, n = 0; p && p !== document.body && p !== document.documentElement && n < VK.DEPTH; p = p.parentElement, n++) {
         const id = postIdentity(p);
-        if (id) return id === key ? p : null;
+        if (!id) continue;
+        if (id === 'ambiguous') return null;
+        if (root && id !== key) break;
+        if ((p.getAttribute('data-post-nesting-lvl') || '0') !== '0') return null;
+        if (!root) key = id;
+        root = p;
       }
-      return null;
+      return root ? { root, key } : null;
     }
     // a comment or reply of this post (an id that extends the post key, key_COMMENT): its attachments are not the post's
     function inComment(el, root, key) {
@@ -806,33 +813,50 @@
           const v = p.getAttribute(name) || '';
           if (v.length > 600) continue;
           for (const m of v.matchAll(OTHER_POST)) if (`${m[1]}_${m[2]}` !== key) return true;
-          if (/post|copy/i.test(name)) for (const m of v.matchAll(/(?<![0-9-])(-?\d{1,12})_(\d{1,12})(?![0-9])/g)) if (`${m[1]}_${m[2]}` !== key) return true;
+          const exact = /post|copy/i.test(name) && /^(-?\d{1,12})_(\d{1,12})$/.exec(v); // a whole value that is an id, never digits found inside a tracking code
+          if (exact && v !== key) return true;
         }
         if (p === root) break;
       }
       return false;
     }
 
+    // ---- the list of the post: what is proven, never guessed ----
     // the list of the click that is being prepared (one synchronous pass): every item is snapshotted against the same enumeration
     let session = null;
-    // [{ el, kind: 'photo'|'video'|'tile', id }] in document order, or null when the list cannot be proven
-    const enumerate = (root, key) => (session && session.root === root && session.key === key ? session.items : scan(root, key));
     let why = { code: '', n: 0 };
     const refuse = (code, n = 0) => { why = { code, n }; return null; };
+    // a short-lived memo for the plans of a shown control (a structure change is seen within COUNT_MS); a click or an admission always scans afresh
+    const memo = new WeakMap();
+    function listOf(root, key) {
+      if (session && session.root === root && session.key === key) return session.items;
+      const m = memo.get(root), now = Date.now();
+      if (m && m.key === key && now - m.at < VK.COUNT_MS) { why = m.why; return m.items; }
+      const items = scan(root, key);
+      memo.set(root, { key, at: now, items, why });
+      return items;
+    }
+    const countOf = (el, snap) => {
+      const root = snap.ownerRef.deref(), items = root && snap.key ? listOf(root, snap.key) : null;
+      return items && items.length >= 2 && items.some((i) => i.el === el) ? items.length : 0;
+    };
+
+    // [{ el, kind: 'photo'|'video'|'tile', id, link }] in the order the page declares, or null when the list cannot be proven (the reason is in `why`)
     function scan(root, key) {
       if (!root || typeof root.querySelectorAll !== 'function') return refuse('NO_ROOT');
       const anchors = Array.from(root.querySelectorAll('a[href]'));
       if (anchors.length > VK.ANCHORS) return refuse('TOO_MANY_LINKS', anchors.length);
+      // this post's own: its nearest identity is this root (not a repost), and it is neither a comment nor named for another post
+      const owned = (n) => { const o = ownerOf(n); return Boolean(o) && o.root === root && !otherPost(n, root, key) && !inComment(n, root, key); };
       const items = [], seen = new Set(), claimed = new Set();
       for (const a of anchors) {
-        const r = routeOf(a);
-        const media = r ? Array.from(a.querySelectorAll('img, video')) : [];
-        if (!r || !media.length || otherPost(a, root, key) || inComment(a, root, key)) continue; // a text link is no attachment; a nested post's or a comment's media is not this post's
+        const r = routeOf(a), media = r ? Array.from(a.querySelectorAll('img, video')) : [];
+        if (!r || !media.length || !owned(a)) continue; // a text link is no attachment; a nested post's or a comment's media is not this post's
         if (/(?:^|\s)\+\d{1,3}(?:\s|$)/.test(a.textContent || '')) return refuse('OVERFLOW_TILE'); // a "+N" tile hides more attachments
         const videos = media.filter((m) => m.tagName === 'VIDEO'), imgs = media.filter((m) => m.tagName === 'IMG');
         let el = null, kind = 'photo';
         if (r.kind === 'photo') {
-          if (videos.length || imgs.length !== 1 || !photoOk(imgs[0])) return refuse('PHOTO_TILE', items.length);
+          if (videos.length || imgs.length !== 1 || !photoDeclared(imgs[0])) return refuse('PHOTO_TILE', items.length);
           el = imgs[0];
         } else {
           el = videos.length === 1 ? videos[0] : (!videos.length && imgs.length === 1 ? imgs[0] : null);
@@ -845,22 +869,55 @@
         items.push({ el, kind, id: r.id, link: a });
       }
       for (const m of root.querySelectorAll('img, video')) { // media that no attachment link claims: unknown structure, never a guess
-        if (claimed.has(m) || otherPost(m, root, key) || inComment(m, root, key)) continue;
-        if (m.tagName === 'VIDEO' || photoOk(m)) return refuse('UNCLAIMED_MEDIA', items.length);
+        if (claimed.has(m) || !owned(m)) continue;
+        if (m.tagName === 'VIDEO' || photoDeclared(m)) return refuse('UNCLAIMED_MEDIA', items.length);
       }
       if (items.length > VK.BATCH_MAX) return refuse('OVER_CAP', items.length);
-      // Rendered tiles are not a complete list. Accept only one explicitly declared accessible list with every position.
-      // These semantics are standards-derived, not observed VK markup; absent evidence keeps Save this only.
-      let list = null;
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i].link.closest('[role="listitem"]');
-        const owner = item && item.parentElement && item.parentElement.closest('[role="list"]');
-        const pos = item && item.getAttribute('aria-posinset'), size = item && item.getAttribute('aria-setsize');
-        if (!owner || !root.contains(owner) || (list && owner !== list) || !/^[1-9]\d{0,2}$/.test(pos || '') || !/^[1-9]\d{0,2}$/.test(size || '') ||
-            Number(pos) !== i + 1 || Number(size) !== items.length) return refuse('UNPROVEN_LIST', items.length);
-        list = owner;
+      if (!items.length) return refuse('NO_ATTACHMENT');
+      // Completeness: the attachments must be exactly the members of ONE declared group. Rendered thumbnails or a visible "1/N" badge alone are not a list.
+      const outer = (list) => list.filter((n) => owned(n) && !list.some((o) => o !== n && o.contains(n)));
+      const carousels = outer(Array.from(root.querySelectorAll('.attachmentCarousel, [data-testid="gallery"]')));
+      const tiles = Array.from(root.querySelectorAll('[data-testid="media-grid-item"]')).filter(owned);
+      if (carousels.length + (tiles.length ? 1 : 0) > 1) return refuse('MULTIPLE_GROUPS', items.length);
+      if (carousels.length) return carouselList(carousels[0], items);
+      if (tiles.length) return gridList(tiles, items);
+      return items.length === 1 ? items : refuse('LOOSE_ATTACHMENT', items.length);
+    }
+    // a carousel proves its list when every slide says "k of N" (the same N, in order), exactly N slides are rendered and each holds one attachment; a badge may only agree
+    function carouselList(carousel, items) {
+      const slides = Array.from(carousel.querySelectorAll('[data-testid^="carousel-slide-"]')).filter((s) => SLIDE.test(s.getAttribute('data-testid')));
+      if (!slides.length) return refuse('LAZY_SLIDES', 0);
+      let total = 0;
+      for (const [k, s] of slides.entries()) {
+        const index = Number(SLIDE.exec(s.getAttribute('data-testid'))[1]), pos = POSITION.exec((s.getAttribute('aria-label') || '').trim());
+        if (index !== k) return refuse('SLIDE_ORDER', slides.length);
+        if (!pos || Number(pos[1]) !== index + 1 || (s.hasAttribute('data-index') && s.getAttribute('data-index') !== String(index))) return refuse('SLIDE_LABEL', slides.length);
+        if (total && Number(pos[2]) !== total) return refuse('COUNT_MISMATCH', slides.length);
+        total = Number(pos[2]);
       }
-      return items;
+      if (slides.length !== total) return refuse('LAZY_SLIDES', slides.length); // fewer slides rendered than the carousel declares
+      const badge = carousel.querySelector('[data-testid="carousel-counter"]'), shown = badge ? POSITION.exec((badge.textContent || '').trim()) : null;
+      if (shown && Number(shown[2]) !== total) return refuse('COUNT_MISMATCH', slides.length);
+      const out = [];
+      for (const [k, s] of slides.entries()) {
+        const mine = items.filter((i) => s.contains(i.link));
+        if (mine.length !== 1) return refuse(mine.length ? 'SLIDE_STRUCTURE' : 'LAZY_SLIDE', k); // an empty slide is a slide the page has not rendered yet
+        out.push(mine[0]);
+      }
+      return out.length === items.length ? out : refuse('LOOSE_ATTACHMENT', items.length);
+    }
+    // a media grid proves its list when it is the only grid and every tile holds one attachment (a tile with none, for instance a "+N" tile, is an unknown remainder)
+    function gridList(tiles, items) {
+      const grids = new Set(tiles.map((t) => t.closest('[data-testid="media-grid"]')));
+      if (grids.size !== 1 || grids.has(null)) return refuse('MULTIPLE_GROUPS', items.length);
+      const out = [];
+      for (const [k, t] of tiles.entries()) {
+        if (/\+\d/.test(t.textContent || '')) return refuse('OVERFLOW_TILE', k);
+        const mine = items.filter((i) => t.contains(i.link));
+        if (mine.length !== 1) return refuse('GRID_ITEM', k);
+        out.push(mine[0]);
+      }
+      return out.length === items.length ? out : refuse('LOOSE_ATTACHMENT', items.length);
     }
 
     // ---- identity ----
@@ -869,15 +926,15 @@
       try {
         if (!el || typeof el.getBoundingClientRect !== 'function') return null;
         const anchor = anchorOf(el), route = anchor ? routeOf(anchor) : null;
-        if (kind === 'photo') { if (el.tagName !== 'IMG' || !photoOk(el) || (route && route.kind !== 'photo')) return null; }
+        if (kind === 'photo') { if (el.tagName !== 'IMG' || !photoDeclared(el) || (route && route.kind !== 'photo')) return null; }
         else if (kind === 'video') { if (el.tagName !== 'VIDEO' || !directVideo(el)) return null; }
         else if (kind === 'tile') { if (!route || route.kind === 'photo' || (el.tagName !== 'IMG' && el.tagName !== 'VIDEO')) return null; } // only a list asks for a tile
         else return null;
-        const key = pageKey(), found = key ? rootOf(el, key) : null, root = found && !otherPost(el, found, key) && !inComment(el, found, key) ? found : null;
-        const snap = { elRef: new WeakRef(el), anchorRef: anchor ? new WeakRef(anchor) : null, kind, src: String(el.currentSrc || el.src || ''), route: route ? route.id : '', key: root ? key : '', ownerRef: root ? new WeakRef(root) : NO_OWNER, href: location.href, count: 0 };
-        if (counted && key && !root) listNote(el, 'NO_ROOT', 0);
+        const found = ownerOf(el), root = found && !otherPost(el, found.root, found.key) && !inComment(el, found.root, found.key) ? found.root : null;
+        const snap = { elRef: new WeakRef(el), anchorRef: anchor ? new WeakRef(anchor) : null, kind, src: String(el.currentSrc || el.src || ''), route: route ? route.id : '', key: root ? found.key : '', ownerRef: root ? new WeakRef(root) : NO_OWNER, href: location.href, count: 0 };
+        if (counted && !root) listNote(el, 'NO_ROOT', 0);
         if (counted && root && kind !== 'tile') {
-          const items = enumerate(root, key);
+          const items = listOf(root, snap.key);
           if (!items) listNote(el, why.code || 'NO_LIST', why.n);
           snap.count = items && items.length >= 2 && items.some((i) => i.el === el) ? items.length : 0;
         }
@@ -918,74 +975,138 @@
       } catch (_) { return null; }
     }
 
-    // Keep the control at the visible upper-left corner, below a full-width fixed/sticky site header.
-    function placeOf(el, w, h, scope) {
+    // ---- placement: a constant offset from the upper-left corner of the media's own frame, as a local child of its positioned container ----
+    // The frame is the nearest ancestor that clips its content (a slide, a tile); a scroller or the page is not a frame. The corner of the frame must be visible: scrolled out of the viewport,
+    // clipped by a scroller or a carousel, under a site header or covered by anything that is not the post's own means no control, never a control shifted to a visible edge.
+    function frameOf(el) {
+      for (let p = el.parentElement, n = 0; p && p !== document.body && p !== document.documentElement && n < VK.DEPTH; p = p.parentElement, n++) {
+        const cs = window.getComputedStyle(p);
+        if (/^(?:hidden|clip)$/.test(cs.overflow) || /^(?:hidden|clip)$/.test(cs.overflowX) || /^(?:hidden|clip)$/.test(cs.overflowY)) return p;
+      }
+      return null;
+    }
+    const scrolls = (cs) => /(?:^|\s)(?:auto|scroll|overlay)(?:\s|$)/.test(`${cs.overflow} ${cs.overflowX} ${cs.overflowY}`);
+    // The container: the group's own root (a carousel, a media grid) when it is positioned and holds the control's box, else the nearest positioned ancestor that is not a link, is not
+    // inside one and holds the box, no further than the post. The group root comes first because the carousel's arrow layers are its children while a sliding track is a stacking context of
+    // its own: only a control in the root's context is above the layers. A scroller between the media and its container would not move the control with the media. Without such a
+    // container the page itself is the container, when nothing scrolls on the way up. `unreachable` holds containers in which the control was found under another layer of the post.
+    const unreachable = new WeakSet();
+    function containerOf(el, scope, box) {
+      const fit = (p) => {
+        if (unreachable.has(p) || p.closest('a')) return null;
+        const cs = window.getComputedStyle(p);
+        if (!cs.position || cs.position === 'static') return null;
+        const cr = p.getBoundingClientRect();
+        if (!(cr.width > 0 && cr.height > 0 && cr.left <= box.left + VK.TOL && cr.top <= box.top + VK.TOL && cr.right >= box.right - VK.TOL && cr.bottom >= box.bottom - VK.TOL)) return null;
+        // a scaled or rotated container: local pixels no longer equal viewport pixels
+        if (typeof p.offsetWidth === 'number' && p.offsetWidth > 0 && Math.abs(cr.width - p.offsetWidth) > 2) return null;
+        return { host: p, left: Math.round(box.left - cr.left - (p.clientLeft || 0) + (p.scrollLeft || 0)), top: Math.round(box.top - cr.top - (p.clientTop || 0) + (p.scrollTop || 0)) };
+      };
+      const group = el.closest('.attachmentCarousel, [data-testid="gallery"], [data-testid="media-grid"]');
+      if (group && group !== scope && scope && scope.contains(group)) {
+        let clear = true;
+        for (let q = el.parentElement, n = 0; q && q !== group && n < VK.DEPTH; q = q.parentElement, n++) if (scrolls(window.getComputedStyle(q))) { clear = false; break; }
+        const spot = clear ? fit(group) : null;
+        if (spot) return spot;
+      }
+      let p = el.parentElement;
+      for (let n = 0; p && n < VK.DEPTH; p = p.parentElement, n++) {
+        if (p === document.body || p === document.documentElement) break;
+        const spot = fit(p);
+        if (spot) return spot;
+        if (scrolls(window.getComputedStyle(p))) return null;
+        if (p === scope) break;
+      }
+      for (; p && p !== document.documentElement; p = p.parentElement) if (scrolls(window.getComputedStyle(p))) return null;
+      const body = document.body || document.documentElement, at = window.getComputedStyle(body).position;
+      if (at && at !== 'static') { const br = body.getBoundingClientRect(); return { host: body, left: Math.round(box.left - br.left - (body.clientLeft || 0)), top: Math.round(box.top - br.top - (body.clientTop || 0)) }; }
+      return { host: body, left: Math.round(box.left + (window.scrollX || 0)), top: Math.round(box.top + (window.scrollY || 0)) };
+    }
+    // { vis, at, host, left, top, w, h, sig } or null when no safe place can be proven. `at` is where the control is on the page, `left`/`top` its offset inside `host`.
+    function placeOf(el, w, h, scope, inset = VK.INSET) {
       try {
-        const visible = visibleOf(el);
-        if (!visible) return null;
-        const L = visible.left, R = visible.right, B = visible.bottom;
-        let T = visible.top;
+        const vis = visibleOf(el);
+        if (!vis) return null;
+        const r = el.getBoundingClientRect(), frame = frameOf(el), f = frame ? frame.getBoundingClientRect() : null;
+        const L = f ? Math.max(r.left, f.left) : r.left, T = f ? Math.max(r.top, f.top) : r.top;
+        const rightEdge = f ? Math.min(r.right, f.right) : r.right, bottomEdge = f ? Math.min(r.bottom, f.bottom) : r.bottom, R = Math.min(rightEdge, vis.right), B = Math.min(bottomEdge, vis.bottom);
+        if (vis.left > L + VK.TOL || vis.top > T + VK.TOL) return null; // the corner itself is not visible
+        if (!(R - L >= Math.max(minWidthOf(el), w + 2 * inset)) || !(B - T >= Math.max(VK.MIN_H, h + 2 * inset))) return null;
+        const left = L + inset, top = T + inset;
         if (typeof document.elementFromPoint === 'function') {
-          for (let n = 0; n < VK.MAX_STACK && T < B; n++) {
-            let below = T;
-            for (const x of [L + VK.CORNER, R - VK.CORNER]) {
-              let hit = document.elementFromPoint(x, T + VK.CORNER);
-              if (hit?.closest(MODAL) && !hit.closest(MODAL).contains(el)) return null;
-              if (ctl.own(hit) || hit === el || hit?.contains(el)) continue;
-              for (let depth = 0; hit && depth < VK.DEPTH; depth++, hit = hit.parentElement) {
-                if (hit.contains(el)) break;
-                const pos = window.getComputedStyle(hit).position, box = hit.getBoundingClientRect();
-                if ((pos === 'fixed' || pos === 'sticky') && box.left <= L && box.right >= R && box.top <= T && box.bottom > T) {
-                  below = Math.max(below, box.bottom); break;
-                }
-              }
-            }
-            if (below === T) break;
-            T = below;
-          }
-        }
-        if (!(R - L >= Math.max(minWidthOf(el), w + 2 * VK.INSET)) || !(B - T >= Math.max(VK.MIN_H, h + 2 * VK.INSET))) return null;
-        const left = L + VK.INSET, y = T + VK.INSET;
-        if (typeof document.elementFromPoint === 'function') {
-          // VK's zero-size photo link excludes the carousel's full-height navigation layers.
-          const frame = el.closest('[data-testid="primary-attachment-photo"], [data-testid="media-grid-item"]');
-          const c = VK.CORNER, card = scope || (frame && frame.closest('.attachmentCarousel')) || frame || anchorOf(el) || visible.clip || el.parentElement;
-          for (const [px, py] of [[L + c, T + c], [R - c, T + c], [R - c, B - c], [left + c, y + c], [left + w - c, y + h - c], [left + c, y + h - c]]) {
+          // VK's zero-size photo link excludes the carousel's full-height navigation layers: they and the post's other layers are its own, a foreign layer or dialog is not.
+          const tile = el.closest('[data-testid="primary-attachment-photo"], [data-testid="media-grid-item"]');
+          const c = VK.CORNER, card = scope || (tile && tile.closest('.attachmentCarousel')) || tile || anchorOf(el) || vis.clip || el.parentElement;
+          for (const [px, py] of [[L + c, T + c], [R - c, T + c], [R - c, B - c], [left + c, top + c], [left + w - c, top + h - c], [left + c, top + h - c]]) {
             const t = document.elementFromPoint(px, py);
             if (!t || (t.closest(MODAL) && !t.closest(MODAL).contains(el))) return null;
             if (ctl.own(t) || t === el || (card && typeof card.contains === 'function' && card.contains(t))) continue;
             return null;
           }
         }
-        return { vis: { left: L, top: T, right: R, bottom: B }, left: Math.round(left), top: Math.round(y), w, h, sig: [L, T, R, B, w, h].map(Math.round).join(',') };
+        const box = { left, top, right: left + w, bottom: top + h };
+        let spot = containerOf(el, scope, box);
+        // The control is attached where it is proven: if any corner or its centre then hits another layer of the post, nobody can click it there. That container is not used again for this page; a layer
+        // that is not the post's own (a dialog, a header) just hides the control.
+        const under = (s) => {
+          const mine = ctl.st.host;
+          if (!s || !mine || mine.isConnected === false || mine.parentElement !== s.host || typeof document.elementFromPoint !== 'function') return null;
+          if (Math.abs(parseFloat(mine.style.left) - s.left) > VK.TOL || Math.abs(parseFloat(mine.style.top) - s.top) > VK.TOL) return null; // it is not there yet: nothing to test
+          for (const [px, py] of [[left + VK.CORNER, top + VK.CORNER], [left + w - VK.CORNER, top + VK.CORNER], [left + VK.CORNER, top + h - VK.CORNER], [left + w - VK.CORNER, top + h - VK.CORNER], [left + w / 2, top + h / 2]]) {
+            const hit = document.elementFromPoint(px, py);
+            if (hit && !ctl.own(hit)) return hit;
+          }
+          return null;
+        };
+        const hit = under(spot);
+        if (hit) {
+          if (!(scope && scope.contains(hit))) return null;
+          unreachable.add(spot.host);
+          spot = containerOf(el, scope, box);
+        }
+        if (!spot) return null;
+        // what can move or resize the place without a scroll: the corner's distance to every clip, the frame's size and the offset; a scroll changes none of it
+        const sig = [vis.left - L, vis.top - T, vis.right - rightEdge, vis.bottom - bottomEdge, rightEdge - L, bottomEdge - T, spot.left, spot.top, w, h].map(Math.round).join(',');
+        return { vis, at: { left, top }, host: spot.host, left: spot.left, top: spot.top, w, h, sig };
       } catch (_) { return null; }
     }
+    // where the shown control is, inside its container
     function shownAt() {
       const h = ctl.st.host;
-      if (!h || h.isConnected === false || typeof h.getBoundingClientRect !== 'function') return null;
-      const r = h.getBoundingClientRect();
-      return { left: Math.round(r.left), top: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+      if (!h || h.isConnected === false || !h.parentElement) return null;
+      return { host: h.parentElement, left: parseFloat(h.style.left), top: parseFloat(h.style.top), w: parseFloat(h.style.width), h: parseFloat(h.style.height) };
     }
+    // the media still is where the control was shown: the same container and the same offset in it (a scroll moves both, so it never counts as a move)
     function atPlace(el, snap, shown) {
-      const lay = shown && el ? placeOf(el, shown.w, shown.h, snap.ownerRef.deref()) : null;
-      return Boolean(lay) && Math.abs(lay.left - shown.left) <= VK.TOL && Math.abs(lay.top - shown.top) <= VK.TOL;
+      if (!shown || !el) return false;
+      return [VK.INSET, VK.TIGHT].some((inset) => {
+        const lay = placeOf(el, shown.w, shown.h, snap.ownerRef.deref(), inset);
+        return Boolean(lay) && lay.host === shown.host && Math.abs(lay.left - shown.left) <= VK.TOL && Math.abs(lay.top - shown.top) <= VK.TOL;
+      });
     }
+    // A post with several proven attachments always keeps both explicit actions: the labelled pair, else two icons (the count on the second), else the icons with a tighter inset (a 90px
+    // thumbnail); a tile that cannot hold even that keeps the single "Save this".
     function plan(el, snap) {
-      const scope = snap.ownerRef.deref();
-      if (snap.count >= 2) {
+      const scope = snap.ownerRef.deref(), n = countOf(el, snap);
+      if (n >= 2) {
         const wide = placeOf(el, VK.MULTI_W, VK.MULTI_H, scope);
-        if (wide) return { n: snap.count, compact: false, lay: wide };
-        const compact = placeOf(el, VK.COMPACT_W, VK.COMPACT_H, scope);
-        return compact ? { n: snap.count, compact: true, lay: compact } : null;
+        if (wide) return { n, compact: false, lay: wide };
+        const compact = placeOf(el, VK.COMPACT_W, VK.COMPACT_H, scope) || placeOf(el, VK.COMPACT_W, VK.COMPACT_H, scope, VK.TIGHT);
+        if (compact) return { n, compact: true, lay: compact };
       }
       const lay = placeOf(el, VK.SIZE, VK.SIZE, scope);
       return lay ? { n: 0, compact: false, lay } : null;
     }
 
     // ---- descriptors and proofs ----
-    // What the worker gets for one item. A tile whose source is not a declared direct file is refused as an unsupported source: its poster is never a substitute.
+    // Linked video tiles pass their exact page identity; the worker resolves and verifies the file separately.
     function describe(snap, bind) {
-      if (snap.kind === 'tile') return { ok: false, reason: 'UNSUPPORTED_SOURCE' };
+      if (snap.kind === 'tile') {
+        const page = urlOf(snap.anchorRef?.deref()?.getAttribute('href') || '');
+        if (!snap.route.startsWith('video') || !page || page.pathname.replace(/\/$/, '') !== '/' + snap.route) return { ok: false, reason: 'UNSUPPORTED_SOURCE' };
+        const media = { kind: 'video-page', url: page.href, id: snap.route };
+        return { ok: true, media: bind ? { ...media, ...bind } : media };
+      }
       const media = { kind: snap.kind, url: snap.src, id: snap.route };
       return { ok: true, media: bind ? { ...media, ...bind } : media };
     }
@@ -1001,10 +1122,10 @@
     }
     // Phase 1 of a batch: the page, the owner and the whole list are proven again and every item's descriptor is frozen (its exact source, its attachment id, its place in the list).
     function admit(entry) {
-      const root = entry.items[0].snap.ownerRef.deref();
-      if (!root || root.isConnected === false || here() !== entry.href || pageKey() !== entry.ownerId) return 'STALE_OWNER';
+      const first = entry.items[0].snap, root = first.ownerRef.deref(), el = first.elRef.deref(), owner = el ? ownerOf(el) : null;
+      if (!root || root.isConnected === false || here() !== entry.href || !owner || owner.root !== root || owner.key !== entry.ownerId) return 'STALE_OWNER';
       if (!entry.items.every((it) => holds(it.snap))) return 'STALE_ITEM';
-      const now = enumerate(root, entry.ownerId);
+      const now = scan(root, entry.ownerId);
       if (!now || now.length !== entry.items.length || !now.every((it, i) => it.el === entry.items[i].snap.elRef.deref())) return 'STALE_ITEM';
       entry.frozen = entry.items.map((it, index) => describe(it.snap, { ownerId: entry.ownerId, index, count: entry.count, sig: entry.sig }));
       return null;
@@ -1054,12 +1175,10 @@
     }
 
     const ctl = createControl((c) => ({
-      name: 'vk', K: VK, fixed: true, align: 'flex-start', modes: ['one', 'all'], hideOn: ['popstate'], rearmOn: [], followOn: ['scroll', 'resize'],
+      name: 'vk', K: VK, align: 'flex-start', modes: ['one', 'all'], hideOn: ['popstate'], rearmOn: [], followOn: ['scroll', 'resize'],
       candidate, snapshot, holds, plan, admit,
-      heldPlan: (el, snap) => { const s = c.size(), lay = placeOf(el, s.w, s.h, snap.ownerRef.deref()); return lay ? { n: c.st.count, compact: c.st.compact, lay } : null; },
-      stale: (p, snap) => p.n !== snap.count,
       watch(observer, el, snap) {
-        // the shown media, its link, its parent and the post: a source that changes, a link that changes, the media removed or replaced, an attachment added or removed
+        // the shown media, its link, its parent and the post: a source that changes, a link that changes, the media removed or replaced, an attachment added, removed or labelled again
         observer.observe(el, { attributes: true, attributeFilter: ['src', 'srcset', 'poster', 'style', 'class'] });
         if (el.parentNode) observer.observe(el.parentNode, { childList: true });
         const a = snap.anchorRef && snap.anchorRef.deref();
@@ -1069,7 +1188,9 @@
           observer.observe(p, { attributes: true, attributeFilter: ['style', 'class', 'hidden'], childList: true });
           if (p === root) break;
         }
-        if (root) observer.observe(root, { childList: true, subtree: true });
+        if (root) observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'aria-label', 'data-index', 'data-post-id'] });
+        // once the control is attached its reach can be tested (a layer of the post may sit above it): one look shortly after every show
+        window.setTimeout(() => { if (ctl.st.snap === snap && ctl.st.host && ctl.st.host.isConnected) ctl.recheck(); }, VK.SETTLE_MS);
       },
       focusTarget(t) {
         if (typeof t.closest !== 'function') return null;

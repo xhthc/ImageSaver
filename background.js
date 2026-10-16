@@ -2740,14 +2740,16 @@ function vkInlineSenderOk(message, sender) {
 // What the document proved, reduced to the fields this route needs. `expect` (batch items) binds the item to the batch the document opened: same post, same count, the same structure
 // signature, the asked index. Anything else in the answer is ignored.
 function sanitizeVkInline(raw, expect) {
-  if (!raw || typeof raw !== 'object' || (raw.kind !== 'photo' && raw.kind !== 'video')) return null;
+  if (!raw || typeof raw !== 'object' || !['photo', 'video', 'video-page'].includes(raw.kind)) return null;
   const url = typeof raw.url === 'string' && raw.url.length <= 4096 ? raw.url : '';
   let u;
   try { u = new URL(url); } catch (_) { return null; }
   if (u.protocol !== 'https:' || u.username || u.password || u.port) return null;
   const host = u.hostname.toLowerCase();
-  if (raw.kind === 'photo' ? !VK_PHOTO_HOST.test(host) : !(VK_VIDEO_HOST.test(host) && VK_VIDEO_FILE.test(u.pathname))) return null;
   const id = typeof raw.id === 'string' && VK_ATTACHMENT_ID.test(raw.id) ? raw.id : '';
+  if (raw.kind === 'video-page') {
+    if (!isVkPageUrl(url) || !id.startsWith('video') || u.pathname.replace(/\/$/, '') !== '/' + id) return null;
+  } else if (raw.kind === 'photo' ? !VK_PHOTO_HOST.test(host) : !(VK_VIDEO_HOST.test(host) && VK_VIDEO_FILE.test(u.pathname))) return null;
   if (expect) {
     const ownerId = typeof raw.ownerId === 'string' && VK_OWNER_ID.test(raw.ownerId) ? raw.ownerId : '';
     const index = Number.isInteger(raw.index) ? raw.index : -1, count = Number.isInteger(raw.count) ? raw.count : -1, sig = typeof raw.sig === 'string' && /^[a-f0-9]{8}$/.test(raw.sig) ? raw.sig : '';
@@ -2760,13 +2762,58 @@ function sanitizeVkInline(raw, expect) {
 const vkInlineRefusalCode = (answer) => (answer && answer.ok === false && answer.reason === 'UNSUPPORTED_SOURCE' ? 'UNSUPPORTED_SOURCE' : 'NO_MEDIA');
 const vkInlineWhy = (answer) => inlineWhy(answer, VK_INLINE_REASONS);
 
+// A linked video poster proves an ID, not file bytes; the selected player's own progressive declaration must match that ID.
+async function resolveVkInlineVideo(media) {
+  const [oid, vid] = media.id.slice('video'.length).split('_');
+  const endpoint = new URL('/al_video.php?act=show', media.url).href;
+  const data = await fetchResolverMetadata(endpoint, {
+    timeoutMs: 8000, method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+    body: new URLSearchParams({ act: 'show', al: '1', autoplay: '0', video: `${oid}_${vid}` }).toString(),
+  });
+  if (!data) return { error: 'NETWORK_ERROR' };
+  const view = data.payload?.[0] === 0 ? data.payload?.[1]?.[4] : null;
+  const params = view?.player?.params;
+  if (!Array.isArray(params) || !params.length) return { error: 'UNSUPPORTED_SOURCE' };
+  if (params.length > 8 || String(view.mvData?.oid) !== oid || String(view.mvData?.vid) !== vid) return { error: 'NO_MEDIA' };
+  const matching = params.filter(p => p && String(p.oid) === oid && String(p.vid) === vid);
+  if (matching.length !== 1) return { error: 'NO_MEDIA' };
+  const p = matching[0];
+  if (view.mvData.is_live || p.is_live || p.live || p.drm || p.is_drm || p.drm_enabled) return { error: 'UNSUPPORTED_SOURCE' };
+  const files = Object.entries(p).filter(([key, url]) => /^url(?:144|240|360|480|720|1080|1440|2160|4320)$/.test(key) && typeof url === 'string' && url.length > 0)
+    .sort((a, b) => Number(b[0].slice(3)) - Number(a[0].slice(3)));
+  const url = files[0]?.[1];
+  try {
+    const u = new URL(url);
+    if (url.length > 4096 || u.protocol !== 'https:' || u.username || u.password || u.port || !VK_VIDEO_HOST.test(u.hostname) || /\.(?:m3u8|mpd)\/?$/i.test(u.pathname)) return { error: 'UNSUPPORTED_SOURCE' };
+  } catch (_) { return { error: 'UNSUPPORTED_SOURCE' }; }
+  return { url };
+}
+
 // One proven item through the shared save-image-item pipeline (a photo as an image, a direct file as a video), unless the same address is already running (a repeated or overlapping
 // Save this / Save all saves it once; the batch slot of the repeat is settled as skipped).
 async function vkInlineRun(tab, sender, media, cid, slot) {
   const key = `${tab.id}:${sender.frameId}:${media.url}`;
   if (vkInlineBusy.has(key)) { dbg('vk.inline', 'run', 'skipped', 'BUSY', null, { cid, tab: tab.id, frame: sender.frameId }); return false; }
   vkInlineBusy.add(key);
+  let resolvedKey = null;
   try {
+    if (slot && await batchStopped(slot)) return true;
+    if (media.kind === 'video-page') {
+      const source = await resolveVkInlineVideo(media);
+      if (slot && await batchStopped(slot)) return true;
+      if (!source.url) { await inlineRefuse(sender, cid, slot, source.error); return true; }
+      const probe = await verifyMp4ContainerBytes(source.url, sender.url);
+      if (slot && await batchStopped(slot)) return true;
+      if (!probe.ok) {
+        const code = probe.error === 'TIMEOUT' ? 'NETWORK_TIMEOUT' : (probe.error === 'NETWORK_ERROR' || probe.status ? 'NETWORK_ERROR' : 'INVALID_MEDIA');
+        await inlineRefuse(sender, cid, slot, code); return true;
+      }
+      resolvedKey = `${tab.id}:${sender.frameId}:${source.url}`;
+      if (vkInlineBusy.has(resolvedKey)) { resolvedKey = null; return false; }
+      vkInlineBusy.add(resolvedKey);
+      media = { ...media, kind: 'video', url: source.url };
+    }
     dbg('vk.inline', 'run', 'start', undefined, () => ({ kind: media.kind, host: media.url }), { cid, tab: tab.id, frame: sender.frameId });
     const info = { menuItemId: 'save-image-item', srcUrl: media.url, pageUrl: sender.url, frameId: sender.frameId, mediaType: media.kind === 'video' ? 'video' : 'image', dbgCid: cid, batchSlot: slot };
     vkInlineInfos.add(info);
@@ -2774,6 +2821,7 @@ async function vkInlineRun(tab, sender, media, cid, slot) {
     return true;
   } finally {
     vkInlineBusy.delete(key);
+    if (resolvedKey) vkInlineBusy.delete(resolvedKey);
   }
 }
 
