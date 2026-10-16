@@ -734,6 +734,11 @@
     const note = (el, reason, transport) => { if (el && !noted.has(el)) { noted.add(el); DBG.log('vk.inline', 'candidate', 'refused', reason, { kind: 'video', transport, host: String(el.currentSrc || el.src || '') }, { lvl: 'debug' }); } };
 
     // ---- what a media element is ----
+    // Live VK grids use 90px thumbnails; only linked photo tiles may use the smaller width.
+    function minWidthOf(el) {
+      const tile = el.closest('[data-testid="media-grid-item"]');
+      return el.tagName === 'IMG' && routeOf(anchorOf(el))?.kind === 'photo' && tile?.closest('[data-testid="media-grid"]') ? VK.MIN_H : VK.MIN_W;
+    }
     function photoOk(img) {
       try {
         const u = urlOf(img.currentSrc || img.src || '');
@@ -744,7 +749,7 @@
           if (!linked || !PHOTO_HOST.test(linked.hostname)) return false;
         }
         const r = img.getBoundingClientRect();
-        return r.width >= VK.MIN_W && r.height >= VK.MIN_H; // an avatar, an emoji or a badge is smaller than a media tile
+        return r.width >= minWidthOf(img) && r.height >= VK.MIN_H; // an avatar, an emoji or a badge is smaller than a media tile
       } catch (_) { return false; }
     }
     // the source of an opened <video> that the browser itself plays: a direct https file on a VK media host (never blob:, a manifest, a poster or another host)
@@ -939,10 +944,12 @@
             T = below;
           }
         }
-        if (!(R - L >= Math.max(VK.MIN_W, w + 2 * VK.INSET)) || !(B - T >= Math.max(VK.MIN_H, h + 2 * VK.INSET))) return null;
+        if (!(R - L >= Math.max(minWidthOf(el), w + 2 * VK.INSET)) || !(B - T >= Math.max(VK.MIN_H, h + 2 * VK.INSET))) return null;
         const left = L + VK.INSET, y = T + VK.INSET;
         if (typeof document.elementFromPoint === 'function') {
-          const c = VK.CORNER, card = scope || anchorOf(el) || visible.clip || el.parentElement;
+          // VK's zero-size photo link excludes the carousel's full-height navigation layers.
+          const frame = el.closest('[data-testid="primary-attachment-photo"], [data-testid="media-grid-item"]');
+          const c = VK.CORNER, card = scope || (frame && frame.closest('.attachmentCarousel')) || frame || anchorOf(el) || visible.clip || el.parentElement;
           for (const [px, py] of [[L + c, T + c], [R - c, T + c], [R - c, B - c], [left + c, y + c], [left + w - c, y + h - c], [left + c, y + h - c]]) {
             const t = document.elementFromPoint(px, py);
             if (!t || (t.closest(MODAL) && !t.closest(MODAL).contains(el))) return null;

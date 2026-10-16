@@ -4,7 +4,7 @@
 // context menu uses; there is no VK downloader). Everything the pages here contain is DERIVED, not live VK: the host family (*.vkuserphoto.ru), the .jpg extension, the
 // /photo-OWNER_ID, /video-... and /clip-... link routes and a loaded <img> were observed or are public route shapes; the post markup, semantic ARIA attachment lists (standards-derived, not observed on VK), the attribute NAMES that carry the post
 // key, the video hosts (taken from the page's own published CSP) and the query parameter names are placeholders chosen only to exercise the code (the handler reads values, never names).
-// Layout is stubbed (jsdom has none). A fixture proves the code, not the current live VK DOM; the blocked paths are listed in the handoff.
+// The final carousel/grid regressions reproduce sanitized live VK structure captured on 2026-10-16; other structures above remain derived. Layout is stubbed (jsdom has none). A fixture proves code, not original bytes or live-site acceptance.
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm'), { createRequire } = require('node:module');
 const ROOT = path.resolve(__dirname, '..');
 const { JSDOM } = createRequire(path.join(ROOT, 'ui/package.json'))('jsdom');
@@ -660,6 +660,42 @@ async function test(name, fn) {
   await test('a fixed photo viewer with its own cover is not mistaken for a site header',async()=>{
     const p=carouselPage();p.view.setAttribute('role','dialog');p.view.style.position='fixed';const cover=p.d.getElementById('cover');p.place(cover,100,100,600,500,1);
     await p.hover(300,300);assert(p.host());assert.equal(p.host().style.top,'108px');
+  });
+
+
+  // Observed live VK DOM: zero-size inline links contain absolute photos; full-height carousel arrows are sibling layers.
+  function liveCarouselPage() {
+    const p=build({url:'https://vk.ru/millenniumtl',html:'<div data-post-id="-218466214_25"><div class="attachmentCarousel" data-testid="gallery" role="region"><button id="prev" data-testid="carousel-arrow-prev"></button><button id="next" data-testid="carousel-arrow-next"></button><div id="slides">'+[1,2].map(n=>'<div id="slide'+n+'" data-testid="carousel-slide-'+(n-1)+'" role="group" aria-label="'+n+' из 2"><div data-testid="carousel-slide"><div id="frame'+n+'" data-testid="primary-attachment-photo" style="overflow:hidden;position:relative"><div><a id="link'+n+'" href="'+route.photo(n)+'"><img id="live'+n+'" data-testid="primary-attachment-image-content" style="position:absolute" src="'+photo(n)+'"></a></div></div></div></div>').join('')+'</div></div></div>'});
+    const gallery=p.d.querySelector('.attachmentCarousel'),prev=p.d.getElementById('prev'),next=p.d.getElementById('next');gallery.style.overflow='hidden';
+    p.place(gallery,100,100,551,710);p.place(next,599,100,52,710,2);
+    const show=index=>{for(let n=1;n<=2;n++){const x=100+(n-index)*551;p.place(p.d.getElementById('slide'+n),x,100,551,710);p.place(p.d.getElementById('frame'+n),x,100,551,710);p.place(p.d.getElementById('link'+n),x,101,0,0);p.place(p.d.getElementById('live'+n),x,101,551,708);}if(index===2)p.place(prev,100,100,52,710,2);};show(1);
+    return Object.assign(p,{gallery,prev,next,show});
+  }
+  await test('live VK first slide is not hidden by its full-height next-arrow hit area',async()=>{
+    const p=liveCarouselPage();await p.hover(350,300);assert(p.host());assert.equal(p.host().style.left,'108px');assert.equal(p.host().style.top,'109px');p.click(p.buttons().one);await p.settle(1);assert.deepEqual(p.exported(),[photo(1)]);
+  });
+  await test('live VK previous-arrow layer preserves upper-left placement and the selected second photo',async()=>{
+    const p=liveCarouselPage();p.show(2);await p.hover(350,300);assert(p.host());assert.equal(p.host().style.left,'108px');assert.equal(p.host().style.top,'109px');p.click(p.buttons().one);await p.settle(1);assert.deepEqual(p.exported(),[photo(2)]);
+  });
+  await test('live VK carousel layers cannot permit a foreign dialog over the media',async()=>{
+    const p=liveCarouselPage(),dialog=p.d.createElement('div');dialog.setAttribute('role','dialog');p.gallery.append(dialog);p.place(dialog,100,100,551,710,5);await p.hover(350,300);assert.equal(p.host(),null);assert.equal(p.sent.length,0);
+  });
+
+
+  // Live collage: 275px main photos and a row of 90px thumbnails in declared media-grid items.
+  function liveGridPage() {
+    const p=build({url:'https://vk.ru/feed',html:'<div data-post-id="-1_2"><div data-testid="media-grid">'+[1,2].map(n=>'<div id="tile'+n+'" data-testid="media-grid-item" style="overflow:hidden"><a id="gridLink'+n+'" href="'+route.photo(n)+'"><img id="gridPhoto'+n+'" data-testid="media-grid-image" src="'+photo(n)+'"></a></div>').join('')+'</div></div>'});
+    for(let n=1;n<=2;n++){const x=100+(n-1)*92;p.place(p.d.getElementById('tile'+n),x,100,90,90);p.place(p.d.getElementById('gridLink'+n),x,190,0,0);p.place(p.d.getElementById('gridPhoto'+n),x,100,90,90);}
+    return p;
+  }
+  await test('live 90px collage thumbnails expose their own Save this action without a guessed whole-post count',async()=>{
+    const p=liveGridPage();await p.hover(135,135);assert(p.host()&&!p.both());assert.equal(p.host().style.left,'108px');p.click(p.buttons().one);await p.settle(1);assert.deepEqual(p.exported(),[photo(1)]);
+  });
+  await test('moving to the next small collage tile changes the selected source and button corner',async()=>{
+    const p=liveGridPage();await p.hover(135,135);assert(p.host());await p.hover(225,135);assert.equal(p.host().style.left,'200px');p.click(p.buttons().one);await p.settle(1);assert.deepEqual(p.exported(),[photo(2)]);
+  });
+  await test('a 90px image outside a proven photo grid remains below the media threshold',async()=>{
+    const p=liveGridPage();p.d.getElementById('tile1').removeAttribute('data-testid');await p.hover(135,135);assert.equal(p.host(),null);assert.equal(p.sent.length,0);
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);
