@@ -2663,11 +2663,16 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       const f = nworker({ local: { notifySuccess: false } });
       await f.ready(); await f.manager.ready;
       f.stagingFails.add('IMGD1');
+      // A successful peer may send a quiet removal before this failure; force that valid ordering.
+      f.gates.set('IMGD1', new Promise(resolve => { f.releaseFailure = resolve; }));
       f.document('2090', [img('D0'), img('D1'), img('D2')]);
       f.saveAll(7, '2090');
+      await finishLoop(f, () => f.batchNotes().some(x => x.opts.dismissBatch === true), 'quiet removal before failure');
+      f.releaseFailure();
       await finishLoop(f, async () => (await f.snapshot()).batches[0]?.remaining === 0, 'failing batch settled');
       await waitFinal(f, null, '1 failed');
-      assert(f.batchNotes().every((x) => x.opts.successEnabled === false && !/Saved|All/.test(x.opts.message) && x.opts.kind === 'error'), '30s: with success notices off the card lists only what failed, as an error card');
+      const errorCard = f.batchNotes().find(x => x.opts.final && x.opts.message === '1 failed' && x.opts.dismissBatch !== true);
+      assert(errorCard?.opts.kind === 'error' && f.batchNotes().every((x) => x.opts.successEnabled === false && !/Saved|All/.test(x.opts.message) && (x.opts.dismissBatch === true || x.opts.kind === 'error')), '30s: with success notices off the card lists only what failed, as an error card');
     }
 
     // N4: the page navigated or closed: nothing is sent to another origin or tab; the batch and the manager are unaffected; the card returns on the next result
