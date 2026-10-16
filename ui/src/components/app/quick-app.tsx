@@ -18,7 +18,7 @@ export function QuickApp({quick}:{quick:QuickController}) {
       <Button id="openSettingsButton" variant="ghost" size="icon-sm" aria-label={t('quick.settings')} title={t('quick.settings')} onClick={()=>void quick.openSettings('saving')}><Settings/></Button>
     </header>
     <ScrollArea.Root type="auto" className="relative flex min-h-0 flex-col overflow-hidden" data-slot="downloads-scroll-area">
-      <ScrollArea.Viewport id="quickMain" role="main" aria-label={t('downloads.heading')} tabIndex={0} className="min-h-0 flex-1 overscroll-y-contain px-3 py-3 pr-5 focus-visible:-outline-offset-2"><DownloadsPanel/></ScrollArea.Viewport>
+      <ScrollArea.Viewport id="quickMain" role="main" aria-label={t('downloads.heading')} tabIndex={0} className="min-h-0 flex-1 overscroll-y-contain px-5 py-3 focus-visible:-outline-offset-2"><DownloadsPanel/></ScrollArea.Viewport>
       <DownloadsScrollbar/>
     </ScrollArea.Root>
     <footer className="shrink-0 border-t bg-card p-2">
