@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.5.4 — shared inline controls and compact downloads
+
+- Add Pixiv inline Save this / Save all for proven artwork pages and supported feed cards; retain original selection and the 100-item batch cap. Fix page-count detection so numeric author names are not mistaken for media counts.
+- Consolidate X, Reddit, Pixiv and RedGIFs inline controls into one shared module, organize runtime modules and strengthen hostname boundary checks without adding site support automatically.
+- Add Cancel remaining for a post batch in popup and full Downloads; completed exports and unrelated jobs are preserved.
+- Group all single and batch downloads by site, promote the site only for a new request, and separate compact Individual files and post subgroups. Finished subgroups start folded; notification links reveal their exact file. Original request time and source ordering survive queue recovery.
+- Use the same bounded, translucent custom scrollbar in popup and settings, with fixed popup header/footer.
+- Replace in-flow Embed help with themed floating bubbles, keep keyboard/tap access, and fix stale bubbles after rapid pointer exit. Limit Theme/Language hover highlighting to the select trigger.
+- Refresh EN/RU release documentation, roadmap status and neutral Downloads/Embed captures. Permissions, dependencies and storage schema remain unchanged.
+
+This remains a pre-release. Accepted changes have independent reviews, automated/isolated browser checks and bounded user confirmation of the four inline sites, Downloads and settings help. Exact committed runtime packaging is checked separately. Exhaustive live-provider/audio, other-browser, crash/quota and store-approval claims remain outside this release; the submitted Chrome Web Store 2.5.2 archive is unchanged.
+
 ## 2.5.3 — post-batch progress and site statistics
 
 - Show one durable post summary in both managers for X/Reddit Save all, multi-page Pixiv artworks and multi-original Pawchive posts. Saved, failed, cancelled, skipped and remaining counts stay distinct; retries update the existing item.

@@ -3,14 +3,14 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.3"><img src="https://img.shields.io/badge/pre--release-v2.5.3-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.3"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.4"><img src="https://img.shields.io/badge/pre--release-v2.5.4-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.4"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.3"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.4"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
     <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Chrome Web Store distribution planned; not yet available">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
@@ -19,7 +19,7 @@
 
 MediaLatch (formerly Image Saver) saves accessible original images, videos and GIFs directly from your browser. Choose the media you want, follow the save in the download manager and find the file where you expect it. No companion application is needed.
 
-> **Current pre-release: [v2.5.3](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.3).** Adds post-batch progress and updating notices for X, Reddit, Pixiv and Pawchive, plus compact site statistics. [What changed](CHANGELOG.md).
+> **Current pre-release: [v2.5.4](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.4).** Adds Pixiv inline single/all saving, shared inline controls, compact site/post download groups, Cancel remaining and floating settings help. [What changed](CHANGELOG.md).
 
 | What you want to do | What MediaLatch offers |
 |---|---|
@@ -43,11 +43,11 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 <table>
   <tr>
     <td width="50%"><img src="docs/assets/welcome.png" alt="Violet welcome screen: three short steps and one Continue button"><br><strong>Start in three steps</strong><br>A fresh install opens a short welcome screen once; Continue opens the Saving settings.</td>
-    <td width="50%"><img src="docs/assets/downloads.png" alt="Current download manager showing a neutral Pixiv batch fixture"><br><strong>Follow every download</strong><br>Per-file progress and actions, post-batch totals and readable failure explanations.</td>
+    <td width="50%"><img src="docs/assets/downloads.png" alt="Compact site groups with individual files and post batches"><br><strong>Follow every download</strong><br>Site groups with separate individual/post lists, per-file progress and Cancel remaining.</td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/assets/settings-saving.png" alt="Violet Saving settings: destination, organization and example path"><br><strong>Choose where files go</strong><br>Destination, optional subfolder, author folders and a live path example.</td>
-    <td width="50%"><img src="docs/assets/settings-links.png" alt="Link previews: one domain selector per platform"><br><strong>Choose how links are shared</strong><br>A compact grid of four selectors, with help beside each platform.</td>
+    <td width="50%"><img src="docs/assets/settings-links.png" alt="Link previews: one domain selector per platform"><br><strong>Choose how links are shared</strong><br>A compact grid of four selectors, with floating help beside each platform and no layout shift.</td>
   </tr>
 </table>
 
@@ -55,7 +55,7 @@ Tested primarily in Helium on Windows. Coverage is limited to the paths below; s
 
 </details>
 
-The download-manager and statistics captures show the v2.5.3 pages with neutral fixture data in an isolated Chromium profile; they illustrate the UI, not a live provider session. The welcome, settings and illustrated cards retain their v2.5.1 captures. Separate export-byte and user-reported browser checks are described below.
+The download-manager and link-preview settings captures show v2.5.4 with neutral fixture data in an isolated Chromium profile; they illustrate the UI, not a live provider session. Statistics retain their v2.5.3 captures; welcome, Saving and illustrated cards retain their v2.5.1 captures. Separate export-byte and user-reported browser checks are described below.
 
 ---
 
@@ -79,7 +79,7 @@ A fresh install opens a separate welcome screen with three short steps. **Contin
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.3-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.4-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -105,16 +105,16 @@ The current preview covers the workflows below. Availability depends on the page
 - Original discovery through site adapters, image links, `srcset`, media attributes and unambiguous CSS backgrounds or overlays.
 - Native images/GIFs and accessible MP4/WebM videos. Exact declared URLs, including signatures, are preserved.
 - Genuine looping GIFs from confirmed X and Reddit MP4 animations. Animations longer than 30 seconds or exceeding conversion size limits remain source MP4; other conversion failures are reported.
-- Compact inline save controls on X, Reddit and RedGIFs, with bounded post batches on X and Reddit.
+- Shared inline save controls on X, Reddit, Pixiv and RedGIFs. Pixiv offers Save this for the selected original page and Save all for a proven multi-page artwork, including supported feed cards.
 - All distinct declared original media from a Pawchive feed preview, including the original cover. Selecting an individual attachment saves that attachment.
 
 ### Manage files
 
 - Choose a writable base folder and an optional subfolder. Save everything into one folder or organize by site/type. One Author folders menu enables any combination of x.com, Reddit and Pixiv: usernames on X/Reddit, author name plus user ID on Pixiv. Save results and redacted error reports stay in the manager.
-- Compact popup with wheel/keyboard scrolling, hidden scrollbar and one clear action for finished records; individual removal and details stay in the full manager.
+- Compact popup with wheel/keyboard scrolling, a translucent custom scrollbar and one clear action for finished records; individual removal and details stay in the full manager.
 - Download manager with received/total bytes, speed and approximate remaining time when measurable. Complete files are staged locally before browser export; failed export can retry from retained bytes without another source download.
 
-Post batches on X, Reddit, Pixiv and Pawchive show saved, failed, cancelled, skipped and remaining items separately. Retry updates the same item; only confirmed export counts as saved. A partial Pawchive post qualifies the available-item result rather than claiming every original was saved. Terminal record removal is inside the expanded details in the full manager.
+Both managers group all single and batch downloads by site. A new save reuses and promotes its site group. Inside it, Individual files is separate from compact post cards; finished subgroups start folded and expand with a click or keyboard. Post counts keep saved, failed, cancelled, skipped and remaining items distinct. Cancel remaining stops unfinished work for that post without removing already saved files or cancelling unrelated downloads. Retry updates the same item; only confirmed export counts as saved. Partial Pawchive imports retain their qualifier.
 
 ### Settings and diagnostics
 
@@ -140,7 +140,7 @@ Post batches on X, Reddit, Pixiv and Pawchive show saved, failed, cancelled, ski
 | Sankaku | Selected preview/sample to declared same-post original via the context menu in feeds/opened posts; image/video smoke tests reported working in Helium, native GIF test pending |
 | Booru boards | Danbooru, Gelbooru/rule34.xxx/safebooru.org and Moebooru boards such as yande.re, Konachan and Sakugabooru: selected preview/post media resolves to the declared same-post, same-file original; access/challenge pages can still prevent saving |
 | Zerochan | Selected thumbnail or opened-post media resolves to the declared same-post original; unavailable originals are refused |
-| Pixiv | Feed previews save the post's declared original pages (up to 100); an image selected inside an opened artwork remains single |
+| Pixiv | Inline Save this / Save all on supported previews and opened artwork; declared original pages, up to 100 per batch; context-menu preview-all/opened-image-single behavior retained |
 | Other sites | Generic discovery plus existing rules, including selected booru paths; coverage varies |
 
 Kemono is deferred while the site is unavailable. Booru originals come from the post's own page or metadata and must name the same file (hash) and post; a sample, JPEG version or thumbnail is never saved as the original. Other booru deployments are not promised. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
@@ -183,11 +183,11 @@ GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output
 There is no telemetry or extension backend. Statistics and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
 
 <details>
-<summary>Validation and request safeguards in 2.5.3</summary>
+<summary>Validation and request safeguards in 2.5.4</summary>
 
 Privileged offscreen commands require the extension worker. Public selected pages cannot supply literal local/private-network media addresses, and unchecked server redirects are refused; deliberately selected local pages retain local media access. These restrictions can refuse redirect-dependent links and do not provide DNS-rebinding protection. Zerochan JSON uses a 2 MiB streaming limit with a full three-second deadline.
 
-The accepted batch/statistics source passed 77 automated checks on GitHub. Independent reviews and isolated Helium fixtures cover committed batch counts, retry/restart, downloaded PNG bytes, statistics migration and clear/error behavior. The user confirmed X/Reddit batches, preserved totals and live Pixiv/Pawchive results in Helium. Version packaging is checked separately; fixtures do not establish every live layout, Google Chrome, exhaustive audio, crash or quota behavior.
+Accepted changes have independent source reviews and bounded user checks in Helium for inline saving on X, Reddit, Pixiv and RedGIFs, compact Downloads and settings help. Offline/UI checks and isolated native fixtures cover batch accounting, request chronology, keyboard/layout behavior, settings persistence and downloaded PNG bytes. Exact release packaging is verified separately; these checks do not establish every live layout, Google Chrome, exhaustive audio, crash or quota behavior.
 
 </details>
 
@@ -200,8 +200,8 @@ Statuses distinguish implemented features from future work. They describe direct
 | Area | Planned result | Status |
 |---|---|---|
 | Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Booru families included in this preview; reported manual board checks passed, access/layout limits remain; image-result discovery planned |
-| Controls and selection | Small universal inline controls and optional post/media multi-selection | Planned |
-| Download manager | File queue, per-post totals and updating notices; later deferred post resolution and proven transfer resume | Queue and X/Reddit/Pixiv/Pawchive summaries included; deferred resolution and source-range resume remain planned |
+| Controls and selection | Shared inline controls and optional post/media multi-selection | Shared X/Reddit/Pixiv/RedGIFs inline controls included and user checked; arbitrary multi-selection and VK photo-post downloading remain planned |
+| Download manager | Compact site groups, separate individual/post lists, batch totals, Cancel remaining and updating notices | Included in popup and full manager; deferred resolution and source-range resume remain planned |
 | Local statistics | Compact per-site views with shared Booru totals and preserved historical counts | Included; global opt-in and clear, user-reported migration/count checks passed in Helium |
 | Complete-file staging | Disk-backed acquisition/validation before export and local retry; broaden native restart, quota and media checks | Included in preview; ordinary Helium checks passed, stress checks pending |
 | Batch archives | Selected-post/page batches, ZIP first; 7z only if a practical bounded implementation is justified | Planned |
@@ -209,10 +209,10 @@ Statuses distinguish implemented features from future work. They describe direct
 | Kemono | Declared same-post originals and scoped feed behavior | Deferred until the site is usable |
 | Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
 | Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Planned; security/privacy gates first |
-| Settings and documentation | Compact settings groups, visual quick start and EN/RU README | Included; earlier manual interface check passed; redesigned UI checked separately in an isolated browser |
+| Settings and documentation | Compact settings, floating help and EN/RU documentation | Included; help opens without layout movement, header hover is limited to the select; user checked |
 | First-run setup | One-time three-step welcome screen with Continue to Saving; settings save states; readable download failures and list retry | Included; isolated fresh-install checks passed; user smoke evidence concerns the earlier interface |
 
-The Telegram/VK roadmap concerns **publishing**.
+The optional Telegram/VK composers concern **publishing**. Planned VK inline downloading is a separate feature and is not included in this release.
 
 ---
 
