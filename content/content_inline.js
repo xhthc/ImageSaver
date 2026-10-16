@@ -725,6 +725,7 @@
     const ATTACHMENT = /^\/(photo|video|clip)(-?\d{1,12})_(\d{1,12})\/?$/;
     const FILE = /\.(?:mp4|webm|ogv|mov|m4v)$/i;
     const NO_OWNER = { deref: () => null };
+    const MODAL = 'dialog, [role="dialog"], [aria-modal="true"]';
     const noted = new WeakSet();
     DBG.log('vk', 'init', 'info');
 
@@ -890,20 +891,44 @@
       } catch (_) { return false; }
     }
 
+    function visibleOf(el) {
+      try {
+        const r = el.getBoundingClientRect();
+        let left = Math.max(r.left, 0), top = Math.max(r.top, 0), right = Math.min(r.right, window.innerWidth), bottom = Math.min(r.bottom, window.innerHeight), clip = null, reached = false;
+        for (let p = el, n = 0; p && n < VK.DEPTH; p = p.parentElement, n++) {
+          const cs = window.getComputedStyle(p);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse' || cs.opacity === '0') return null;
+          if (p !== el) {
+            const x = /^(?:hidden|clip|auto|scroll|overlay)$/.test(cs.overflow) || /^(?:hidden|clip|auto|scroll|overlay)$/.test(cs.overflowX);
+            const y = /^(?:hidden|clip|auto|scroll|overlay)$/.test(cs.overflow) || /^(?:hidden|clip|auto|scroll|overlay)$/.test(cs.overflowY);
+            if (x || y) {
+              const box = p.getBoundingClientRect(); clip ||= p;
+              if (x) { left = Math.max(left, box.left); right = Math.min(right, box.right); }
+              if (y) { top = Math.max(top, box.top); bottom = Math.min(bottom, box.bottom); }
+            }
+          }
+          if (p === document.body || p === document.documentElement) { reached = true; break; }
+        }
+        return reached && right > left && bottom > top ? { left, top, right, bottom, clip } : null;
+      } catch (_) { return null; }
+    }
+
     // Keep the control at the visible upper-left corner, below a full-width fixed/sticky site header.
     function placeOf(el, w, h, scope) {
       try {
-        const r = el.getBoundingClientRect();
-        const vw = (typeof window.innerWidth === 'number' && window.innerWidth) || r.right, vh = (typeof window.innerHeight === 'number' && window.innerHeight) || r.bottom;
-        const L = Math.max(r.left, 0), R = Math.min(r.right, vw), B = Math.min(r.bottom, vh);
-        let T = Math.max(r.top, 0);
+        const visible = visibleOf(el);
+        if (!visible) return null;
+        const L = visible.left, R = visible.right, B = visible.bottom;
+        let T = visible.top;
         if (typeof document.elementFromPoint === 'function') {
           for (let n = 0; n < VK.MAX_STACK && T < B; n++) {
             let below = T;
             for (const x of [L + VK.CORNER, R - VK.CORNER]) {
               let hit = document.elementFromPoint(x, T + VK.CORNER);
-              if (ctl.own(hit) || hit === el) continue;
+              if (hit?.closest(MODAL) && !hit.closest(MODAL).contains(el)) return null;
+              if (ctl.own(hit) || hit === el || hit?.contains(el)) continue;
               for (let depth = 0; hit && depth < VK.DEPTH; depth++, hit = hit.parentElement) {
+                if (hit.contains(el)) break;
                 const pos = window.getComputedStyle(hit).position, box = hit.getBoundingClientRect();
                 if ((pos === 'fixed' || pos === 'sticky') && box.left <= L && box.right >= R && box.top <= T && box.bottom > T) {
                   below = Math.max(below, box.bottom); break;
@@ -917,10 +942,10 @@
         if (!(R - L >= Math.max(VK.MIN_W, w + 2 * VK.INSET)) || !(B - T >= Math.max(VK.MIN_H, h + 2 * VK.INSET))) return null;
         const left = L + VK.INSET, y = T + VK.INSET;
         if (typeof document.elementFromPoint === 'function') {
-          const c = VK.CORNER, card = scope || anchorOf(el) || el.parentElement;
+          const c = VK.CORNER, card = scope || anchorOf(el) || visible.clip || el.parentElement;
           for (const [px, py] of [[L + c, T + c], [R - c, T + c], [R - c, B - c], [left + c, y + c], [left + w - c, y + h - c], [left + c, y + h - c]]) {
             const t = document.elementFromPoint(px, py);
-            if (!t) return null;
+            if (!t || (t.closest(MODAL) && !t.closest(MODAL).contains(el))) return null;
             if (ctl.own(t) || t === el || (card && typeof card.contains === 'function' && card.contains(t))) continue;
             return null;
           }
@@ -979,8 +1004,10 @@
     }
 
     function candidate(stack) {
-      const top = stack.slice(0, VK.MAX_STACK);
+      const top = stack.slice(0, VK.MAX_STACK), first = top.find(el => el && !ctl.own(el));
+      const modal = first && typeof first.closest === 'function' ? first.closest(MODAL) : null;
       for (const el of top) {
+        if (modal && (el?.tagName === 'IMG' || el?.tagName === 'VIDEO') && !modal.contains(el)) return null;
         if (!el || ctl.own(el)) continue;
         if (el.tagName === 'IMG' && top.some((v) => v && v.tagName === 'VIDEO')) return null; // an image overlay does not prove the player underneath is its own media
         if (el.tagName === 'VIDEO') {
@@ -990,13 +1017,33 @@
         }
         if (el.tagName === 'IMG') return photoOk(el) && !(routeOf(anchorOf(el)) && routeOf(anchorOf(el)).kind !== 'photo') ? { el, kind: 'photo' } : null; // the topmost image decides; a poster is not a photo
       }
+      // A carousel image may use pointer-events:none. Recover only within the top hit's local post layers.
+      if (!first || first === document.body || first === document.documentElement || typeof first.closest !== 'function' ||
+          first.closest('button, input, select, textarea, [role="button"]')) return null;
+      let boundary = null;
+      for (let p = first, n = 0; p && p !== document.body && n < VK.DEPTH; p = p.parentElement, n++) {
+        if (postIdentity(p)) { boundary = p; break; }
+      }
+      for (let node = first, n = 0; node && node !== boundary && node !== document.body && node !== document.documentElement && n < VK.DEPTH; node = node.parentElement, n++) {
+        const el = mediaWithin(node, { x: ctl.st.x, y: ctl.st.y });
+        if (el) return el.tagName === 'IMG' && photoOk(el) && !(routeOf(anchorOf(el)) && routeOf(anchorOf(el)).kind !== 'photo') ? { el, kind: 'photo' } : null;
+        if (!boundary || node.matches(MODAL)) break;
+      }
       return null;
     }
-    function mediaWithin(node) {
+    function mediaWithin(node, point = null) {
       if (!node || typeof node.querySelectorAll !== 'function') return null;
       if (node.tagName === 'IMG' || node.tagName === 'VIDEO') return node;
-      const media = Array.from(node.querySelectorAll('img, video'));
-      return media.length === 1 ? media[0] : null;
+      const found = [], walker = document.createTreeWalker(node, 1);
+      for (let el, n = 0; (el = walker.nextNode());) {
+        if (++n > VK.ANCHORS) return null;
+        if (el.tagName !== 'IMG' && el.tagName !== 'VIDEO') continue;
+        const box = visibleOf(el);
+        if (!box || (point && !(point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom))) continue;
+        found.push(el);
+        if (found.length > 1) return null;
+      }
+      return found.length === 1 ? found[0] : null;
     }
 
     const ctl = createControl((c) => ({
@@ -1011,6 +1058,10 @@
         const a = snap.anchorRef && snap.anchorRef.deref();
         if (a) observer.observe(a, { attributes: true, attributeFilter: ['href'] });
         const root = snap.ownerRef.deref();
+        for (let p = el.parentElement, n = 0; p && p !== document.body && n < VK.DEPTH; p = p.parentElement, n++) {
+          observer.observe(p, { attributes: true, attributeFilter: ['style', 'class', 'hidden'], childList: true });
+          if (p === root) break;
+        }
         if (root) observer.observe(root, { childList: true, subtree: true });
       },
       focusTarget(t) {

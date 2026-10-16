@@ -605,6 +605,63 @@ async function test(name, fn) {
     assert.equal(p.host(), null); assert.equal(p.sent.length, 0);
   });
 
+
+  console.log('\n--- VK carousel regressions ---');
+  function carouselPage() {
+    const p = build({ url: 'https://vk.ru/feed', html: '<div data-post-id="-1_2"><div id="viewport" tabindex="0" style="overflow:hidden"><div id="track"><img id="c1" style="pointer-events:none" src="'+photo(1)+'"><img id="c2" style="pointer-events:none" src="'+photo(2)+'"></div><div id="cover"></div></div></div>' });
+    const view=p.d.getElementById('viewport'), track=p.d.getElementById('track'), a=p.d.getElementById('c1'), b=p.d.getElementById('c2');
+    p.place(view,100,100,600,500);p.place(track,100,100,1200,500);p.place(a,100,100,600,500);p.place(b,700,100,600,500);
+    const original=p.d.elementsFromPoint;
+    p.d.elementsFromPoint=(x,y)=>original(x,y).filter(el=>{
+      if(p.w.getComputedStyle(el).pointerEvents==='none')return false;
+      for(let n=el.parentElement;n;n=n.parentElement)if(n.style.overflow==='hidden'){const r=n.getBoundingClientRect();if(x<r.left||x>r.right||y<r.top||y>r.bottom)return false;}
+      return true;
+    });
+    p.d.elementFromPoint=(x,y)=>p.d.elementsFromPoint(x,y)[0]||null;
+    return Object.assign(p,{view,track,a,b});
+  }
+  await test('a carousel image absent from the hit stack offers Save this without inventing a whole-post count', async()=>{
+    const p=carouselPage();await p.hover(300,300);assert(p.buttons()&&!p.both());assert.equal(p.host().style.left,'108px');assert.equal(p.host().style.top,'108px');
+    p.click(p.buttons().one);await p.settle(1);assert.deepEqual(p.exported(),[photo(1)]);
+  });
+  await test('a carousel cover inside its own post finds only the visible photo', async()=>{
+    const p=carouselPage();p.place(p.d.getElementById('cover'),100,100,600,500,1);await p.hover(300,300);assert(p.buttons());p.click(p.buttons().one);await p.settle(1);assert.deepEqual(p.exported(),[photo(1)]);
+  });
+  await test('clipped carousel photos place the control inside the visible slide',async()=>{
+    const p=carouselPage();p.a.style.pointerEvents='auto';p.place(p.a,-100,100,800,500);await p.hover(300,300);assert(p.buttons());assert.equal(p.host().style.left,'108px');
+  });
+  await test('a focused carousel exposes its one visible photo and switching slides changes the selected file',async()=>{
+    const p=carouselPage();p.view.focus();await sleep(35);assert(p.buttons());
+    p.place(p.a,-500,100,600,500);p.place(p.b,100,100,600,500);p.place(p.track,-500,100,1200,500);p.track.style.transform='translateX(-600px)';
+    await p.hover(300,300);assert(p.buttons());p.click(p.buttons().one);await p.settle(1);assert.deepEqual(p.exported(),[photo(2)]);
+  });
+  await test('a crossfade with two overlapping visible photos stays ambiguous',async()=>{
+    const p=carouselPage();p.place(p.b,100,100,600,500);await p.hover(300,300);assert.equal(p.host(),null);assert.equal(p.sent.length,0);
+  });
+  await test('carousel recovery never crosses a dialog or activates beneath a navigation button',async()=>{
+    const p=carouselPage(),button=p.d.createElement('button');p.view.append(button);p.place(button,600,250,60,60,2);await p.hover(620,270);assert.equal(p.host(),null);
+    const dialog=p.d.createElement('div');p.d.body.append(dialog);p.place(dialog,200,200,200,200,10);await p.hover(300,300);assert.equal(p.host(),null);assert.equal(p.sent.length,0);
+  });
+
+
+  await test('a modal inside the post blocks recovery and hides an existing carousel control',async()=>{
+    for(const opened of [false,true]){
+      const p=carouselPage();if(opened){await p.hover(300,300);assert(p.host());}
+      const dialog=p.d.createElement('div');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');p.view.append(dialog);p.place(dialog,100,100,600,500,20);
+      if(opened)await sleep(200);else await p.hover(300,300);
+      assert.equal(p.host(),null);assert.equal(p.sent.length,0);
+    }
+  });
+  await test('a photo inside its own dialog remains an eligible selected media',async()=>{
+    const p=carouselPage();p.view.setAttribute('role','dialog');p.view.setAttribute('aria-modal','true');await p.hover(300,300);assert(p.host());p.click(p.buttons().one);await p.settle(1);assert.deepEqual(p.exported(),[photo(1)]);
+  });
+
+
+  await test('a fixed photo viewer with its own cover is not mistaken for a site header',async()=>{
+    const p=carouselPage();p.view.setAttribute('role','dialog');p.view.style.position='fixed';const cover=p.d.getElementById('cover');p.place(cover,100,100,600,500,1);
+    await p.hover(300,300);assert(p.host());assert.equal(p.host().style.top,'108px');
+  });
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })();
