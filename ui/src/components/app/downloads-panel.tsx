@@ -36,6 +36,7 @@ function useGroupDisclosure(remaining:number,createdAt:number,focused:boolean) {
  * finished, which is not the same as every file saved. No bytes, speed or ETA is aggregated across files. */
 function BatchSummary({batch:b,pending,busy,onCancel,focused,full,children}:{batch:DownloadBatch;pending:boolean;busy:boolean;onCancel:(e:React.MouseEvent<HTMLButtonElement>)=>void;focused:boolean;full:boolean;children:React.ReactNode}) {
   const {t,locale}=useI18n()
+  const author=getEnv().FB.authorLabel(b.site,b.author)
   const nameId=useId(),[open,setOpen]=useGroupDisclosure(b.remaining,b.createdAt,focused)
   const parts=[b.failed&&['failed',b.failed,"text-danger"],b.cancelled&&['cancelled',b.cancelled,""],b.skipped&&['skipped',b.skipped,""],b.remaining&&['remaining',b.remaining,""]].filter(Boolean) as [string,number,string][]
   const title=t('downloads.batch.title',{site:t('downloads.batch.site.'+b.site)})
@@ -56,7 +57,7 @@ function BatchSummary({batch:b,pending,busy,onCancel,focused,full,children}:{bat
     <Layers className="mt-px size-3.5 shrink-0 text-muted-foreground" aria-hidden="true"/>
     <span className="min-w-0 flex-1 space-y-1">
     <span id={`${nameId}-summary`} role="status" className="block tabular-nums">
-      <span className="font-semibold">{title}</span>
+      <span className="font-semibold break-words">{title}{author?<span className="font-normal text-muted-foreground">{' · '}{author}</span>:null}</span>
       {' · '}{b.saved===b.count && !b.partial?t('downloads.batch.allSaved',{count:b.count}):t('downloads.batch.saved',{saved:b.saved,count:b.count})}
       {parts.map(([key,n,tone])=><span key={key} className={tone||"text-muted-foreground"}>{' · '}{t('downloads.batch.'+key,{n})}</span>)}
       {b.cancelling && !pending?<span className="text-muted-foreground">{' · '}{t('downloads.batch.cancelling')}</span>:null}
@@ -175,7 +176,9 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
   const row=(j:any)=>{
     const active=!TERMINAL.includes(j.state)
     const seconds=j.total && j.speed>0?Math.ceil((j.total-j.received)/j.speed):null
-    const record=records.find(r=>r.id===(j.op || j.id))
+    const found=records.find(r=>r.id===(j.op || j.id))
+    const record=found ? {...found,author:found.author || j.author} : null
+    const author=env.FB.authorLabel(j.site,j.author)
     const actions=<div className="flex shrink-0 items-center gap-0.5">
       {active && j.managed!==false?rowAction(t('downloads.cancel'),'cancel',j.id,<X/>):null}
       {j.state==='failed' && j.managed!==false && j.error!=='EXPORT_UNCERTAIN'?rowAction(t(j.ready?'downloads.exportAgain':'downloads.retry'),'retry',j.id,<RotateCcw/>):null}
@@ -194,7 +197,7 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
     if(record && feedback)return <ResultRow key={j.id} jobId={j.id} record={record} env={{FB:env.FB,...feedback.env}} unread={unreadIds.includes(record.id)} defaultOpen={focusId===record.id} actions={actions} detailsActions={detailsActions}><div className="pr-3 pb-3 pl-14 has-[>div:empty]:hidden">{progress}</div></ResultRow>
     const summary=<><JobIcon state={j.state}/><div className="min-w-0 flex-1 pt-px">
         <p className="line-clamp-2 text-[13px] leading-[18px] font-medium break-all">{j.filename || t('downloads.pendingName')}</p>
-        <p className={cn("text-xs leading-4",j.state==='failed'?"text-danger":j.state==='complete'?"text-success":"text-muted-foreground")} role="status">{t(`downloads.${j.state}`)}{!batches.has(j.batch) && j.site?<span className="text-muted-foreground">{' · '}{env.FB.siteLabel(j.site)}</span>:null}</p>
+        <p className={cn("text-xs leading-4",j.state==='failed'?"text-danger":j.state==='complete'?"text-success":"text-muted-foreground")} role="status">{t(`downloads.${j.state}`)}{!batches.has(j.batch) && j.site?<span className="text-muted-foreground">{' · '}{env.FB.siteLabel(j.site)}</span>:null}{author?<span className="text-muted-foreground">{' · '}{author}</span>:null}</p>
       </div></>
     return <li key={j.id} className={cn("space-y-2.5 rounded-xl border bg-card p-3",j.state==='failed' && "border-danger/35")} data-job={j.id} data-state={j.state}>
       {detailsActions?<Collapsible className="space-y-2.5">

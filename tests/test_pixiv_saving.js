@@ -304,6 +304,43 @@ function worker({ head = { status: 200, type: 'image/jpeg', length: String(65548
     assert.equal(await w.s.selectedAuthorFolder({ redditAuthorFolders: false }, { pageUrl: page, authorProof: '1-2' }, { id: 1 }, ''), null);
     assert.equal(asked.length, 1, 'no page question while the setting is off');
   });
+  await test('display attribution ignores folder preferences, preserves Pixiv ID/name and never changes the destination', async () => {
+    const w = worker({author:false});
+    const a = await w.s.selectedMediaAuthor({pageUrl:ART}, {id:1}, MASTER);
+    assert.equal(a.site, 'pixiv'); assert.equal(a.id, USER); assert.equal(a.name, NAME);
+    await w.save({srcUrl:MASTER,pageUrl:ART});
+    assert.equal(w.calls.filter(c=>/\/ajax\/illust\/\d+$/.test(c.url)).length,1);
+    assert.equal(w.managed.length,1); assert(/^SavedImages\/[^/]+$/.test(w.managed[0].filename));
+    assert.equal(await w.s.selectedMediaAuthor({pageUrl:'https://www.pixiv.net/',linkUrl:'https://www.pixiv.net/en/artworks/999'}, {id:1}, THUMB),null);
+  });
+  await test('display attribution uses the selected Reddit proof or inline author, never the profile page account', async () => {
+    const w = worker({author:false}), asked=[];
+    w.s.chrome.tabs.sendMessage=async(id,m,o)=>{asked.push({m,o});return {ownerId:'t3_abc',author:'Selected_User'};};
+    const pageUrl='https://www.reddit.com/user/SomeoneElse/';
+    assert.equal(await w.s.selectedMediaAuthor({pageUrl},{id:1},'https://i.redd.it/a.jpg'),null);
+    const a=await w.s.selectedMediaAuthor({pageUrl,authorProof:'1-1',authorDocumentId:'doc-1'},{id:1},'https://i.redd.it/a.jpg');
+    assert.equal(a.id,'selected_user'); assert.equal(asked[0].o.documentId,'doc-1');
+    const b=await w.s.selectedMediaAuthor({pageUrl,redditInlineMedia:{ownerId:'t3_xyz',author:'Inline_User'}},{id:1},'https://i.redd.it/a.jpg');
+    assert.equal(b.id,'inline_user');assert.equal(asked.length,1);
+    assert.equal(await w.s.selectedMediaAuthor({pageUrl,redditInlineMedia:{author:'[deleted]'}},{id:1},''),null);
+  });
+  await test('X display attribution requires the exact selected source and owning status author', async () => {
+    const w=worker({author:false});
+    w.s.chrome.tabs.sendMessage=async()=>({type:'image',url:'https://pbs.twimg.com/media/a.jpg',authorPostUrl:'https://x.com/QuotedOwner/status/42'});
+    const info={pageUrl:'https://x.com/Reposter/status/99'};
+    assert.equal((await w.s.selectedMediaAuthor(info,{id:1},'https://pbs.twimg.com/media/a.jpg')).id,'quotedowner');
+    assert.equal(await w.s.selectedMediaAuthor(info,{id:1},'https://pbs.twimg.com/media/b.jpg'),null);
+  });
+  await test('Reddit account identity never inherits portable folder rewriting (inline and frozen proof)', async () => {
+    for (const name of ['CON','NUL','COM1']) for (const inline of [true,false]) {
+      const w=worker({author:false});w.s.chrome.tabs.sendMessage=async()=>({ownerId:'t3_abc',author:name});
+      const info={pageUrl:'https://www.reddit.com/r/pics/',...(inline?{redditInlineMedia:{ownerId:'t3_abc',author:name}}:{authorProof:'1-1',authorDocumentId:'doc-1'})};
+      const a=await w.s.selectedMediaAuthor(info,{id:1},'https://i.redd.it/a.jpg');
+      assert.equal(a.id,name.toLowerCase()); assert.equal(a.name,name);
+      const folder=await w.s.selectedAuthorFolder({redditAuthorFolders:true},info,{id:1},'https://i.redd.it/a.jpg');
+      assert.equal(folder.folder,name.toLowerCase()+'_','portable folder naming remains unchanged');
+    }
+  });
   // The page side (content/content_reddit.js with the real gesture capture and owner rules) is covered by tests/test_reddit_inline.js Suite 12.
 
   console.log(`\n${passed}/${passed + failed} Pixiv saving / author folder checks passed`);

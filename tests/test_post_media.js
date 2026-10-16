@@ -12,6 +12,8 @@ function fixture(body=items.map(original=>({urls:{original}})),onPages){
  const doc={images:[image],hidden:false,elementsFromPoint:()=>image.isConnected?[image,anchor]:[],querySelectorAll:()=>image.isConnected?[image,anchor]:[],querySelector:()=>null};
  const {world}=simulateGesture(doc,image),page={image,world,document:'admitted',proofs:[]};world.location={href:feed};
  s.TextDecoder=TextDecoder;s.Buffer=Buffer;s.console.info=()=>{};
+ // Browser cache expiry must not keep this Node fixture alive after its assertions finish.
+ s.setTimeout=(fn,ms,...args)=>{const timer=setTimeout(fn,ms,...args);if(ms===120000)timer.unref();return timer;};
  s.chrome.scripting.executeScript=async call=>{if(call.target.documentIds && !call.target.documentIds.includes(page.document))throw Error('No document with id');const result=await vm.runInContext('('+call.func+')',world)(...(call.args||[]));if(call.func.name==='verifyContextOwner')page.proofs.push(result);return [{result,documentId:page.document}];};
  s.fetch=async(raw,options={})=>{calls.push({url:raw,method:options.method||'GET'});if(String(raw).endsWith('/pages'))onPages?.(page);return String(raw).endsWith('/pages')?new Response(JSON.stringify({error:false,body}),{headers:{'content-type':'application/json'}}):items.includes(raw)?new Response(options.method==='HEAD'?null:png,{headers:{'content-type':'image/png','content-length':String(png.length)}}):new Response('not found',{status:404});};
  vm.runInContext('PAWCHIVE_POST_MEDIA_PACE_MS=0',s);

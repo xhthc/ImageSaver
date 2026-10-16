@@ -1634,6 +1634,22 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     }
   }
 
+  // DOWNLOAD-AUTHORS-01: same compact attribution on both surfaces, with and without a retained feedback record.
+  for(const kind of ['quick','full']) for(const lang of ['en','ru']) {
+    const author={site:'pixiv',id:'12345',name:'長い名前'.repeat(12)}, account={site:'x',id:'SelectedOwner',name:'SelectedOwner'};
+    const feedback=rec({site:'x',author:account,filename:'owned.jpg'});
+    const jobs=[{id:'author-single',op:feedback.id,site:'x',author:account,filename:'owned.jpg',state:'complete',received:20,total:20,speed:0,error:'',createdAt:T0},
+      {id:'author-post',site:'pixiv',author,batch:'batch-author',batchIndex:0,filename:'page.jpg',state:'complete',received:20,total:20,speed:0,error:'',createdAt:T0}];
+    const batches=[{id:'batch-author',site:'pixiv',author,count:1,saved:1,failed:0,cancelled:0,skipped:0,remaining:0,createdAt:T0}];
+    const p=await page(kind,{session:[feedback],history:[],jobs,batches,local:{uiLanguage:lang}});
+    assert(p.q('[data-slot="batch-summary"]').textContent.includes('12345') && p.q('[data-slot="batch-summary"]').textContent.includes('長い名前'),`R30a ${kind}/${lang}: post account visible while folded`);
+    for(const toggle of p.qa('[data-slot="site-toggle"], [data-slot="singles-toggle"], [data-slot="batch-toggle"]')) if(toggle.getAttribute('aria-expanded')==='false') await p.click(toggle);
+    await p.settle(4);
+    assert(p.q('[data-job="author-single"]').textContent.includes('@selectedowner') && p.q('[data-job="author-post"]').textContent.includes('12345'),`R30b ${kind}/${lang}: individual record and durable post job both labelled`);
+    assert(!p.q('[data-job="author-single"] a[href*="SelectedOwner"]'),`R30c ${kind}/${lang}: account is plain text, no inferred link`);
+    await p.unmount();
+  }
+
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);
   process.exit(failed > 0 ? 1 : 0);
 })().catch((err) => {

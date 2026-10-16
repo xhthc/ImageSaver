@@ -158,17 +158,18 @@
     const now=Date.now();
     if(!group || (now-group.lastAt>=GROUP_IDLE_MS && !group.entry?.hover && !group.entry?.node.contains(shadow?.activeElement))) {
       if(group?.entry)remove(group.entry.id,false);
-      group={lastAt:now,saved:0,failed:0,seen:new Set(),entry:null,suppressed:false,omittedSuccesses:false};
+      group={lastAt:now,saved:0,failed:0,seen:new Set(),entry:null,suppressed:false,omittedSuccesses:false,author:notice.authorLabel || ''};
     }
     if(group.seen.has(notice.id))return true;
     group.seen.add(notice.id);
     if(group.seen.size>256)group.seen.delete(group.seen.values().next().value);
     group.lastAt=now;
+    if(group.author!==(notice.authorLabel || ''))group.author='';
     if(notice.kind==='error')group.failed++;else group.saved++;
     if(!notice.successEnabled)group.omittedSuccesses=true;
     if(group.suppressed)return true;
     const multiple=group.saved+group.failed>1;
-    const display=multiple?{...notice,grouped:true,kind:group.failed?'error':'success',title:notice.summaryTitle,
+    const display=multiple?{...notice,grouped:true,kind:group.failed?'error':'success',title:notice.summaryTitle+(group.author?' · '+group.author:''),
       message:(group.omittedSuccesses?[]:[`${notice.savedLabel}: ${group.saved}`]).concat(`${notice.failedLabel}: ${group.failed}`).join(' · ')}:notice;
     const created=!group.entry;
     if(created)group.entry=showCard(display);
@@ -193,7 +194,7 @@
   chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     if(message?.action!=='MEDIALATCH_NOTICE')return false;
     const n=message.notice;
-    if(sender?.id!==chrome.runtime.id || sender.tab || !n || n.origin!==location.origin || typeof n.id!=='string' || !/^[a-z0-9-]{6,48}$/.test(n.id) || !['success','error'].includes(n.kind) || typeof n.successEnabled!=='boolean' || !['title','message','actionLabel','dismissLabel','summaryTitle','savedLabel','failedLabel'].every(k=>typeof n[k]==='string' && n[k].length>0 && n[k].length<=240) || (n.batch!==undefined && !(typeof n.batch==='string' && /^[a-z0-9-]{6,64}$/.test(n.batch) && typeof n.final==='boolean')) || (['dismissBatch','updateOnly'].some(k=>n[k]!==undefined && !(n.batch && typeof n[k]==='boolean')))) {respond({success:false});return false;}
+    if(sender?.id!==chrome.runtime.id || sender.tab || !n || n.origin!==location.origin || typeof n.id!=='string' || !/^[a-z0-9-]{6,48}$/.test(n.id) || !['success','error'].includes(n.kind) || typeof n.successEnabled!=='boolean' || (n.authorLabel!==undefined && !(typeof n.authorLabel==='string' && n.authorLabel.length>0 && n.authorLabel.length<=80)) || !['title','message','actionLabel','dismissLabel','summaryTitle','savedLabel','failedLabel'].every(k=>typeof n[k]==='string' && n[k].length>0 && n[k].length<=240) || (n.batch!==undefined && !(typeof n.batch==='string' && /^[a-z0-9-]{6,64}$/.test(n.batch) && typeof n.final==='boolean')) || (['dismissBatch','updateOnly'].some(k=>n[k]!==undefined && !(n.batch && typeof n[k]==='boolean')))) {respond({success:false});return false;}
     try {respond({success:show(n)});}catch(_){respond({success:false});}
     return false;
   });

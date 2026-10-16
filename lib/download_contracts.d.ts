@@ -3,9 +3,13 @@ export type DownloadState =
   | 'resolving' | 'converting' | 'queued' | 'receiving' | 'ready' | 'exporting'
   | 'complete' | 'failed' | 'cancelled';
 
+/** Proven account of the owning post; display metadata, never permission to fetch or a claim of artistic authorship. */
+export interface DownloadAuthor { site: 'x' | 'reddit' | 'pixiv'; id: string; name: string }
+
 export interface DownloadJob {
   id: string;
   op?: string | null;
+  author?: DownloadAuthor;
   managed?: boolean;
   filename: string;
   state: DownloadState;
@@ -28,6 +32,7 @@ export interface DownloadJob {
 export interface DownloadBatch {
   id: string;
   site: 'x' | 'reddit' | 'pixiv' | 'pawchive';
+  author?: DownloadAuthor;
   count: number;
   saved: number;
   failed: number;

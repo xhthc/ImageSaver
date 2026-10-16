@@ -180,11 +180,24 @@ function pixivArtworkAuthor(id) {
     pixivAuthorRequests.set(id, fetchResolverMetadata(`https://www.pixiv.net/ajax/illust/${id}`, { timeoutMs: 4000, credentials: 'include' }).then((data) => {
       const b = data && data.error === false ? data.body : null;
       // the answer must be about this very artwork and name a stable numeric user id
-      return b && String(b.illustId ?? b.id) === id && /^\d{1,12}$/.test(String(b.userId)) ? authorFolder('pixiv', String(b.userName ?? ''), String(b.userId)) : null;
+      return b && String(b.illustId ?? b.id) === id && /^\d{1,12}$/.test(String(b.userId)) ? {site: 'pixiv', id: String(b.userId), name: String(b.userName ?? '')} : null;
     }, () => null));
     setTimeout(() => pixivAuthorRequests.delete(id), 120000);
   }
   return pixivAuthorRequests.get(id);
+}
+
+// Keep account identity separate from portable folder names (for example, Reddit CON -> folder con_).
+async function selectedRedditPostAuthor(info, tab) {
+  let author = /^t3_[a-z0-9]{1,12}$/.test(info.redditInlineMedia?.ownerId || '') ? info.redditInlineMedia.author : '';
+  if (!info.redditInlineMedia && info.authorProof && tab?.id) {
+    const documentId = info.authorDocumentId ? {documentId: info.authorDocumentId} : {};
+    try {
+      const a = await chrome.tabs.sendMessage(tab.id, {action: 'GET_REDDIT_POST_AUTHOR', proof: info.authorProof}, {frameId: Number.isInteger(info.frameId) ? info.frameId : 0, ...documentId});
+      if (a && /^t3_[a-z0-9]{1,12}$/.test(a.ownerId)) author = a.author;
+    } catch (_) {}
+  }
+  return typeof author === 'string' && /^[A-Za-z0-9_-]{3,20}$/.test(author) ? author : '';
 }
 
 /**
@@ -195,22 +208,30 @@ function pixivArtworkAuthor(id) {
 async function selectedAuthorFolder(settings, info, tab, src) {
   const pageUrl = info.pageUrl || tab?.url || '';
   if (settings.redditAuthorFolders === true && /^https:\/\/(?:[a-z0-9-]+\.)?reddit\.com\//i.test(pageUrl) && tab?.id) {
-    // inline: the author proven with the descriptor itself; context menu: the author frozen at the admission named by its proof token, asked of
-    // the admitting document only (a replaced document cannot answer). Neither: no author.
-    if (info.redditInlineMedia) return info.redditInlineMedia.author ? authorFolder('reddit', info.redditInlineMedia.author) : null;
-    if (!info.authorProof) return null;
-    const documentId = info.authorDocumentId ? { documentId: info.authorDocumentId } : {};
-    try {
-      const a = await chrome.tabs.sendMessage(tab.id, { action: 'GET_REDDIT_POST_AUTHOR', proof: info.authorProof }, { frameId: Number.isInteger(info.frameId) ? info.frameId : 0, ...documentId });
-      if (a && /^t3_[a-z0-9]{1,12}$/.test(a.ownerId)) return authorFolder('reddit', a.author);
-    } catch (_) {}
-    return null;
+    const author = await selectedRedditPostAuthor(info, tab);
+    return author ? authorFolder('reddit', author) : null;
   }
   if (settings.pixivAuthorFolders === true) {
     const id = pixivArtworkId(src);
     const linked = pixivArtworkId(info.linkUrl || '');
-    if (id && (linked ? linked === id : pixivArtworkId(pageUrl) === id)) return pixivArtworkAuthor(id);
+    if (id && (linked ? linked === id : pixivArtworkId(pageUrl) === id)) { const a = await pixivArtworkAuthor(id); return a ? authorFolder('pixiv', a.name, a.id) : null; }
   }
+  return null;
+}
+
+// Independent of folder preferences: use only the owner already proved for this selected media.
+async function selectedMediaAuthor(info, tab, src) {
+  const page = info.pageUrl || tab?.url || '';
+  if (isXPageUrl(page)) {
+    const id = await selectedXAuthor(info, tab, src);
+    return id ? {site: 'x', id, name: id} : null;
+  }
+  if (/^https:\/\/(?:[a-z0-9-]+\.)?reddit\.com\//i.test(page)) {
+    const author = await selectedRedditPostAuthor(info, tab);
+    return author ? {site: 'reddit', id: author.toLowerCase(), name: author} : null;
+  }
+  const id = pixivArtworkId(src), linked = pixivArtworkId(info.linkUrl || '');
+  if (id && (linked ? linked === id : pixivArtworkId(page) === id)) return pixivArtworkAuthor(id);
   return null;
 }
 

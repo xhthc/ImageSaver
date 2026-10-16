@@ -193,5 +193,13 @@ const visibility=value=>{hidden=value;w.document.dispatchEvent(new w.Event('visi
   await freshNotifier().batch({...batch,saved:2,failed:0},record);
   assert(!cards().includes(stale),'a fresh worker removes the previous error without creating a success notice');
 
+  // A burst may name one account only while every result belongs to that account.
+  advance(20000);
+  const authored=(id,author)=>({...n(id),authorLabel:author,title:'Saved · '+author});
+  show(authored('op-author-1','@owner'));show(authored('op-author-2','@owner'));advance(600);
+  assert.equal(cards().at(-1).querySelector('.title').textContent,'Download results · @owner');
+  show(authored('op-author-3','@other'));advance(600);
+  assert.equal(cards().at(-1).querySelector('.title').textContent,'Download results','mixed-account totals must not name the latest account');
+  assert.equal(show({...n('op-author-4'),authorLabel:'x'.repeat(81)}).success,false);
   console.log('PASS grouped and batch notices: trusted routing/text, stable burst card, counts/coalescing/dedup/suppression, opt-out, locale/focus/timers/motion and session-only targets');
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>dom.window.close());

@@ -66,7 +66,7 @@ export function summarize(FB, record, lang = 'ru') {
 export function rowParts(FB, record, lang = 'ru') {
   const { t } = translator(lang);
   const summary = summarize(FB, record, lang);
-  const site = FB.siteLabel(record.site || record.sourceHost || t('row.siteUnknown'));
+  const site = [FB.siteLabel(record.site || record.sourceHost || t('row.siteUnknown')), FB.authorLabel(record.site, record.author)].filter(Boolean).join(' · ');
   const type = record.output.type !== 'unknown'
     ? ' · ' + t(record.output.type === 'pic' ? 'type.pic' : record.output.type === 'gif' ? 'type.gif' : 'type.video') + (record.output.ext ? ' ' + record.output.ext : '')
     : '';

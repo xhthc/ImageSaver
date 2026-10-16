@@ -3387,6 +3387,33 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     assert((await env.tracker.get(op)).site==='pixiv','33d: a retained corrected record still outranks the admitted job token');
   }
 
+  // DOWNLOAD-AUTHORS-01: private display metadata does not leak into public reports or grant source authority.
+  {
+    const FB=FBLib, author={site:'pixiv',id:'12345',name:'Named Artist'};
+    assert(FB.authorLabel('x',{site:'x',id:'Owner_1'})==='@owner_1' && FB.authorLabel('reddit',{site:'reddit',id:'Some_User'})==='u/some_user','34a: platform account labels');
+    const longLabel=FB.authorLabel('pixiv',{site:'pixiv',id:'123456789012',name:'名'.repeat(100)});
+    assert(longLabel.endsWith('(123456789012)') && longLabel.length<=48,'34k: compact Pixiv label preserves stable ID after name truncation');
+    assert(!FB.safeAuthor('x',{site:'reddit',id:'someone'}) && !FB.safeAuthor('x',{site:'x',id:'../bad'}) && !FB.safeAuthor('x',{site:'x',id:'i'}) && !FB.safeAuthor('pixiv',{site:'pixiv',id:'bad'}),'34b: foreign and invalid identities refused');
+    const dirty=FB.safeAuthor('pixiv',{...author,name:'Name\u202e https://evil.test/?token=SECRET C:\\Users\\private'});
+    assert(!/SECRET|private|\u202e|https:/.test(dirty.name) && dirty.id==='12345','34c: display names are bounded and sanitized');
+    const env=makeEnv({captureManager:true});await env.ready();
+    const op=await env.x.fbBegin({site:'pixiv',author});await env.tracker.stage(op,'resolving',{author:{...author,name:'Updated Artist'}});
+    const rec=await env.tracker.get(op);assert(rec.author.id==='12345' && rec.author.name==='Updated Artist','34d: operation metadata stages and persists');
+    let admitted;const manager=vm.runInContext('downloadManager',env.sandbox);manager.enqueue=async(o,m)=>{admitted=m;return 101;};
+    await env.sandbox.managedDownload({url:'blob:chrome-extension://testid/test',filename:'a.png'},op,'image/png');
+    assert(admitted.author.id==='12345' && admitted.author.name==='Updated Artist','34j: the managed queue captures the proven account');
+    assert(!/Updated Artist|Named Artist|12345/.test(FB.buildReport(rec)),'34e: public bug reports exclude author identity');
+    await env.tracker.stage(op,'resolving',{author:{site:'x',id:'foreign'}});
+    assert((await env.tracker.get(op)).author.site==='pixiv','34f: mismatched patch cannot replace the account');
+    const retry=await env.managerDeps.newAttempt({op:'op-evicted',site:'pixiv',author,source:'blob:chrome-extension://testid/x',mime:'image/gif'});
+    assert((await env.tracker.get(retry)).author.id==='12345','34g: retry retains author after feedback expiration');
+    const notices=[],notify=env.sandbox.ImageSaverFeedbackTracker.createNotifier({lang:'en',getPrefs:async()=>({notifySuccess:true}),deliver:async(r,n)=>{notices.push(n);return true;}});
+    await env.x.fbFail(op,{code:'NO_MEDIA'});const terminal=await env.tracker.get(op);
+    await notify(terminal);await notify.batch({id:'batch-author-1',site:'pixiv',author,count:2,saved:2,failed:0,cancelled:0,skipped:0,remaining:0},terminal);
+    assert(notices[0].title.includes('Updated Artist') && notices[1].title.includes('Named Artist') && notices[1].message==='All 2 files saved','34h: single and post notices show their own author without altering counts');
+    assert(FB.sanitizeRecord({...rec,author:{site:'x',id:'other'}}).author===undefined && FB.sanitizeRecord({...rec,author:undefined}).author===undefined,'34i: unknown/legacy entries stay unlabelled');
+  }
+
   console.log(`\nИТОГИ: ${passed}/${passed + failed} пройдено (${failed} ошибок).`);
   process.exit(failed > 0 ? 1 : 0);
 })().catch((err) => {

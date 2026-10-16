@@ -17,10 +17,12 @@
   // The finite set of services a batch can belong to (also the type DownloadBatch.site and the labels downloads.batch.site.*).
   const BATCH_SITES = ['x', 'reddit', 'pixiv', 'pawchive'];
   const ID = /^[A-Za-z0-9_.:-]{1,64}$/;
+  const authorOf = (site, value) => root.ImageSaverFeedback?.safeAuthor(site, value);
+  const authorFields = value => { const author = authorOf(value.site, value.author); return author && !value.authorConflict ? {author} : {}; };
   const cleanBatches = list => (Array.isArray(list) ? list : []).filter(b => b && typeof b.id === 'string' && ID.test(b.id) && BATCH_SITES.includes(b.site) && Number.isFinite(b.createdAt) && Array.isArray(b.slots) && b.slots.length >= 1 && b.slots.length <= MAX_SLOTS)
-    .map(b => ({id: b.id, site: b.site, createdAt: b.createdAt, ...(b.partial === true ? {partial: true} : {}), ...(Number.isFinite(b.cancel) && b.cancel > 0 ? {cancel: b.cancel} : {}), slots: b.slots.map(s => ({s: SLOT_STATES.has(s?.s) ? s.s : 'failed', ...(typeof s?.op === 'string' && ID.test(s.op) ? {op: s.op} : {}), ...(typeof s?.job === 'string' && ID.test(s.job) ? {job: s.job} : {})}))}));
+    .map(b => ({id: b.id, site: b.site, createdAt: b.createdAt, ...authorFields(b), ...(b.authorConflict === true ? {authorConflict: true} : {}), ...(b.partial === true ? {partial: true} : {}), ...(Number.isFinite(b.cancel) && b.cancel > 0 ? {cancel: b.cancel} : {}), slots: b.slots.map(s => ({s: SLOT_STATES.has(s?.s) ? s.s : 'failed', ...(typeof s?.op === 'string' && ID.test(s.op) ? {op: s.op} : {}), ...(typeof s?.job === 'string' && ID.test(s.job) ? {job: s.job} : {})}))}));
   const slotOfJob = j => j.state === 'complete' ? 'saved' : j.state === 'failed' ? 'failed' : j.state === 'cancelled' ? 'cancelled' : 'active';
-  const publicBatch = b => { const n = {saved: 0, failed: 0, cancelled: 0, skipped: 0, remaining: 0}; for (const s of b.slots) n[open(s.s) ? 'remaining' : s.s]++; return {id: b.id, site: b.site, count: b.slots.length, ...n, ...(b.partial ? {partial: true} : {}), ...(b.cancel ? {cancelRequested: true} : {}), createdAt: b.createdAt}; };
+  const publicBatch = b => { const n = {saved: 0, failed: 0, cancelled: 0, skipped: 0, remaining: 0}; for (const s of b.slots) n[open(s.s) ? 'remaining' : s.s]++; return {id: b.id, site: b.site, ...authorFields(b), count: b.slots.length, ...n, ...(b.partial ? {partial: true} : {}), ...(b.cancel ? {cancelRequested: true} : {}), createdAt: b.createdAt}; };
   function database(idb) {
     let opening;
     const open = () => opening || (opening = new Promise((resolve, reject) => {
@@ -59,7 +61,7 @@
     // The counts are the canonical slot counts; the last announced counts per batch also seed from a restored record, so a restart
     // announces only what its reconciliation changed.
     const announced = new Map();
-    const countKey = p => [p.saved, p.failed, p.cancelled, p.skipped, p.remaining].join('/');
+    const countKey = p => [p.saved, p.failed, p.cancelled, p.skipped, p.remaining, JSON.stringify(p.author)].join('/');
     const announce = () => {
       for (const id of [...announced.keys()]) if (!batches.some(b => b.id === id)) announced.delete(id);
       for (const b of batches) { const p = publicBatch(b), key = countKey(p); if (announced.get(b.id) === key) continue; announced.set(b.id, key); try { d.batchChanged?.(p); } catch (_) {} }
@@ -69,7 +71,7 @@
     // `keep` is the one step that survives a refused write (bindSlot): it is re-applied in the same lock turn as the rollback, before anything queued behind this write can run.
     const edit = (fn, keep) => lock(async () => { const old = JSON.stringify(batches); if (!fn()) return false; try { await save(); } catch (e) { batches = JSON.parse(old); keep?.(); throw e; } return true; });
     const patch = (j, p) => lock(async () => { const old = {...j}; Object.assign(j, p, {updatedAt: Date.now()}); try { await save(); } catch(e) { Object.assign(j, old); syncBatches(); throw e; } });
-    const publicJob = j => ({id:j.id, op:j.op, filename:(j.actualFilename || j.filename).split(/[\\/]/).pop(), state:j.state, received:j.received, total:j.total, speed:j.speed, error:j.error, downloadId:Number.isInteger(j.downloadId)?j.downloadId:null, createdAt:j.createdAt, ready:!!j.prepared, ...(j.site ? {site:j.site} : {}), ...(j.batch ? {batch:j.batch.id,batchIndex:j.batch.i} : {})});
+    const publicJob = j => ({id:j.id, op:j.op, filename:(j.actualFilename || j.filename).split(/[\\/]/).pop(), state:j.state, received:j.received, total:j.total, speed:j.speed, error:j.error, downloadId:Number.isInteger(j.downloadId)?j.downloadId:null, createdAt:j.createdAt, ready:!!j.prepared, ...(j.site ? {site:j.site} : {}), ...authorFields(j), ...(j.batch ? {batch:j.batch.id,batchIndex:j.batch.i} : {})});
     const settle = (j, error) => { const w = waiting.get(j.id); if(w) { waiting.delete(j.id); error ? w.reject(error) : w.resolve(j.downloadId); } };
     const ready = (async () => {
       const stored = await d.store.get(); jobs = stored?.jobs || []; paused = stored?.paused === true; batches = cleanBatches(stored?.batches);
@@ -220,7 +222,7 @@
     }
     async function enqueue(options, meta = {}) {
       await ready;
-      const j = {id:'job-'+d.id(), op:meta.op || null, site:/^[a-z0-9.-]{1,50}$/.test(meta.site || '') ? meta.site : '', source:options.url, selectedPage:meta.selectedPage || '', filename:options.filename, expectedMime:meta.mime || '', ...(Number.isSafeInteger(meta.maxBytes) && meta.maxBytes>0 ? {maxBytes:meta.maxBytes} : {}), directoryId:meta.directoryId || '', createdAt:Number.isSafeInteger(meta.createdAt) && meta.createdAt>0?meta.createdAt:Date.now(), state:'queued', received:0, total:null, speed:0, prepared:false, error:''};
+      const j = {id:'job-'+d.id(), op:meta.op || null, site:/^[a-z0-9.-]{1,50}$/.test(meta.site || '') ? meta.site : '', ...authorFields(meta), source:options.url, selectedPage:meta.selectedPage || '', filename:options.filename, expectedMime:meta.mime || '', ...(Number.isSafeInteger(meta.maxBytes) && meta.maxBytes>0 ? {maxBytes:meta.maxBytes} : {}), directoryId:meta.directoryId || '', createdAt:Number.isSafeInteger(meta.createdAt) && meta.createdAt>0?meta.createdAt:Date.now(), state:'queued', received:0, total:null, speed:0, prepared:false, error:''};
       let resolve, reject; const result = new Promise((a,b) => {resolve=a;reject=b;});
       await lock(async()=> {
         // Resolve the live slot under the lock: a failed batch edit can replace the slot objects before enqueue runs.
@@ -310,6 +312,18 @@
       await edit(() => { batches.push(b); while (batches.length > MAX_BATCHES) { const k = batches.findIndex(x => !x.slots.some(s => open(s.s))); if (k < 0) break; batches.splice(k, 1); } return true; });
       return b.id;
     }
+    // A batch may name an author only when every observed author agrees; conflicting owners stay unlabelled.
+    const setAuthor = async (op, value) => {
+      await ready;
+      await edit(() => {
+        const b = batches.find(b => b.slots.some(s => s.op === op));
+        const author = b && authorOf(b.site, value);
+        if (!author || b.authorConflict) return false;
+        if (b.author && b.author.id !== author.id) { delete b.author; b.authorConflict = true; }
+        else b.author = author;
+        return true;
+      });
+    };
     const bindStep = ({id, i}, op) => () => { if (batches.find(b => b.id === id)?.cancel) { if (ID.test(String(op))) fence(op); return false; } const s = slotAt(id, i); if (!s || !open(s.s) || s.job || !ID.test(String(op))) return false; s.op = op; s.s = 'active'; return true; };
     // A running preparation never loses its batch because the write of its binding was refused: the binding stays in memory (a later save stores it) and the caller still sees the
     // error. The preparation stays in the batch through pruning, its late enqueue is refused or joins its slot, and a failure before the queue settles that slot instead of
@@ -334,7 +348,7 @@
       const old = batches; batches = next; try { await save(); } catch (e) { batches = old; throw e; }
     }); return batches.map(view); };
     const batchPosition = op => { const b = batches.find(b => b.slots.some(s => s.op === op)); return b ? {batch:b.id,batchIndex:b.slots.findIndex(s => s.op === op)} : null; };
-    return {ready, enqueue, command, openBatch, bindSlot, keepSlot, settleSlot, closeBatch, stopped, slotInfo, batchSummary, isBatchOp: op => memberOps.has(op), pruneBatches, batchPosition, batchOf(op) { return batchPosition(op)?.batch; }, activityCount(){return jobs.filter(j=>!terminal.has(j.state)).length;}, output(id){
+    return {ready, enqueue, command, openBatch, setAuthor, bindSlot, keepSlot, settleSlot, closeBatch, stopped, slotInfo, batchSummary, isBatchOp: op => memberOps.has(op), pruneBatches, batchPosition, batchOf(op) { return batchPosition(op)?.batch; }, activityCount(){return jobs.filter(j=>!terminal.has(j.state)).length;}, output(id){
       const j=jobs.find(j=>j.downloadId===id);if(!j?.mime)return null;
       return {mime:j.mime,evidence:'verified_mime',type:j.mime.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'};
     },async drain(){await ready;while(running)await d.sleep(100);}, async progress(id,p){await progress.get(id)?.(p);}, async list(){await ready;await chain;return {jobs:jobs.map(publicJob).reverse(),paused,batches:batches.map(view)};}};

@@ -251,6 +251,7 @@
             updatedAt: t,
             state: 'resolving',
             site: i.site,
+            author: i.author,
             sourceHost: src.host,
             sourceExt: src.ext,
             pageHost: FB.safeHost(i.pageUrl),
@@ -275,6 +276,8 @@
           if (p.conversion && FB.sanitizeRecord(Object.assign({}, rec, { conversion: p.conversion })).conversion === p.conversion) rec.conversion = p.conversion;
           if (p.expectedType) rec.expectedType = FB.sanitizeRecord(Object.assign({}, rec, { expectedType: p.expectedType })).expectedType;
           if (p.site) rec.site = FB.sanitizeRecord(Object.assign({}, rec, { site: p.site })).site || rec.site;
+          const author = FB.safeAuthor(rec.site, p.author);
+          if (author) rec.author = author;
           if (p.sourceUrl) {
             const s = FB.safeUrlParts(p.sourceUrl);
             rec.sourceHost = s.host || rec.sourceHost;
@@ -530,7 +533,7 @@
       if (batch.partial) parts.push(text('downloads.batch.partial', 'часть оригиналов не импортирована', 'some originals not imported'));
       const options = {
         kind: batch.failed ? 'error' : 'success',
-        title: FB.sanitizeText(text('downloads.batch.title', `Пост ${site}`, `${site} post`, { site }), 80),
+        title: FB.sanitizeText([text('downloads.batch.title', `Пост ${site}`, `${site} post`, { site }), FB.authorLabel(batch.site, batch.author)].filter(Boolean).join(' · '), 80),
         message: FB.sanitizeText(parts.join(' · ') || text('downloads.batch.failed', 'ошибок: 0', '0 failed', { n: 0 }), 200),
         actionLabel: text('notice.openManager', 'Открыть менеджер', 'Open manager'),
         dismissLabel: text('notice.dismiss', 'Закрыть уведомление', 'Dismiss notification'),
@@ -573,13 +576,15 @@
         : (isSuccess ? text('notice.saved', `${site}: сохранено`, `${site}: saved`, { site }) : `MediaLatch: ${s.title}`);
       const options = {
         kind: isSuccess ? 'success' : 'error',
-        title: FB.sanitizeText(title, 80),
+        title: FB.sanitizeText([title, FB.authorLabel(record.site, record.author)].filter(Boolean).join(' · '), 80),
         message: FB.sanitizeText(message || s.stateLabel, 200),
         contextMessage: isSuccess ? undefined : text('notice.details', 'Нажмите, чтобы открыть подробности', 'Click to open the details'),
         actionLabel: text('notice.openManager', 'Открыть менеджер', 'Open manager'),
         dismissLabel: text('notice.dismiss', 'Закрыть уведомление', 'Dismiss notification')
       };
       // Every eligible result reaches the page's one coalesced card; dropping successes would undercount it.
+      const author = FB.authorLabel(record.site, record.author);
+      if (author) options.authorLabel = author;
       options.successEnabled = successEnabled;
       options.summaryTitle = text('notice.summaryTitle', 'Результаты загрузок', 'Download results');
       options.savedLabel = text('notice.savedCount', 'Сохранено', 'Saved');

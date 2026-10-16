@@ -889,5 +889,26 @@ function env(stored={jobs:[],paused:false}) {
       assert.equal(vm.runInContext('offscreenState.activeOffscreenTasks',sandbox),0);
     }
   }
+  // Account metadata survives completion/restart independently of ephemeral feedback and remains provider-scoped.
+  {
+    const e=env(),m=createManager(e.d),author={site:'x',id:'PostOwner',name:'PostOwner'};
+    await m.ready;const work=m.enqueue({url:'https://media.test/a.png',filename:'a.png'},{site:'x',author,op:'op-author-1'});
+    await until(async()=> (await m.list()).jobs.length===1);
+    assert.equal((await m.list()).jobs[0].author.id,'postowner');
+    await work;await until(async()=> (await m.list()).jobs[0].state==='complete');
+    const restored=createManager(env(e.data).d);await restored.ready;
+    assert.equal((await restored.list()).jobs[0].author.id,'postowner');
+    const bad=createManager(env({jobs:[{...e.data.jobs[0],site:'reddit'}],batches:[],paused:false}).d);await bad.ready;
+    assert.equal((await bad.list()).jobs[0].author,undefined,'a stored account cannot cross providers');
+    const id=await m.openBatch('x',2);await m.bindSlot({id,i:0},'op-author-2');await m.setAuthor('op-author-2',author);
+    assert.equal((await m.batchSummary(id)).author.id,'postowner');
+    e.failWrite=()=>true;await assert.rejects(m.setAuthor('op-author-2',{site:'x',id:'WrongOwner'}));e.failWrite=null;
+    assert.equal((await m.batchSummary(id)).author.id,'postowner','failed metadata persistence rolls back');
+    await m.bindSlot({id,i:1},'op-author-3');await m.setAuthor('op-author-3',{site:'x',id:'OtherOwner'});
+    assert.equal((await m.batchSummary(id)).author,undefined,'conflicting owners never produce a false post label');
+    const again=createManager(env(e.data).d);await again.ready;
+    assert.equal((await again.batchSummary(id)).author,undefined,'conflict remains unlabelled after restart');
+    console.log('PASS: account attribution persistence, provider boundaries, batch agreement and failed-write rollback');
+  }
   console.log('PASS: production stream validation, byte identity, queue/export boundary, local retry, cancellation, journal failure, recovery and statistics');
 })().catch(e=>{console.error(e);process.exitCode=1;});

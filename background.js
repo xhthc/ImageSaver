@@ -1049,6 +1049,11 @@ async function fbBegin(info, tab) {
   if (op && info && info.slot) await batchBind(info.slot, op);
   return op;
 }
+async function fbSetAuthor(op, author) {
+  if (!op || !author) return;
+  await fbStage(op, 'resolving', {author});
+  try { await downloadManager?.setAuthor(op, author); } catch (_) {}
+}
 async function fbSetPost(op, url) {
   if (!op || !feedbackTracker) return;
   dbg('op', 'post', 'info', undefined, { linked: Boolean(url) }, { op });
@@ -1138,12 +1143,12 @@ const downloadManager = globalThis.MediaLatchDownloads && typeof indexedDB !== '
       // Keep the previous terminal target before replacing this slot's operation, including after a worker restart.
       if(j.batch && old?.noticeTarget && FeedbackLib.isTerminal(old.state) && !batchNoticeDelivered.has(j.batch.id))batchNoticeRemember(j.batch.id,{record:old});
       const m = j.mime || j.expectedMime || '';
-      return fbBegin({sourceUrl:j.source,site:fbAttemptSite(j,old),expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
+      return fbBegin({sourceUrl:j.source,site:fbAttemptSite(j,old),author:j.author || old?.author,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
     },
     recoverAttempt:async j=>{
       const old=await feedbackTracker?.get(j.op);
       const m = j.mime || j.expectedMime || '';
-      return old && (!FeedbackLib.isTerminal(old.state) || old.state==='complete')?j.op:fbBegin({sourceUrl:j.source,site:fbAttemptSite(j,old),expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
+      return old && (!FeedbackLib.isTerminal(old.state) || old.state==='complete')?j.op:fbBegin({sourceUrl:j.source,site:fbAttemptSite(j,old),author:j.author || old?.author,expectedType:m.startsWith('video/')?'video':m==='image/gif'?'gif':'image'},old?.noticeTarget?{id:old.noticeTarget.tabId,url:old.noticeTarget.origin}:undefined);
     },
     attach:async(j,id)=>isFileExport(id)?fbStage(j.op,'saving',{output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}):fbAttach(j.op,id,{filename:j.filename,output:{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}}),
     complete:async(j,item)=>isFileExport(j.downloadId)?feedbackTracker?.completeFile(j.op,item,{mime:j.mime,evidence:'verified_mime',type:j.mime?.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'}):fbDownloadTerminal(j.downloadId,'complete'),
@@ -1163,7 +1168,7 @@ async function managedDownload(options, feedbackOp=null, mime='', maxBytes=0, se
   // Only the admitting origin is needed by delayed staging; do not persist its full page URL.
   let selectedOrigin='';try{selectedOrigin=new URL(selectedPage).origin;}catch(_){}
   const record=feedbackOp ? await feedbackTracker?.get(feedbackOp).catch(()=>null) : null;
-  return downloadManager.enqueue(options,{op:feedbackOp,createdAt:record?.createdAt,mime,maxBytes,site:record?.site || fbSiteOf(selectedOrigin,''),selectedPage:selectedOrigin,directoryId:saveDirectoryId});
+  return downloadManager.enqueue(options,{op:feedbackOp,createdAt:record?.createdAt,mime,maxBytes,site:record?.site || fbSiteOf(selectedOrigin,''),author:record?.author,selectedPage:selectedOrigin,directoryId:saveDirectoryId});
 }
 // Post batches (MANAGER-BATCH-PROGRESS-01; model in worker/download_manager.js). Best effort: a batch that cannot be recorded never stops,
 // delays or changes a save, and batch data never reaches a fetch decision.
@@ -1232,7 +1237,7 @@ async function batchNoticeDeliver(id) {
   const batch = await downloadManager?.batchSummary(id);
   if (!batch || !feedbackTracker || typeof feedbackNotifier.batch !== 'function') return;
   const previous = batchNoticeDelivered.get(id);
-  const key = [batch.saved, batch.failed, batch.cancelled, batch.skipped, batch.remaining].join('/');
+  const key = [batch.saved, batch.failed, batch.cancelled, batch.skipped, batch.remaining, FeedbackLib.authorLabel(batch.site, batch.author)].join('/');
   if (previous?.key === key) return;
   const ops = new Set(batch.ops);
   // The newest finished member supplies the original tab/origin; a retry can retain the last delivered target.
@@ -1247,7 +1252,7 @@ async function downloadManagerSnapshot() {
   const records=await feedbackTracker.list();
   for(const j of snapshot.jobs){const r=records.find(r=>r.id===j.op);if(r && !j.site)j.site=r.site || '';}
   const preparations=records.filter(r=>!owned.has(r.id) && ['resolving','converting','failed','interrupted'].includes(r.state));
-  for(const r of preparations){const batch=downloadManager.batchPosition?.(r.id);snapshot.jobs.push({id:r.id,op:r.id,managed:false,filename:r.filename || '',state:r.state==='interrupted'?'failed':r.state,received:0,total:null,speed:0,error:r.failure?.code || '',createdAt:r.createdAt,site:r.site || '',...(batch || {})});}
+  for(const r of preparations){const batch=downloadManager.batchPosition?.(r.id);snapshot.jobs.push({id:r.id,op:r.id,managed:false,filename:r.filename || '',state:r.state==='interrupted'?'failed':r.state,received:0,total:null,speed:0,error:r.failure?.code || '',createdAt:r.createdAt,site:r.site || '',...(r.author ? {author:r.author} : {}),...(batch || {})});}
   if(downloadManager.pruneBatches)snapshot.batches=await downloadManager.pruneBatches(new Set(preparations.map(r=>r.id)));
   snapshot.jobs.sort((a,b)=>b.createdAt-a.createdAt);return snapshot;
 }
@@ -1837,8 +1842,10 @@ async function onContextMenuClicked(info, tab) {
         pixivAuthorFolders: false
       });
 
-      if(settings.xAuthorFolders===true && isXPageUrl(info.pageUrl || tab?.url))settings.xAuthor=await selectedXAuthor(info,tab,rawImageUrl);
-      else settings.author=await selectedAuthorFolder(settings,info,tab,rawImageUrl);
+      const author = await selectedMediaAuthor(info,tab,rawImageUrl);
+      await fbSetAuthor(op, author);
+      if (author?.site === 'x' && settings.xAuthorFolders === true) settings.xAuthor = author.id;
+      if (author?.site === 'reddit' && settings.redditAuthorFolders === true || author?.site === 'pixiv' && settings.pixivAuthorFolders === true) settings.author = authorFolder(author.site, author.name, author.id);
 
       // An HLS-only post video proven by the selected Reddit player's document (inline): its frozen master address goes straight to the assembly
       if (redditInlineInfos.has(info) && info.redditInlineMedia && info.redditInlineMedia.redditHls === true) {
@@ -2205,7 +2212,9 @@ async function onContextMenuClicked(info, tab) {
       });
 
       await fbSetPost(op, mediaResult.postUrl);
-      if(settings.xAuthorFolders===true)settings.xAuthor=xAuthorFromPost(mediaResult.authorPostUrl);
+      const authorId = xAuthorFromPost(mediaResult.authorPostUrl);
+      await fbSetAuthor(op, authorId ? {site:'x',id:authorId,name:authorId} : null);
+      if(settings.xAuthorFolders===true)settings.xAuthor=authorId;
       await fbStage(op, 'resolving', {
         sourceUrl: mediaResult.url,
         expectedType: mediaResult.type === 'x_tweet_video' ? 'gif' : (mediaResult.type === 'video' ? 'video' : 'image'),

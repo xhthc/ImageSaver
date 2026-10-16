@@ -5145,12 +5145,13 @@ console.log('\n--- Suite 9: Real content script answers through the real backgro
     assert(q.length === 2 && q.every((x) => /^\d+-\d+$/.test(x.msg.proof) && x.msg.ownerId === undefined) && q[0].msg.proof !== q[1].msg.proof, 'each question names its own admission proof');
     // a proof is answered once: a replay gets nothing
     assert.deepStrictEqual({ ...(await w.env.ask(q[1].msg, { id: EXT_ID })) }, {}, 'a replayed proof is not answered');
-    // the setting off: no question at all
+    // Folder organization stays off while display attribution still consumes the selected post proof.
     const off = await authorWorld({ subfolder: 'SavedImages', folderOrganizationMode: 'single' });
     armNativeMenu(off);
     const c = authored(imgPost(off.env, 'thirdc', 'https://i.redd.it/third.jpg'), 'thirdc', 'ThirdPoster', 'image');
     assert.deepStrictEqual((await menuSave(off, c)).map((x) => x.filename), ['SavedImages/third.jpg']);
-    assert.strictEqual(authorAsks(off).length, 0);
+    assert.strictEqual(authorAsks(off).length, 1);
+    assert.strictEqual((await off.bg.sandbox.feedbackTracker.list())[0].author.id, 'thirdposter');
   });
 
   await itAsync('12.2 context menu negatives: a nested crosspost post, a [slot="crosspost-post"] container, a comment image and a link post without a proven embed keep the ordinary layout', async () => {
