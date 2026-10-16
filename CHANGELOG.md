@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.5.6 — VK photo carousels and collages
+
+- Keep VK inline controls at a constant offset from the media’s own upper-left corner, moving with the media rather than following the viewport. Preserve safe hiding for offscreen or covered targets.
+- Recover selected carousel photos beneath navigation layers and zero-size links; support 90px collage thumbnails without losing either Save this or Save all.
+- Offer Save all for the exact complete, intrinsically owned carousel or grid; exclude neighboring posts, comments, nested reposts and hidden +N remainders. Count declared offscreen photo sources without requiring every slide to decode first.
+- Preserve every mixed-post slot. For linked video tiles already included in an admitted post, resolve matching first-party progressive metadata, verify MP4 bytes and use the existing save pipeline; retain cancellation and duplicate guards. This is limited mixed-post handling, not general VK video support.
+- Refresh EN/RU coverage and roadmap. Standalone VK videos and clips are deferred to a separate planned increment; GIF is not required. Permissions, dependencies and UI assets are unchanged.
+
+The user confirmed that VK carousels and collages save correctly. Recorded native checks include selected photos, observed complete photo lists and a seven-item mixed post (five JPEGs, two MP4s with structurally present audio tracks). Original-photo quality, broad video/clip coverage and audible playback are not established. This remains a GitHub pre-release; the Chrome Web Store listing is unchanged.
+
+
 ## 2.5.5 — author labels and experimental VK inline
 
 - Show proven X/Reddit/Pixiv authors in page notices, popup and full Downloads; preserve attribution through batches and retries. Unknown authors and older records omit the label.

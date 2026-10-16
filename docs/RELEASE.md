@@ -1,6 +1,6 @@
 # Release preparation
 
-The current GitHub pre-release is v2.5.5. It adds proven X/Reddit/Pixiv author labels to notices and both managers, balanced popup gutters, signed-query log redaction and experimental VK inline controls. VK buttons use the visible upper-left corner and follow scrolling below a fixed/sticky header. Existing site/post groups and inline paths are retained. Existing organization, preview hosts, statistics and request guards remain. Release assets contain only the runtime ZIP, SHA-256 and per-file provenance JSON. Store preparation, submission and approval remain separate states; this document does not claim store approval or exhaustive browser coverage.
+The current GitHub pre-release is v2.5.6. It fixes VK photo/carousel/collage saving and constant media-local upper-left controls. These photo flows are user checked in Helium. Full VK video and clip support is deferred to the roadmap. Existing limited progressive-video handling in admitted mixed posts is preserved without claiming general video support. Release assets contain only the exact committed runtime ZIP, SHA-256 and per-file provenance JSON. Store submission and approval remain separate.
 
 ## Build and package
 
@@ -35,7 +35,7 @@ Privacy URL: https://github.com/xhthc/MediaLatch/blob/main/docs/PRIVACY.md
 
 Support URL: https://github.com/xhthc/MediaLatch/issues
 
-The v2.5.5 preview keeps the Explorer companion, folder-location controls and native messaging permission removed. It retains four themes, first-install welcome, author folders, selected-media continuity and local statistics. Shared inline/runtime refactoring preserves validated ownership and acquisition boundaries. Downloads and Embed changes were user-checked in popup/settings and isolated fixtures. Package the exact accepted commit, including reorganized worker/offscreen imports; no companion archive is produced.
+The v2.5.6 preview keeps the Explorer companion, folder-location controls and native messaging permission removed. It retains four themes, first-install welcome, author folders, selected-media continuity and local statistics. Shared inline/runtime refactoring preserves validated ownership and acquisition boundaries. Downloads and Embed changes were user-checked in popup/settings and isolated fixtures. Package the exact accepted commit, including reorganized worker/offscreen imports; no companion archive is produced.
 
 ## Permission and privacy disclosures
 
@@ -45,9 +45,9 @@ All executed JavaScript and binary-processing libraries are bundled locally. Git
 
 ## Validation and remaining store gates
 
-Accepted changes have independent reviews and bounded user Helium confirmation for X/Reddit/Pixiv/RedGIFs inline saves, Downloads grouping and floating settings help. Automated offline/UI and disposable browser checks cover batch cancellation/recovery, metadata chronology, hover/focus, localized layouts and stored settings. Release-specific checks must bind the version, committed runtime bytes, ZIP inventory, native startup/export and published assets. Author labels were user-confirmed on X/Reddit/Pixiv. For VK, the user confirmed button appearance after a hard reload; top-left scroll behavior has source/mock and isolated headless Helium fixture evidence. Live inline export, original-photo parity, complete-post lists, videos/clips and audio are not accepted; full first-increment VK scope remains unfinished. Earlier version checks remain historical evidence. Broad audio/codec, quota/crash, Google Chrome, DNS rebinding and full security certification remain unclaimed.
+Accepted changes have independent reviews and bounded user Helium confirmation for X/Reddit/Pixiv/RedGIFs inline saves, Downloads, floating settings help, author labels and now VK photo/carousel/collage saves. Recorded live VK checks cover selected photos and complete observed lists; a mixed seven-item post exported five JPEGs and two MP4s with structurally verified audio tracks. No audible listening or original-photo quality acceptance is implied. Standalone videos/clips are deferred; private/access-key, general blob/MSE/HLS/DASH and other-browser coverage remain unclaimed. Offline/UI and isolated native checks are recorded separately from live user acceptance. Release-specific checks bind the version, committed runtime bytes, ZIP inventory, native startup/export and published assets. Earlier checks remain historical evidence; this is not full security, crash or quota certification.
 
-The user reports that Chrome Web Store 2.5.2 was approved and publicly published, then accidentally unpublished. This GitHub 2.5.5 preview does not restore or update that store listing. Store republication and review remain a separate task. GitHub releases contain only the runtime ZIP, SHA-256 and source/per-file provenance JSON.
+The user reports that Chrome Web Store 2.5.2 was approved and publicly published, then accidentally unpublished. This GitHub 2.5.6 preview does not restore or update that store listing. Store republication and review remain a separate task. GitHub releases contain only the runtime ZIP, SHA-256 and source/per-file provenance JSON.
 
 - Inspect final-package code/CSP, all privileged message/job boundaries, URL/redirect/private-network admission, resource limits, minimum permissions and dependencies/supply-chain integrity. The scoped release review is not a complete security audit.
 - Load the exact runtime ZIP in a clean Chromium profile. Confirm installation, permissions, popup/settings/history, unchanged first-click Save media and actual saved files.
