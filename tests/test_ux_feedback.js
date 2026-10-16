@@ -3058,8 +3058,10 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
       failB.saveAll(7, '2090');
       await until(async () => failB.plan.includes(img(1)), 'preparation held');
       const fb = (await summary(failB, 'x'))[0];
-      idbF.fail = true;
-      const refused = await cmd(failB, 'cancelBatch', fb.id);
+      // Keep rejection armed until the cancel intent finishes; background transactions must not consume a one-shot failure.
+      idbF.failAll = true;
+      let refused;
+      try { refused = await cmd(failB, 'cancelBatch', fb.id); } finally { idbF.failAll = false; }
       assert(refused.success === false && !(await summary(failB, 'x'))[0].cancelRequested, '35m: a refused write is an error, not a cancellation');
       const retry = await cmd(failB, 'cancelBatch', fb.id);
       assert(retry.success === true && (await summary(failB, 'x'))[0].cancelRequested === true, '35n: the click can be repeated');
