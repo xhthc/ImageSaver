@@ -1,6 +1,6 @@
 // Private, durable acquisition queue. Only completely validated local files reach the browser exporter.
 // Post batches (MANAGER-BATCH-PROGRESS-01/02) live in the same private record: { jobs, paused, batches }. A batch is one proven "Save all"
-// list of an X or Reddit post, or the proven multi-file list of a Pixiv artwork or a Pawchive post: a bounded array of slots, one per
+// list of an X, Reddit or VK post, or the proven multi-file list of a Pixiv artwork or a Pawchive post: a bounded array of slots, one per
 // proven downloadable item, each with exactly one state:
 //   pending (proven, not started) | active (operation begun or job in progress) | saved | failed | cancelled | skipped
 // A slot with a job takes its state from that job, written by save() on every job change, so repeated events, retries and restarts
@@ -15,7 +15,7 @@
   const open = s => s === 'pending' || s === 'active';
   const MAX_SLOTS = 100, MAX_BATCHES = 20;
   // The finite set of services a batch can belong to (also the type DownloadBatch.site and the labels downloads.batch.site.*).
-  const BATCH_SITES = ['x', 'reddit', 'pixiv', 'pawchive'];
+  const BATCH_SITES = ['x', 'reddit', 'pixiv', 'pawchive', 'vk'];
   const ID = /^[A-Za-z0-9_.:-]{1,64}$/;
   const authorOf = (site, value) => root.ImageSaverFeedback?.safeAuthor(site, value);
   const authorFields = value => { const author = authorOf(value.site, value.author); return author && !value.authorConflict ? {author} : {}; };

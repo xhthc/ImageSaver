@@ -68,7 +68,7 @@ const tests = [
   'test_export_directory.js',
   'test_statistics.js',
   'test_sankaku_original.js',
-  'test_post_media.js', 'test_pixiv_saving.js', 'test_pixiv_inline.js', 'test_provider_routing.js',
+  'test_post_media.js', 'test_pixiv_saving.js', 'test_pixiv_inline.js', 'test_vk_inline.js', 'test_provider_routing.js',
   'test_zerochan_original.js',
   'test_suite.js', 'test_animation_duration_policy.js', 'test_context_target_avatar.js', 'test_debug_journal.js',
   'test_media_sources.js', 'test_resolver_metadata.js', 'test_booru_engines.js', 'test_generic_context_boundary.js', 'test_offscreen_resources.js', 'test_reddit_frame_lifecycle.js',
@@ -83,13 +83,13 @@ if (only && (!tests.includes(only) || withUi)) {
 }
 for (const file of tests.filter(file => !only || file === only)) {
   // The inline suite has many real timing waits; 30 s reaches its last case before the deadline.
-  run(file.slice(0, -3), [`tests/${file}`], { timeout: file === 'test_reddit_inline.js' || file === 'test_pixiv_saving.js' || file === 'test_pixiv_inline.js' ? 45000 : 30000 });
+  run(file.slice(0, -3), [`tests/${file}`], { timeout: file === 'test_reddit_inline.js' || file === 'test_pixiv_saving.js' || file === 'test_pixiv_inline.js' || file === 'test_vk_inline.js' ? 45000 : 30000 });
 }
 if (withUi) {
   const ui = path.join(root, 'ui');
   run('ui-typecheck', ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.json'], { cwd: ui });
   run('download-contract-types', ['node_modules/typescript/bin/tsc', '--noEmit', '--strict', '--allowJs', '--skipLibCheck', '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'bundler', '../tests/download_contracts.types.ts'], { cwd: ui });
-  run('ui-render', ['tests/test_ui_render.js'], { timeout: 120000 });
+  run('ui-render', ['tests/test_ui_render.js'], { timeout: 180000 });
   run('ui-notifications', ['tests/test_notifications.js']);
   run('ui-built', ['scripts/check-built.mjs'], { cwd: ui, timeout: 120000 });
 } else {

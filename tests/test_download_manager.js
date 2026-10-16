@@ -330,6 +330,8 @@ function env(stored={jobs:[],paused:false}) {
       await m.settleSlot({id,i:1},'skipped');await m.settleSlot({id,i:1},'failed');await m.settleSlot({id:'batch-missing',i:0},'failed');await m.settleSlot({id,i:9},'failed');await assert.rejects(m.openBatch('x',101),/INVALID_BATCH/);await assert.rejects(m.openBatch('redgifs',2),/INVALID_BATCH/);
       assert.deepEqual(counts(await only(m)),{saved:1,failed:0,cancelled:0,skipped:1,remaining:0},'a settled slot is final; unknown batches and slots are ignored');
     }
+    // VK-INLINE-01: a VK post is a batch service of its own (the registry is finite and appended)
+    {const e=env();const m=createManager(e.d);await m.ready;const id=await m.openBatch('vk',3);assert.match(id,/^batch-/);assert.equal((await m.list()).batches[0].site,'vk');assert.equal((await m.list()).batches[0].count,3);}
     // retry updates the same slot: failed -> active -> saved, never a second success
     {
       const e=env({jobs:[],paused:false});let fail=true;const stage=e.d.stage;e.d.stage=async(...a)=>{if(fail)throw Error('NETWORK_FAILED');return stage(...a);};

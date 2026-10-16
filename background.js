@@ -1674,7 +1674,7 @@ async function onContextMenuClicked(info, tab) {
   dbg('menu', 'click', 'start', undefined, () => ({
     menu: info.menuItemId, hasSrc: Boolean(info.srcUrl), hasLink: Boolean(info.linkUrl), srcHost: info.srcUrl, linkHost: info.linkUrl,
     pageHost: info.pageUrl || (tab && tab.url), frame: info.frameId, kind: info.mediaType,
-    inline: xInlineInfos.has(info) || redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || pixivInlineInfos.has(info), batch: postMediaItemInfos.has(info)
+    inline: xInlineInfos.has(info) || redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || pixivInlineInfos.has(info) || vkInlineInfos.has(info), batch: postMediaItemInfos.has(info)
   }), { cid: info.dbgCid, tab: tab && tab.id });
   // A page/overlay click on X uses its existing selected-player path. Native sources and direct media links
   // retain the generic entry path (including X images); old IDs remain accepted for in-flight menu callbacks.
@@ -1697,7 +1697,8 @@ async function onContextMenuClicked(info, tab) {
     const ownerProof = `${Date.now()}-${++contextOwnerProofs}`;
     const ownerClaim = { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '', proof: ownerProof };
     // An inline Pixiv click (PIXIV-INLINE-01) was proven by its own document right before this call, bound to that document id.
-    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || postMediaItemInfos.has(info) || pixivInlineInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, ownerClaim);
+    // An inline VK click (VK-INLINE-01) was proven by its own document right before this call (the one-shot token, the same frame and document).
+    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || postMediaItemInfos.has(info) || pixivInlineInfos.has(info) || vkInlineInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, ownerClaim);
     if (pixivInlineInfos.has(info)) ownerClaim.documentId = info.pixivInline.documentId;
     if (owner === 'proven' && !redditInlineInfos.has(info)) Object.assign(info, { authorProof: ownerProof, authorDocumentId: ownerClaim.documentId || '' });
     dbg('menu', 'owner', owner === 'refused' || owner === 'preview' ? 'refused' : 'ok', owner === 'preview' ? 'SEEK_PREVIEW' : (owner === 'refused' ? 'STALE_OWNER' : undefined), { owner }, { cid: info.dbgCid, tab: tab && tab.id });
@@ -1817,7 +1818,7 @@ async function onContextMenuClicked(info, tab) {
       ? `gesture-player:${tab.id}:${info.frameId ?? 0}:${inlineRedGifs.documentId}:${inlineRedGifs.player}`
       : `gesture-player:${tab.id}:${info.frameId ?? 0}`);
     if (inFlightRequests.has(dedupeKey)) {
-      console.warn('[MediaLatch] Запрос на сохранение данного медиа уже выполняется, игнорируем дубликат:', dedupeKey);
+      console.warn('[MediaLatch] Запрос на сохранение данного медиа уже выполняется, игнорируем дубликат:', sanitizeUrlForLog(dedupeKey));
       dbg('menu', 'click', 'skipped', 'DUPLICATE_IN_FLIGHT', null, { cid: info.dbgCid, tab: tab && tab.id });
       return;
     }
@@ -1953,6 +1954,7 @@ async function onContextMenuClicked(info, tab) {
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
             frameId: info.frameId,
+            domMeta: vkInlineInfos.has(info) ? {} : undefined,
             gesturePlayer,
             gestureDocumentId,
             gestureAt,
@@ -1974,6 +1976,8 @@ async function onContextMenuClicked(info, tab) {
             tabId: tab?.id,
             frameId: info.frameId,
             allowPostMedia: true,
+            // VK admission froze this selected source; later URL-based DOM lookup could select a recycled node.
+            domMeta: vkInlineInfos.has(info) ? {} : undefined,
             // the explicit inline scope of a proven Pixiv control; only this trusted route sets it
             pixivInline: pixivInlineInfos.has(info) ? { mode: info.pixivInline.mode, count: info.pixivInline.count } : undefined
           });
@@ -2456,7 +2460,7 @@ async function onContextMenuClicked(info, tab) {
 }
 chrome.contextMenus.onClicked.addListener(onContextMenuClicked);
 
-// ---- inline saves (X, Reddit, Pixiv; content/content_inline.js): what every route shares ----
+// ---- inline saves (X, Reddit, Pixiv, VK; content/content_inline.js): what every route shares ----
 // The content script sends only a one-shot token. A route validates the sender, asks the same frame and document to prove the owner again, re-validates what comes back and runs the
 // existing onContextMenuClicked pipeline, so resolution, verification, folders, the download lifecycle and feedback are the menu's. The site rules (sender, sanitizing, the pipeline
 // entry, how a batch is admitted) stay in each route below; the ask, the refusal, the reasons of an answer, one "Save this" and the "Save all" loop are common.
@@ -2701,6 +2705,104 @@ function handlePixivInlineSave(message, sender, mode) {
   return runInlineSingle({ scope: 'pixiv.inline', phase: mode, senderOk: pixivInlineSenderOk, ask: { action: 'PIXIV_INLINE_OWNER', token: message.token, mode }, sanitize: (raw) => sanitizePixivInline(raw, mode), why: inlineWhy,
     ownerDetail: (media) => ({ count: media.count || undefined }), warn: () => ['[MediaLatch] Inline Pixiv Save refused: the selected image was not proven again'],
     run: (tab, sn, media, cid) => pixivInlineRun(tab, sn, media, cid, mode) }, message, sender);
+}
+
+// VK-INLINE-01: the inline Save controls over VK photos, videos and clips ("Save this", and "Save all (N)" for a proven attachment list of a post). Same shape as the X and Reddit entries,
+// own message set (VK_INLINE_*): the content script sends only a one-shot token. This handler validates the sender (the extension's own content script in the TOP frame of a vk.ru or
+// vk.com page, the active tab), asks the same frame and document to prove the selection again, re-validates what comes back (an exact https address on the host family of its kind, the
+// batch binding of an item) and runs the existing save-image-item pipeline of onContextMenuClicked, so resolution, verification, folders, batches, the download lifecycle and feedback are
+// the context menu's. The inline entry skips only the gesture-captured owner gate: the fresh proof replaces it. The address travels exactly as the page declared it (query and signature
+// included); nothing here rewrites it, and a page cannot make this route fetch a host outside the VK families.
+const vkInlineInfos = new WeakSet();
+const vkInlineBusy = new Set();
+const VK_PHOTO_HOST = /(?:^|\.)(?:vkuserphoto\.ru|userapi\.com)$/;
+const VK_VIDEO_HOST = /(?:^|\.)(?:vkvideo\.ru|userapi\.com|vkuser\.net|okcdn\.ru|mycdn\.me|cdn-vk\.ru|vk\.com|vk\.ru)$/; // the media hosts the page's own CSP names; a direct file only
+const VK_VIDEO_FILE = /\.(?:mp4|webm|ogv|mov|m4v)$/i;
+const VK_ATTACHMENT_ID = /^(?:photo|video|clip)-?\d{1,12}_\d{1,12}$/;
+const VK_OWNER_ID = /^-?\d{1,12}_\d{1,12}$/;
+const VK_INLINE_REASONS = new Set(['NO_TOKEN', 'USED', 'STALE_OWNER', 'STALE_ITEM', 'UNSUPPORTED_SOURCE']);
+
+function isVkPageUrl(url) {
+  try {
+    const p = new URL(url);
+    return p.protocol === 'https:' && !p.username && !p.password && !p.port && (p.hostname === 'vk.ru' || p.hostname === 'vk.com');
+  } catch (_) {
+    return false;
+  }
+}
+
+function vkInlineSenderOk(message, sender) {
+  return isContentScriptSender(sender) && sender.frameId === 0 && isVkPageUrl(sender.url) && sender.tab.active === true &&
+    typeof sender.documentId === 'string' && Boolean(sender.documentId) &&
+    typeof message.token === 'string' && INLINE_TOKEN.test(message.token);
+}
+
+// What the document proved, reduced to the fields this route needs. `expect` (batch items) binds the item to the batch the document opened: same post, same count, the same structure
+// signature, the asked index. Anything else in the answer is ignored.
+function sanitizeVkInline(raw, expect) {
+  if (!raw || typeof raw !== 'object' || (raw.kind !== 'photo' && raw.kind !== 'video')) return null;
+  const url = typeof raw.url === 'string' && raw.url.length <= 4096 ? raw.url : '';
+  let u;
+  try { u = new URL(url); } catch (_) { return null; }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return null;
+  const host = u.hostname.toLowerCase();
+  if (raw.kind === 'photo' ? !VK_PHOTO_HOST.test(host) : !(VK_VIDEO_HOST.test(host) && VK_VIDEO_FILE.test(u.pathname))) return null;
+  const id = typeof raw.id === 'string' && VK_ATTACHMENT_ID.test(raw.id) ? raw.id : '';
+  if (expect) {
+    const ownerId = typeof raw.ownerId === 'string' && VK_OWNER_ID.test(raw.ownerId) ? raw.ownerId : '';
+    const index = Number.isInteger(raw.index) ? raw.index : -1, count = Number.isInteger(raw.count) ? raw.count : -1, sig = typeof raw.sig === 'string' && /^[a-f0-9]{8}$/.test(raw.sig) ? raw.sig : '';
+    if (!id || !ownerId || ownerId !== expect.ownerId || count !== expect.count || index !== expect.index || sig !== expect.sig) return null;
+  }
+  return { kind: raw.kind, url, id };
+}
+
+// The failure code a refused answer is recorded with: an attachment whose source the page does not declare as a direct file is an unsupported source, anything else no media
+const vkInlineRefusalCode = (answer) => (answer && answer.ok === false && answer.reason === 'UNSUPPORTED_SOURCE' ? 'UNSUPPORTED_SOURCE' : 'NO_MEDIA');
+const vkInlineWhy = (answer) => inlineWhy(answer, VK_INLINE_REASONS);
+
+// One proven item through the shared save-image-item pipeline (a photo as an image, a direct file as a video), unless the same address is already running (a repeated or overlapping
+// Save this / Save all saves it once; the batch slot of the repeat is settled as skipped).
+async function vkInlineRun(tab, sender, media, cid, slot) {
+  const key = `${tab.id}:${sender.frameId}:${media.url}`;
+  if (vkInlineBusy.has(key)) { dbg('vk.inline', 'run', 'skipped', 'BUSY', null, { cid, tab: tab.id, frame: sender.frameId }); return false; }
+  vkInlineBusy.add(key);
+  try {
+    dbg('vk.inline', 'run', 'start', undefined, () => ({ kind: media.kind, host: media.url }), { cid, tab: tab.id, frame: sender.frameId });
+    const info = { menuItemId: 'save-image-item', srcUrl: media.url, pageUrl: sender.url, frameId: sender.frameId, mediaType: media.kind === 'video' ? 'video' : 'image', dbgCid: cid, batchSlot: slot };
+    vkInlineInfos.add(info);
+    await onContextMenuClicked(info, tab);
+    return true;
+  } finally {
+    vkInlineBusy.delete(key);
+  }
+}
+
+function handleVkInlineSave(message, sender) {
+  return runInlineSingle({ scope: 'vk.inline', phase: 'save', senderOk: vkInlineSenderOk, ask: { action: 'VK_INLINE_OWNER', token: message.token }, sanitize: (raw) => sanitizeVkInline(raw, null), why: vkInlineWhy,
+    ownerDetail: (media) => ({ kind: media.kind }), warn: () => ['[MediaLatch] Inline VK Save refused: the selected media was not proven again'], refusalCode: vkInlineRefusalCode,
+    run: (tab, sn, media, cid) => vkInlineRun(tab, sn, media, cid) }, message, sender);
+}
+
+// "Save all (N)": the document proves the whole list first (count, post, every item), then each item is proven AGAIN right before it runs; an attachment without a declared direct file is a
+// failed item of that list, never omitted and never saved as its poster.
+async function handleVkInlineSaveAll(message, sender) {
+  const cid = dbgCidOf(message);
+  if (!vkInlineSenderOk(message, sender)) { dbg('vk.inline', 'batch', 'refused', 'SENDER_REJECTED', null, { cid, tab: sender && sender.tab && sender.tab.id }); return; }
+  const tab = sender.tab;
+  const open = await inlineAsk(tab, sender, { action: 'VK_INLINE_BATCH', token: message.token });
+  const count = open && open.ok === true && Number.isInteger(open.count) ? open.count : 0;
+  const ownerId = open && typeof open.ownerId === 'string' && VK_OWNER_ID.test(open.ownerId) ? open.ownerId : '';
+  const sig = open && typeof open.sig === 'string' && /^[a-f0-9]{8}$/.test(open.sig) ? open.sig : '';
+  const listed = count >= INLINE_BATCH_MIN && count <= INLINE_BATCH_MAX && Boolean(ownerId) && Boolean(sig);
+  dbg('vk.inline', 'batch', listed ? 'start' : 'refused', listed ? undefined : dbgCode(vkInlineWhy(open)), { count }, { cid, tab: tab.id, frame: sender.frameId });
+  if (!listed) {
+    console.warn('[MediaLatch] Inline VK Save all refused: the list of media was not proven');
+    await inlineRefuse(sender, cid);
+    return;
+  }
+  await runInlineBatch({ scope: 'vk.inline', label: 'VK', site: 'vk', tab, sender, cid, count, key: `${tab.id}:${sender.frameId}:all:${ownerId}:${sig}`, busy: vkInlineBusy,
+    item: (index) => ({ action: 'VK_INLINE_OWNER_ITEM', token: message.token, index }), sanitize: (raw, index) => sanitizeVkInline(raw, { ownerId, count, sig, index }), itemReasons: new Set(['STALE_ITEM', 'UNSUPPORTED_SOURCE']),
+    why: vkInlineWhy, code: vkInlineRefusalCode, dedupe: (media) => media.url, run: vkInlineRun });
 }
 
 // UX-11-RD: the inline Save control over Reddit media ("Save this", and "Save all (N)" for a proven complete gallery). Same shape as the
@@ -2954,6 +3056,8 @@ const INLINE_ROUTES = {
   X_INLINE_SAVE_ALL: ['Inline X Save all', handleXInlineSaveAll],
   PIXIV_INLINE_SAVE: ['Inline Pixiv Save', (m, s) => handlePixivInlineSave(m, s, 'one')],
   PIXIV_INLINE_SAVE_ALL: ['Inline Pixiv Save', (m, s) => handlePixivInlineSave(m, s, 'all')],
+  VK_INLINE_SAVE: ['Inline VK Save', handleVkInlineSave],
+  VK_INLINE_SAVE_ALL: ['Inline VK Save all', handleVkInlineSaveAll],
   REDDIT_INLINE_SAVE: ['Inline Reddit Save', handleRedditInlineSave],
   REDDIT_INLINE_SAVE_ALL: ['Inline Reddit Save all', handleRedditInlineSaveAll],
   REDGIFS_INLINE_SAVE: ['Inline RedGIFs Save', handleRedgifsInlineSave]

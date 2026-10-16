@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.5.5 — author labels and experimental VK inline
+
+- Show proven X/Reddit/Pixiv authors in page notices, popup and full Downloads; preserve attribution through batches and retries. Unknown authors and older records omit the label.
+- Balance the popup's left/right download gutters while retaining its translucent custom scrollbar.
+- Add experimental vk.ru/vk.com inline controls for a loaded selected photo or an opened direct HTTPS video/clip file. Freeze the selected source; never substitute a poster or rediscover a neighboring target.
+- Place VK controls at the visible upper-left corner, retain the selected media while scrolling and clear a full-width fixed/sticky header. Hide safely for changed, removed, offscreen or covered targets.
+- Offer VK Save all only when intrinsic post identity and one complete attachment list are proven, up to 100 files; never claim a rendered subset is the whole post. Add the VK service label/category without inventing historical attribution or authors.
+- Redact known short and long signed query values in diagnostic logs, including duplicate-download and provider fallback paths.
+- Refresh English/Russian coverage, roadmap, privacy and release instructions; keep screenshot version provenance. Allow 180 seconds for the existing UI render suite after a measured 142-second run exceeded its prior 120-second harness limit. Assertions are unchanged.
+
+This is a GitHub pre-release. The user confirmed VK button appearance after hard reload; placement has isolated headless Helium fixture evidence. Live VK inline export, original-photo parity, complete-post layouts and video/clip/audio coverage remain unverified. The requested full VK increment is unfinished. Earlier X/Reddit/Pixiv/RedGIFs, author-label and Downloads user acceptance is retained. Chrome Web Store 2.5.2 was reportedly approved/published and then accidentally unpublished; this preview does not republish the listing.
+
+
 ## 2.5.4 — shared inline controls and compact downloads
 
 - Add Pixiv inline Save this / Save all for proven artwork pages and supported feed cards; retain original selection and the 100-item batch cap. Fix page-count detection so numeric author names are not mistaken for media counts.

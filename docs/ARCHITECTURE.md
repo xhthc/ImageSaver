@@ -2,14 +2,16 @@
 
 The directory map follows the current source checkout. Existing published archives keep their original committed layout.
 
-This document describes the v2.5.4 preview. The Explorer companion integration and file-location controls were removed. Custom save directories, author folders and the manager-return notification fix remain. The user reported working ordinary saves and smoke checks of the earlier interface; the redesigned UI has separate isolated browser checks; exhaustive audio/bytes, crash/restart and quota checks remain separate. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
+This document describes the v2.5.5 preview. The Explorer companion integration and file-location controls were removed. Custom save directories, author folders and the manager-return notification fix remain. The user reported working ordinary saves and smoke checks of the earlier interface; the redesigned UI has separate isolated browser checks; exhaustive audio/bytes, crash/restart and quota checks remain separate. Repository history records provenance; `SOURCE_BASELINE.json` describes the initial import, not the current release.
+
+VK inline freezes the selected exact source and uses the existing acquisition/export pipeline without late DOM metadata rediscovery. Its top-left control follows the visible media below a full-width fixed/sticky header. A batch requires an intrinsic signed post boundary and one complete accessible attachment list with matching set sizes and positions; these are fixture-proven admission conditions, not a claim that every live VK layout exposes them. Direct opened video files are candidates; blob/MSE/manifest transport and video/audio acceptance remain unproven. VK author labels are not inferred. The stable `vk` service category is appended without reordering previous categories; unknown old statistics stay unattributed.
 
 ## Runtime layout
 
 | Area | Responsibility |
 |---|---|
 | `manifest.json` | Manifest V3 permissions, classic service worker and content scripts |
-| `background.js` | Worker entry: one ordered block of worker modules, debug journal, DNR rules, context menu and selected-target hint, download tracking/badge, feedback, download lifecycle, offscreen bridge and the save entry points (context menu, inline X/Reddit/Pixiv/RedGIFs controls) |
+| `background.js` | Worker entry: one ordered block of worker modules, debug journal, DNR rules, context menu and selected-target hint, download tracking/badge, feedback, download lifecycle, offscreen bridge and the save entry points (context menu, inline X/Reddit/Pixiv/RedGIFs and experimental VK controls) |
 | `worker/media_format.js`, `worker/download_paths.js` | MIME/signature/extension policy and media classification; file names, folder layout and authors |
 | `lib/media_sources.js`, `lib/media_guard.js` | Shared HTTP(S), URL-credential and literal local/private-network admission, tied to the native selected page origin; log redaction, the protected-host allowlist and the magic-byte signature check (the worker's and the offscreen document's policies share one table) |
 | `lib/sites.js` | The supported sites, one record each: persistent id (statistics bucket and folder name), folder domains, the statistics Booru view group. Naming only: provider host authority stays in the resolvers |
@@ -21,7 +23,7 @@ This document describes the v2.5.4 preview. The Explorer companion integration a
 | `content/content_context_target.js` | Capture the pressed media/CSS/overlay target; re-prove ownership at save time |
 | `content/content_notifications.js` | Top-frame bounded page notices in closed Shadow DOM; original-origin delivery, dismiss/manager actions and paused timers |
 | `content/content_x.js`, `content/content_reddit.js`, `content/content_redgifs.js` | Provider evidence, selected-player recovery and the owner rules the inline controls and the context menu share |
-| `content/content_inline.js` | The inline Save controls of X, Reddit, Pixiv and the RedGIFs own site in one module: a shared control (hover/focus/keyboard lifecycle, one-shot tokens, trusted click, sender-checked proof, batches) and one handler per site (candidate, owner proof, placement, descriptors) |
+| `content/content_inline.js` | The inline Save controls of X, Reddit, Pixiv, the RedGIFs own site and experimental VK in one module: a shared control (hover/focus/keyboard lifecycle, one-shot tokens, trusted click, sender-checked proof, batches) and one handler per site (candidate, owner proof, placement, descriptors) |
 | `content/content_copy_kit.js` | Scaffolding of the copy-link buttons of X, Instagram, TikTok and YouTube: cached share host, one scan per frame, page watcher, SPA navigation, label binding |
 | Other `content_*.js` | Scoped site/link helpers; each script's messages define its contract |
 | `offscreen.js`, `offscreen.html` | Protected buffered fetches, genuine GIF encoding and Reddit HLS assembly |

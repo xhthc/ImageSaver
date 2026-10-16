@@ -31,7 +31,7 @@ export interface DownloadJob {
 /** Progress of one post batch: every proven item is in exactly one count. Only `saved` is confirmed by the browser or the chosen folder. */
 export interface DownloadBatch {
   id: string;
-  site: 'x' | 'reddit' | 'pixiv' | 'pawchive';
+  site: 'x' | 'reddit' | 'pixiv' | 'pawchive' | 'vk';
   author?: DownloadAuthor;
   count: number;
   saved: number;

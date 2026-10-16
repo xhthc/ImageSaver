@@ -21,7 +21,8 @@ void wrongState;
 const counts = { count: 2, saved: 1, failed: 0, cancelled: 0, skipped: 0, remaining: 1, createdAt: 1 };
 const pixiv: DownloadBatch = { id: 'batch-1', site: 'pixiv', ...counts };
 const partial: DownloadBatch = { id: 'batch-2', site: 'pawchive', partial: true, ...counts };
-void pixiv; void partial;
+const vk: DownloadBatch = { id: 'batch-8', site: 'vk', ...counts };
+void pixiv; void partial; void vk;
 void controller.command('cancelBatch', 'batch-1');
 const cancelling: DownloadBatch = { id: 'batch-5', site: 'reddit', cancelRequested: true, cancelling: true, ...counts };
 void cancelling;
@@ -31,7 +32,7 @@ void badCancelling;
 // @ts-expect-error The cancellation flag is a boolean.
 const badFlag: DownloadBatch = { id: 'batch-6', site: 'x', cancelRequested: 'yes', ...counts };
 void badFlag;
-// @ts-expect-error Only X, Reddit, Pixiv and Pawchive groups exist.
+// @ts-expect-error Only X, Reddit, Pixiv, Pawchive and VK groups exist.
 const otherSite: DownloadBatch = { id: 'batch-3', site: 'redgifs', ...counts };
 void otherSite;
 // @ts-expect-error The partial flag is a boolean: a count of missing files is never part of a group.

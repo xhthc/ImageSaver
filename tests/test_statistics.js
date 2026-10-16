@@ -58,9 +58,9 @@ const rec = (id, createdAt = 10, state = 'complete') => FB.sanitizeRecord({ id, 
   // ---- STATISTICS-BY-SITE-01: site buckets ----
   const { SITES, siteOf, add } = root.MediaLatchStatistics;
   // UA-05: the canonical site record (lib/sites.js) keeps every persisted id and its order, the Booru view group and the folder domains the three lists held separately before
-  assert.equal(JSON.stringify(SITES), JSON.stringify(['x', 'reddit', 'pixiv', 'redgifs', 'pawchive', 'zerochan', 'anime-pictures', 'danbooru', 'rule34', 'safebooru', 'gelbooru', 'realbooru', 'xbooru', 'hypnohub', 'tbib', 'curveybooru', 'inkbooru', 'mspabooru', 'scatbooru', 'yakui', 'e621', 'yande.re', 'konachan', 'e-shuushuu', 'sankaku', 'tenor', 'giphy', 'wikimedia', 'other', 'unattributed']), 'statistics bucket ids and their order');
+  assert.equal(JSON.stringify(SITES), JSON.stringify(['x', 'reddit', 'pixiv', 'redgifs', 'pawchive', 'zerochan', 'anime-pictures', 'danbooru', 'rule34', 'safebooru', 'gelbooru', 'realbooru', 'xbooru', 'hypnohub', 'tbib', 'curveybooru', 'inkbooru', 'mspabooru', 'scatbooru', 'yakui', 'e621', 'yande.re', 'konachan', 'e-shuushuu', 'sankaku', 'tenor', 'giphy', 'wikimedia', 'vk', 'other', 'unattributed']), 'statistics bucket ids and their order (vk appended, nothing reordered)');
   assert.equal(JSON.stringify(root.MediaLatchSites.SITES.filter((site) => site.booru).map((site) => site.id)), JSON.stringify(['danbooru', 'rule34', 'safebooru', 'gelbooru', 'realbooru', 'xbooru', 'hypnohub', 'tbib', 'curveybooru', 'inkbooru', 'mspabooru', 'scatbooru', 'yakui', 'e621', 'yande.re', 'konachan', 'sankaku']), 'the Booru view group');
-  assert.equal(JSON.stringify(Object.fromEntries(root.MediaLatchSites.SITES.filter((site) => site.domains).map((site) => [site.id, site.domains]))), JSON.stringify({ x: ['x.com', 'twitter.com', 'twimg.com'], reddit: ['reddit.com', 'redd.it'], pixiv: ['pixiv.net', 'pximg.net'], redgifs: ['redgifs.com'], zerochan: ['zerochan.net'], 'anime-pictures': ['anime-pictures.net'], danbooru: ['donmai.us'], rule34: ['rule34.xxx'], safebooru: ['safebooru.org'], gelbooru: ['gelbooru.com'], realbooru: ['realbooru.com'], xbooru: ['xbooru.com'], hypnohub: ['hypnohub.net'], tbib: ['tbib.org'], curveybooru: ['curveybooru.com'], inkbooru: ['inkbooru.com'], mspabooru: ['mspabooru.com'], scatbooru: ['scatbooru.com'], yakui: ['yakui.ru'], e621: ['e621.net', 'e926.net', 'e6ai.net'], 'yande.re': ['yande.re'], konachan: ['konachan.com', 'konachan.net'], 'e-shuushuu': ['e-shuushuu.net'], sankaku: ['sankakucomplex.com'], tenor: ['tenor.com'], giphy: ['giphy.com'], wikimedia: ['wikimedia.org', 'wikipedia.org'] }), 'folder domains');
+  assert.equal(JSON.stringify(Object.fromEntries(root.MediaLatchSites.SITES.filter((site) => site.domains).map((site) => [site.id, site.domains]))), JSON.stringify({ x: ['x.com', 'twitter.com', 'twimg.com'], reddit: ['reddit.com', 'redd.it'], pixiv: ['pixiv.net', 'pximg.net'], redgifs: ['redgifs.com'], zerochan: ['zerochan.net'], 'anime-pictures': ['anime-pictures.net'], danbooru: ['donmai.us'], rule34: ['rule34.xxx'], safebooru: ['safebooru.org'], gelbooru: ['gelbooru.com'], realbooru: ['realbooru.com'], xbooru: ['xbooru.com'], hypnohub: ['hypnohub.net'], tbib: ['tbib.org'], curveybooru: ['curveybooru.com'], inkbooru: ['inkbooru.com'], mspabooru: ['mspabooru.com'], scatbooru: ['scatbooru.com'], yakui: ['yakui.ru'], e621: ['e621.net', 'e926.net', 'e6ai.net'], 'yande.re': ['yande.re'], konachan: ['konachan.com', 'konachan.net'], 'e-shuushuu': ['e-shuushuu.net'], sankaku: ['sankakucomplex.com'], tenor: ['tenor.com'], giphy: ['giphy.com'], wikimedia: ['wikimedia.org', 'wikipedia.org'], vk: ['vk.com', 'vk.ru', 'vkvideo.ru', 'vkuserphoto.ru', 'userapi.com'] }), 'folder domains');
   const at = (id, site, createdAt = 10, state = 'complete') => FB.sanitizeRecord({ ...rec(id, createdAt, state), site });
   const reconciled = (state, label) => {
     let sum = FB.computeStats([]);
@@ -106,12 +106,12 @@ const rec = (id, createdAt = 10, state = 'complete') => FB.sanitizeRecord({ id, 
   }
   {
     // Categories: aliases, groups, generic hosts and unknown stay distinct; only finite categories are stored.
-    const expected = { x: 'x', reddit: 'reddit', pixiv: 'pixiv', redgifs: 'redgifs', danbooru: 'danbooru', 'yande.re': 'yande.re', zerochan: 'zerochan', tenor: 'tenor', 'pawchive.pw': 'pawchive', wikimedia: 'wikimedia', 'example.com': 'other', 'cdn.example.net': 'other', constructor: 'other', 'unknown-site': 'unattributed', '': 'unattributed' };
+    const expected = { x: 'x', reddit: 'reddit', pixiv: 'pixiv', redgifs: 'redgifs', danbooru: 'danbooru', 'yande.re': 'yande.re', zerochan: 'zerochan', tenor: 'tenor', 'pawchive.pw': 'pawchive', wikimedia: 'wikimedia', vk: 'vk', 'example.com': 'other', 'cdn.example.net': 'other', constructor: 'other', 'unknown-site': 'unattributed', '': 'unattributed' };
     for (const [site, id] of Object.entries(expected)) assert.equal(siteOf({ site }), id, 'siteOf ' + (site || '(none)'));
     const store = memory(); const m = make2(store, { legacy: async () => null });
     let n = 0; for (const site of Object.keys(expected)) await m.record(at('cat-op-' + ++n, site));
     const snap = await m.list(); reconciled(snap, 'categories');
-    assert.equal(total(snap, 'other'), 3); assert.equal(total(snap, 'unattributed'), 2); assert.equal(total(snap, 'danbooru'), 1); assert.equal(total(snap, 'yande.re'), 1); assert.equal(total(snap, 'pawchive'), 1); assert.equal(snap.stats.total, 15);
+    assert.equal(total(snap, 'other'), 3); assert.equal(total(snap, 'unattributed'), 2); assert.equal(total(snap, 'danbooru'), 1); assert.equal(total(snap, 'yande.re'), 1); assert.equal(total(snap, 'pawchive'), 1); assert.equal(total(snap, 'vk'), 1); assert.equal(snap.stats.total, 16);
     const persisted = JSON.stringify([store.data().state, [...store.data().ops]]);
     assert(!/example|constructor|private\.jpg|cdn\./.test(persisted), 'no host, filename or page data is persisted, only categories');
     // a second site reaches its own bucket without touching the first
@@ -191,7 +191,7 @@ const rec = (id, createdAt = 10, state = 'complete') => FB.sanitizeRecord({ id, 
     };
     const sc = createUi({ chrome: chromeSites }); await sc.ready;
     let st = sc.store.getState();
-    assert.equal(st.site, 'all'); assert.equal(Object.keys(st.sites).length, 14, 'board buckets share a single presentation category'); assert('booru' in st.sites && !('danbooru' in st.sites));
+    assert.equal(st.site, 'all'); assert.equal(Object.keys(st.sites).length, 15, 'board buckets share a single presentation category (VK appended)'); assert('booru' in st.sites && !('danbooru' in st.sites));
     sc.selectSite('nope'); assert.equal(sc.store.getState().site, 'all', 'an unknown site cannot be selected');
     sc.selectSite('reddit'); assert.equal(sc.store.getState().site, 'reddit'); assert.equal(sc.store.getState().sites.reddit.total, 2);
     reply = snap(bucket(3), bucket(1, 1)); listener({ action: 'STATISTICS_CHANGED' }); await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));

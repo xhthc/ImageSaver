@@ -2133,7 +2133,7 @@ async function resolveOriginalMediaPlanImpl(firstArg, secondArg, thirdArg, fourt
 
   // 6. Level 7: Fallback to initial srcUrl
   if (srcUrl && !srcUrl.startsWith('blob:') && !srcUrl.startsWith('data:') && !srcUrl.startsWith('javascript:')) {
-    console.log('[MediaLatch] [Уровень 7: Fallback] Проверенный оригинал не найден, возврат исходного srcUrl:', srcUrl);
+    console.log('[MediaLatch] [Уровень 7: Fallback] Проверенный оригинал не найден, возврат исходного srcUrl:', sanitizeUrlForLog(srcUrl));
     return adaptCandidateToGroup({
       url: srcUrl,
       source: 'initial_src',

@@ -123,7 +123,7 @@
   // showDetail, prepare, proof, onOver. ctl holds the state, the stores and the lifecycle the rules use.
   function createControl(make) {
     const st = { host: null, btn: null, btnAll: null, lbl: null, lblAll: null, count: 0, compact: false, snap: null, el: null, observer: null, timer: null, settleTimer: null, settleN: 0,
-      rearmTimer: null, rearmN: 0, sig: '', href: '', x: 0, y: 0, busyKey: '', busyAt: 0, busyTimer: null, keyEl: null, dismissed: null };
+      rearmTimer: null, viewportFrame: null, rearmN: 0, sig: '', href: '', x: 0, y: 0, busyKey: '', busyAt: 0, busyTimer: null, keyEl: null, dismissed: null };
     const pending = new Map();
     const batches = new Map();
     const ctl = { st, pending, batches };
@@ -210,6 +210,7 @@
     }
 
     function hide() {
+      if (st.viewportFrame !== null) { window.cancelAnimationFrame(st.viewportFrame); st.viewportFrame = null; }
       if (st.snap) DBG.log(scope, 'hide', 'info', undefined, null, { lvl: 'debug' });
       for (const k of ['timer', 'settleTimer', 'rearmTimer']) clearTimer(k);
       unobserve();
@@ -455,6 +456,13 @@
       on(document, 'visibilitychange', hide, true);
       for (const type of site.hideOn) on(window, type, hide, { capture: true, passive: true });
       for (const type of site.rearmOn) on(window, type, () => { st.rearmN = 0; hideUntilVisible(); }, { capture: true, passive: true });
+      for (const type of site.followOn || []) on(window, type, () => {
+        if (!st.snap) { st.rearmN = 0; hideUntilVisible(); return; }
+        if (st.viewportFrame === null) st.viewportFrame = window.requestAnimationFrame(() => {
+          st.viewportFrame = null;
+          if (document.hidden) hide(); else recheck();
+        });
+      }, { capture: true, passive: true });
       on(window, 'blur', (e) => { if (e.target === window) hide(); }, true);
     }
     if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) { chrome.runtime.onMessage.addListener(onProof); proofs.push(onProof); }
@@ -696,6 +704,347 @@
         };
       },
       proof: { PIXIV_INLINE_OWNER: { phase: 'proof', run: (m) => answerOwner(m.token, m.mode), detail: (m, a) => ({ mode: m.mode, count: a && a.media && a.media.count || undefined }) } }
+    }));
+    return ctl;
+  }
+
+  // ---- VK (https://vk.ru/*, https://vk.com/*): photos, videos and clips ----
+  // The control is Pixiv-shaped (one fixed host over the visible part of the selected media) with X/Reddit-shaped batches (every item of "Save all" is frozen at admission and proven
+  // again right before it runs). What is selected: a loaded photo <img> on a VK photo CDN host, or an opened <video> whose own source is a direct file; its EXACT address travels, the
+  // worker validates the host again and the generic context-menu pipeline resolves and saves it (no VK downloader, no rewritten address, no size guess). The nearest intrinsic signed post boundary owns the list;
+  // an attachment is a link of the /photo-, /video-,
+  // /clip- OWNER_ID route that wraps exactly one media element, and a list that cannot be proven (media no link claims, a "+N" tile, a repeated attachment, a nested post, over the cap)
+  // offers no "Save all". A video or clip tile whose source the DOM does not declare as a direct file is a failed item of the batch (never omitted, never its poster); a blob, a manifest
+  // or an unlisted host gets no control at all. The wall owner of the URL is never an author. Not verified against the live DOM: see the handoff (feed posts, comments, video transport).
+  function vkHandler() {
+    const VK = { ...K, SETTLE_MS: 150, TOL: 1, Z: 2147483000, DEPTH: 60, ANCHORS: 400 };
+    const PHOTO_HOST = /(?:^|\.)(?:vkuserphoto\.ru|userapi\.com)$/;
+    // the media hosts the page's own CSP names (not checked against the three example posts): a video from any other host gets no control
+    const VIDEO_HOST = /(?:^|\.)(?:vkvideo\.ru|userapi\.com|vkuser\.net|okcdn\.ru|mycdn\.me|cdn-vk\.ru|vk\.com|vk\.ru)$/;
+    const SITE_HOST = /^(?:vk\.ru|vk\.com)$/;
+    const ATTACHMENT = /^\/(photo|video|clip)(-?\d{1,12})_(\d{1,12})\/?$/;
+    const FILE = /\.(?:mp4|webm|ogv|mov|m4v)$/i;
+    const NO_OWNER = { deref: () => null };
+    const noted = new WeakSet();
+    DBG.log('vk', 'init', 'info');
+
+    const urlOf = (raw) => { try { const u = new URL(raw, location.href); return u.protocol === 'https:' && !u.username && !u.password && !u.port ? u : null; } catch (_) { return null; } };
+    const listNote = (el, code, n) => { if (!noted.has(el)) { noted.add(el); DBG.log('vk.inline', 'list', 'refused', code, { count: n }, { lvl: 'debug' }); } };
+    const note = (el, reason, transport) => { if (el && !noted.has(el)) { noted.add(el); DBG.log('vk.inline', 'candidate', 'refused', reason, { kind: 'video', transport, host: String(el.currentSrc || el.src || '') }, { lvl: 'debug' }); } };
+
+    // ---- what a media element is ----
+    function photoOk(img) {
+      try {
+        const u = urlOf(img.currentSrc || img.src || '');
+        if (!u || !PHOTO_HOST.test(u.hostname) || !img.complete || !(img.naturalWidth > 0)) return false;
+        const a = anchorOf(img);
+        if (a && !routeOf(a)) {
+          const linked = urlOf(a.getAttribute('href') || '');
+          if (!linked || !PHOTO_HOST.test(linked.hostname)) return false;
+        }
+        const r = img.getBoundingClientRect();
+        return r.width >= VK.MIN_W && r.height >= VK.MIN_H; // an avatar, an emoji or a badge is smaller than a media tile
+      } catch (_) { return false; }
+    }
+    // the source of an opened <video> that the browser itself plays: a direct https file on a VK media host (never blob:, a manifest, a poster or another host)
+    function directVideo(v) {
+      const u = urlOf(v.currentSrc || v.src || '');
+      return Boolean(u && VIDEO_HOST.test(u.hostname) && FILE.test(u.pathname));
+    }
+    function routeOf(a) {
+      const u = a && typeof a.getAttribute === 'function' ? urlOf(a.getAttribute('href') || '') : null;
+      const m = u && SITE_HOST.test(u.hostname) ? ATTACHMENT.exec(u.pathname) : null;
+      return m ? { kind: m[1], id: `${m[1]}${m[2]}_${m[3]}` } : null;
+    }
+    const anchorOf = (el) => (el && typeof el.closest === 'function' ? el.closest('a[href]') : null);
+
+    // ---- the post: the key the page names, found in attribute values only ----
+    function pageKey() {
+      try {
+        const u = new URL(location.href);
+        const m = /^\/wall(-?\d{1,12})_(\d{1,12})\/?$/.exec(u.pathname) || /^wall(-?\d{1,12})_(\d{1,12})$/.exec(u.searchParams.get('w') || '');
+        return m ? `${m[1]}_${m[2]}` : '';
+      } catch (_) { return ''; }
+    }
+    // Only intrinsic, exact post identity can establish a boundary; references in outer app URLs cannot own a post.
+    function postIdentity(el) {
+      const ids = new Set();
+      for (const name of ['id', 'data-post-id', 'data-post', 'data-wall-post-id']) {
+        const m = /^(?:wall|post)?(-?\d{1,12}_\d{1,12})$/.exec(el.getAttribute(name) || '');
+        if (m) ids.add(m[1]);
+      }
+      return ids.size === 1 ? [...ids][0] : (ids.size ? 'ambiguous' : '');
+    }
+    function rootOf(el, key) {
+      if (!key) return null;
+      for (let p = el.parentElement, n = 0; p && p !== document.body && p !== document.documentElement && n < VK.DEPTH; p = p.parentElement, n++) {
+        const id = postIdentity(p);
+        if (id) return id === key ? p : null;
+      }
+      return null;
+    }
+    // a comment or reply of this post (an id that extends the post key, key_COMMENT): its attachments are not the post's
+    function inComment(el, root, key) {
+      const re = new RegExp('(?<![0-9-])' + key + '_[0-9]');
+      for (let p = el; p && p.nodeType === 1; p = p.parentElement) {
+        for (const name of p.getAttributeNames()) { const v = p.getAttribute(name) || ''; if (v.length <= 600 && re.test(v)) return true; }
+        if (p === root) break;
+      }
+      return false;
+    }
+    // another post nested in the owner (a repost): an attribute value that names a post other than this one
+    const OTHER_POST = /(?:wall|post)(-?\d{1,12})_(\d{1,12})/g;
+    function otherPost(el, root, key) {
+      for (let p = el; p && p.nodeType === 1; p = p.parentElement) {
+        for (const name of p.getAttributeNames()) {
+          const v = p.getAttribute(name) || '';
+          if (v.length > 600) continue;
+          for (const m of v.matchAll(OTHER_POST)) if (`${m[1]}_${m[2]}` !== key) return true;
+          if (/post|copy/i.test(name)) for (const m of v.matchAll(/(?<![0-9-])(-?\d{1,12})_(\d{1,12})(?![0-9])/g)) if (`${m[1]}_${m[2]}` !== key) return true;
+        }
+        if (p === root) break;
+      }
+      return false;
+    }
+
+    // the list of the click that is being prepared (one synchronous pass): every item is snapshotted against the same enumeration
+    let session = null;
+    // [{ el, kind: 'photo'|'video'|'tile', id }] in document order, or null when the list cannot be proven
+    const enumerate = (root, key) => (session && session.root === root && session.key === key ? session.items : scan(root, key));
+    let why = { code: '', n: 0 };
+    const refuse = (code, n = 0) => { why = { code, n }; return null; };
+    function scan(root, key) {
+      if (!root || typeof root.querySelectorAll !== 'function') return refuse('NO_ROOT');
+      const anchors = Array.from(root.querySelectorAll('a[href]'));
+      if (anchors.length > VK.ANCHORS) return refuse('TOO_MANY_LINKS', anchors.length);
+      const items = [], seen = new Set(), claimed = new Set();
+      for (const a of anchors) {
+        const r = routeOf(a);
+        const media = r ? Array.from(a.querySelectorAll('img, video')) : [];
+        if (!r || !media.length || otherPost(a, root, key) || inComment(a, root, key)) continue; // a text link is no attachment; a nested post's or a comment's media is not this post's
+        if (/(?:^|\s)\+\d{1,3}(?:\s|$)/.test(a.textContent || '')) return refuse('OVERFLOW_TILE'); // a "+N" tile hides more attachments
+        const videos = media.filter((m) => m.tagName === 'VIDEO'), imgs = media.filter((m) => m.tagName === 'IMG');
+        let el = null, kind = 'photo';
+        if (r.kind === 'photo') {
+          if (videos.length || imgs.length !== 1 || !photoOk(imgs[0])) return refuse('PHOTO_TILE', items.length);
+          el = imgs[0];
+        } else {
+          el = videos.length === 1 ? videos[0] : (!videos.length && imgs.length === 1 ? imgs[0] : null);
+          if (!el) return refuse('TILE_STRUCTURE', items.length);
+          kind = el.tagName === 'VIDEO' && directVideo(el) ? 'video' : 'tile';
+        }
+        if (seen.has(r.id)) return refuse('DUPLICATE', items.length); // the same attachment twice: the structure is not understood
+        seen.add(r.id);
+        for (const m of media) claimed.add(m);
+        items.push({ el, kind, id: r.id, link: a });
+      }
+      for (const m of root.querySelectorAll('img, video')) { // media that no attachment link claims: unknown structure, never a guess
+        if (claimed.has(m) || otherPost(m, root, key) || inComment(m, root, key)) continue;
+        if (m.tagName === 'VIDEO' || photoOk(m)) return refuse('UNCLAIMED_MEDIA', items.length);
+      }
+      if (items.length > VK.BATCH_MAX) return refuse('OVER_CAP', items.length);
+      // Rendered tiles are not a complete list. Accept only one explicitly declared accessible list with every position.
+      // These semantics are standards-derived, not observed VK markup; absent evidence keeps Save this only.
+      let list = null;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i].link.closest('[role="listitem"]');
+        const owner = item && item.parentElement && item.parentElement.closest('[role="list"]');
+        const pos = item && item.getAttribute('aria-posinset'), size = item && item.getAttribute('aria-setsize');
+        if (!owner || !root.contains(owner) || (list && owner !== list) || !/^[1-9]\d{0,2}$/.test(pos || '') || !/^[1-9]\d{0,2}$/.test(size || '') ||
+            Number(pos) !== i + 1 || Number(size) !== items.length) return refuse('UNPROVEN_LIST', items.length);
+        list = owner;
+      }
+      return items;
+    }
+
+    // ---- identity ----
+    // { elRef, anchorRef, kind, src, route, key, ownerRef, href, count }; `counted` false builds only the identity (the cheap part)
+    function snapshot(el, kind, counted = true) {
+      try {
+        if (!el || typeof el.getBoundingClientRect !== 'function') return null;
+        const anchor = anchorOf(el), route = anchor ? routeOf(anchor) : null;
+        if (kind === 'photo') { if (el.tagName !== 'IMG' || !photoOk(el) || (route && route.kind !== 'photo')) return null; }
+        else if (kind === 'video') { if (el.tagName !== 'VIDEO' || !directVideo(el)) return null; }
+        else if (kind === 'tile') { if (!route || route.kind === 'photo' || (el.tagName !== 'IMG' && el.tagName !== 'VIDEO')) return null; } // only a list asks for a tile
+        else return null;
+        const key = pageKey(), found = key ? rootOf(el, key) : null, root = found && !otherPost(el, found, key) && !inComment(el, found, key) ? found : null;
+        const snap = { elRef: new WeakRef(el), anchorRef: anchor ? new WeakRef(anchor) : null, kind, src: String(el.currentSrc || el.src || ''), route: route ? route.id : '', key: root ? key : '', ownerRef: root ? new WeakRef(root) : NO_OWNER, href: location.href, count: 0 };
+        if (counted && key && !root) listNote(el, 'NO_ROOT', 0);
+        if (counted && root && kind !== 'tile') {
+          const items = enumerate(root, key);
+          if (!items) listNote(el, why.code || 'NO_LIST', why.n);
+          snap.count = items && items.length >= 2 && items.some((i) => i.el === el) ? items.length : 0;
+        }
+        return snap;
+      } catch (_) { return null; }
+    }
+    function same(a, b) {
+      return Boolean(a && b) && a.elRef.deref() === b.elRef.deref() && (a.anchorRef ? a.anchorRef.deref() : null) === (b.anchorRef ? b.anchorRef.deref() : null) && a.kind === b.kind && a.src === b.src &&
+        a.route === b.route && a.key === b.key && a.ownerRef.deref() === b.ownerRef.deref() && a.href === b.href;
+    }
+    function holds(snap) {
+      try {
+        const el = snap.elRef.deref();
+        if (!el || el.isConnected === false || (snap.ownerRef.deref() && snap.ownerRef.deref().isConnected === false)) return false;
+        return same(snap, snapshot(el, snap.kind, false));
+      } catch (_) { return false; }
+    }
+
+    // Keep the control at the visible upper-left corner, below a full-width fixed/sticky site header.
+    function placeOf(el, w, h, scope) {
+      try {
+        const r = el.getBoundingClientRect();
+        const vw = (typeof window.innerWidth === 'number' && window.innerWidth) || r.right, vh = (typeof window.innerHeight === 'number' && window.innerHeight) || r.bottom;
+        const L = Math.max(r.left, 0), R = Math.min(r.right, vw), B = Math.min(r.bottom, vh);
+        let T = Math.max(r.top, 0);
+        if (typeof document.elementFromPoint === 'function') {
+          for (let n = 0; n < VK.MAX_STACK && T < B; n++) {
+            let below = T;
+            for (const x of [L + VK.CORNER, R - VK.CORNER]) {
+              let hit = document.elementFromPoint(x, T + VK.CORNER);
+              if (ctl.own(hit) || hit === el) continue;
+              for (let depth = 0; hit && depth < VK.DEPTH; depth++, hit = hit.parentElement) {
+                const pos = window.getComputedStyle(hit).position, box = hit.getBoundingClientRect();
+                if ((pos === 'fixed' || pos === 'sticky') && box.left <= L && box.right >= R && box.top <= T && box.bottom > T) {
+                  below = Math.max(below, box.bottom); break;
+                }
+              }
+            }
+            if (below === T) break;
+            T = below;
+          }
+        }
+        if (!(R - L >= Math.max(VK.MIN_W, w + 2 * VK.INSET)) || !(B - T >= Math.max(VK.MIN_H, h + 2 * VK.INSET))) return null;
+        const left = L + VK.INSET, y = T + VK.INSET;
+        if (typeof document.elementFromPoint === 'function') {
+          const c = VK.CORNER, card = scope || anchorOf(el) || el.parentElement;
+          for (const [px, py] of [[L + c, T + c], [R - c, T + c], [R - c, B - c], [left + c, y + c], [left + w - c, y + h - c], [left + c, y + h - c]]) {
+            const t = document.elementFromPoint(px, py);
+            if (!t) return null;
+            if (ctl.own(t) || t === el || (card && typeof card.contains === 'function' && card.contains(t))) continue;
+            return null;
+          }
+        }
+        return { vis: { left: L, top: T, right: R, bottom: B }, left: Math.round(left), top: Math.round(y), w, h, sig: [L, T, R, B, w, h].map(Math.round).join(',') };
+      } catch (_) { return null; }
+    }
+    function shownAt() {
+      const h = ctl.st.host;
+      if (!h || h.isConnected === false || typeof h.getBoundingClientRect !== 'function') return null;
+      const r = h.getBoundingClientRect();
+      return { left: Math.round(r.left), top: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+    }
+    function atPlace(el, snap, shown) {
+      const lay = shown && el ? placeOf(el, shown.w, shown.h, snap.ownerRef.deref()) : null;
+      return Boolean(lay) && Math.abs(lay.left - shown.left) <= VK.TOL && Math.abs(lay.top - shown.top) <= VK.TOL;
+    }
+    function plan(el, snap) {
+      const scope = snap.ownerRef.deref();
+      if (snap.count >= 2) {
+        const wide = placeOf(el, VK.MULTI_W, VK.MULTI_H, scope);
+        if (wide) return { n: snap.count, compact: false, lay: wide };
+        const compact = placeOf(el, VK.COMPACT_W, VK.COMPACT_H, scope);
+        return compact ? { n: snap.count, compact: true, lay: compact } : null;
+      }
+      const lay = placeOf(el, VK.SIZE, VK.SIZE, scope);
+      return lay ? { n: 0, compact: false, lay } : null;
+    }
+
+    // ---- descriptors and proofs ----
+    // What the worker gets for one item. A tile whose source is not a declared direct file is refused as an unsupported source: its poster is never a substitute.
+    function describe(snap, bind) {
+      if (snap.kind === 'tile') return { ok: false, reason: 'UNSUPPORTED_SOURCE' };
+      const media = { kind: snap.kind, url: snap.src, id: snap.route };
+      return { ok: true, media: bind ? { ...media, ...bind } : media };
+    }
+    // The background asks this document to prove the snapshot a second time, for the very action the token was minted for. One shot, whatever the answer.
+    function answerOwner(token) {
+      const entry = typeof token === 'string' ? ctl.pending.get(token) : null;
+      ctl.pending.delete(token);
+      if (!entry || Date.now() - entry.at > VK.TOKEN_TTL) return { ok: false, reason: 'NO_TOKEN' };
+      if (location.href !== entry.href || !holds(entry.snap)) return { ok: false, reason: 'STALE_OWNER' };
+      const s = entry.snap;
+      if (!atPlace(s.elRef.deref(), s, entry.place)) return { ok: false, reason: 'STALE_OWNER' }; // the media moved between the click and the proof
+      return describe(s);
+    }
+    // Phase 1 of a batch: the page, the owner and the whole list are proven again and every item's descriptor is frozen (its exact source, its attachment id, its place in the list).
+    function admit(entry) {
+      const root = entry.items[0].snap.ownerRef.deref();
+      if (!root || root.isConnected === false || here() !== entry.href || pageKey() !== entry.ownerId) return 'STALE_OWNER';
+      if (!entry.items.every((it) => holds(it.snap))) return 'STALE_ITEM';
+      const now = enumerate(root, entry.ownerId);
+      if (!now || now.length !== entry.items.length || !now.every((it, i) => it.el === entry.items[i].snap.elRef.deref())) return 'STALE_ITEM';
+      entry.frozen = entry.items.map((it, index) => describe(it.snap, { ownerId: entry.ownerId, index, count: entry.count, sig: entry.sig }));
+      return null;
+    }
+
+    function candidate(stack) {
+      const top = stack.slice(0, VK.MAX_STACK);
+      for (const el of top) {
+        if (!el || ctl.own(el)) continue;
+        if (el.tagName === 'IMG' && top.some((v) => v && v.tagName === 'VIDEO')) return null; // an image overlay does not prove the player underneath is its own media
+        if (el.tagName === 'VIDEO') {
+          const v = el;
+          if (!directVideo(v)) { const u = urlOf(v.currentSrc || v.src || ''); note(v, 'VIDEO_TRANSPORT', !u ? 'blob' : (!VIDEO_HOST.test(u.hostname) ? 'host' : (FILE.test(u.pathname) ? 'other' : 'manifest'))); return null; }
+          return { el: v, kind: 'video' };
+        }
+        if (el.tagName === 'IMG') return photoOk(el) && !(routeOf(anchorOf(el)) && routeOf(anchorOf(el)).kind !== 'photo') ? { el, kind: 'photo' } : null; // the topmost image decides; a poster is not a photo
+      }
+      return null;
+    }
+    function mediaWithin(node) {
+      if (!node || typeof node.querySelectorAll !== 'function') return null;
+      if (node.tagName === 'IMG' || node.tagName === 'VIDEO') return node;
+      const media = Array.from(node.querySelectorAll('img, video'));
+      return media.length === 1 ? media[0] : null;
+    }
+
+    const ctl = createControl((c) => ({
+      name: 'vk', K: VK, fixed: true, align: 'flex-start', modes: ['one', 'all'], hideOn: ['popstate'], rearmOn: [], followOn: ['scroll', 'resize'],
+      candidate, snapshot, holds, plan, admit,
+      heldPlan: (el, snap) => { const s = c.size(), lay = placeOf(el, s.w, s.h, snap.ownerRef.deref()); return lay ? { n: c.st.count, compact: c.st.compact, lay } : null; },
+      stale: (p, snap) => p.n !== snap.count,
+      watch(observer, el, snap) {
+        // the shown media, its link, its parent and the post: a source that changes, a link that changes, the media removed or replaced, an attachment added or removed
+        observer.observe(el, { attributes: true, attributeFilter: ['src', 'srcset', 'poster', 'style', 'class'] });
+        if (el.parentNode) observer.observe(el.parentNode, { childList: true });
+        const a = snap.anchorRef && snap.anchorRef.deref();
+        if (a) observer.observe(a, { attributes: true, attributeFilter: ['href'] });
+        const root = snap.ownerRef.deref();
+        if (root) observer.observe(root, { childList: true, subtree: true });
+      },
+      focusTarget(t) {
+        if (typeof t.closest !== 'function') return null;
+        const el = mediaWithin(t.tagName === 'A' ? t : (anchorOf(t) || t));
+        const kind = el && (el.tagName === 'VIDEO' ? 'video' : 'photo');
+        return kind && (kind === 'video' ? directVideo(el) : photoOk(el)) ? { el, kind } : null;
+      },
+      showDetail: (el, snap, p) => ({ kind: snap.kind, count: p.n, compact: Boolean(p.compact) }),
+      prepare(which, shown, cid) {
+        const el = shown && shown.elRef.deref(), root = shown && shown.ownerRef.deref(), fresh = el ? snapshot(el, shown.kind) : null, at = shownAt();
+        const base = !shown ? 'NO_CONTROL' : !el ? 'TARGET_GONE' : !fresh ? 'NO_SNAPSHOT' : (which === 'all' && (!root || c.st.count < 2 || fresh.count !== c.st.count)) ? 'NOT_A_BATCH'
+          : !same(fresh, shown) ? 'TARGET_CHANGED' : !atPlace(el, fresh, at) ? 'LAYOUT_LOST' : '';
+        if (base) return { gate: base, detail: { which } };
+        if (which === 'one') {
+          return { key: `one|${fresh.src}`, store: 'pending', entry: { snap: fresh, href: location.href, cid, place: at }, action: 'VK_INLINE_SAVE', start: () => ({ which, kind: fresh.kind }) };
+        }
+        // "Save all (N)": only on this explicit click. A fresh enumeration must equal what the control showed; every item gets its own snapshot; the background proves each again before it runs.
+        const items = scan(root, fresh.key);
+        if (!items || items.length !== c.st.count || !items.some((i) => i.el === el)) return { gate: 'LIST_CHANGED', detail: { which, count: items ? items.length : 0, n: c.st.count } };
+        session = { root, key: fresh.key, items };
+        let all;
+        try { all = c.snapshotAll(items.map((i) => ({ el: i.el, kind: i.kind })), root); } finally { session = null; }
+        if (!all.snaps) return { gate: 'ITEM_NOT_OWNED', detail: { which, index: all.index } };
+        const sig = hashOf(all.snaps.map((s) => `${s.kind}:${s.route}:${s.src}`).join('|'));
+        return { key: `all|${fresh.key}|${sig}`, store: 'batches', action: 'VK_INLINE_SAVE_ALL',
+          entry: { items: all.snaps.map((snap) => ({ snap, used: false })), href: location.href, opened: false, sig, ownerId: fresh.key, count: all.snaps.length, cid },
+          start: () => ({ which, count: all.snaps.length }) };
+      },
+      proof: {
+        VK_INLINE_OWNER: { phase: 'proof', run: (m) => answerOwner(m.token), detail: (m, a) => ({ kind: a && a.media && a.media.kind }) },
+        VK_INLINE_BATCH: { phase: 'batch.proof', run: (m) => c.batchOpen(m.token), detail: (m, a) => ({ count: a && a.count }) },
+        VK_INLINE_OWNER_ITEM: { phase: 'item.proof', run: (m) => c.batchItem(m.token, m.index), detail: (m, a) => ({ index: Number.isInteger(m.index) ? m.index : undefined, kind: a && a.media && a.media.kind }) }
+      }
     }));
     return ctl;
   }
@@ -1905,6 +2254,7 @@
     if (SITE.reddit) api.reddit = redditHandler(SITE.reddit);
     if (SITE.redgifs && SITE.redgifs.allowed()) api.redgifs = redgifsHandler(SITE.redgifs);
     if (host === 'www.pixiv.net') api.pixiv = pixivHandler();
+    if (host === 'vk.ru' || host === 'vk.com') api.vk = vkHandler();
     if (!controls.length || typeof window.addEventListener !== 'function') return;
     on(window, 'pagehide', (e) => { if (e && e.persisted === true) controls.forEach((c) => c.suspend()); else api.teardown(); }, true);
     on(window, 'pageshow', (e) => { if (e && e.persisted === true) controls.forEach((c) => { c.suspend(); c.st.href = here(); c.resume?.(); }); }, true);

@@ -3,15 +3,15 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.4"><img src="https://img.shields.io/badge/pre--release-v2.5.4-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.4"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.5"><img src="https://img.shields.io/badge/pre--release-v2.5.5-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.5"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.4"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
-    <img src="docs/assets/store-chrome-planned.svg" height="44" alt="Chrome Web Store distribution planned; not yet available">
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.5"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <img src="docs/assets/store-chrome-unavailable.svg" height="44" alt="Chrome Web Store listing currently unpublished">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
   <p><a href="README.ru.md">Русский</a> · <a href="#quick-start">Quick start</a> · <a href="#install">Installation</a> · <a href="#roadmap">Roadmap</a> · <a href="docs/PRIVACY.md">Privacy</a></p>
@@ -19,7 +19,7 @@
 
 MediaLatch (formerly Image Saver) saves accessible original images, videos and GIFs directly from your browser. Choose the media you want, follow the save in the download manager and find the file where you expect it. No companion application is needed.
 
-> **Current pre-release: [v2.5.4](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.4).** Adds Pixiv inline single/all saving, shared inline controls, compact site/post download groups, Cancel remaining and floating settings help. [What changed](CHANGELOG.md).
+> **Current pre-release: [v2.5.5](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.5).** Adds author labels in save results, balanced popup spacing and experimental VK inline controls with upper-left scroll-following placement. VK original parity, complete-post and video/clip coverage remain unverified. [What changed](CHANGELOG.md).
 
 | What you want to do | What MediaLatch offers |
 |---|---|
@@ -29,7 +29,7 @@ MediaLatch (formerly Image Saver) saves accessible original images, videos and G
 | Make it yours | Violet, Blue, Dark and Light themes; English and Russian |
 | Keep records on this device | Opt-in local statistics and Debug; no analytics or automatic report upload |
 
-Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox and Chrome Web Store distribution are planned.
+Tested primarily in Helium on Windows. Coverage is limited to the paths below; site layouts and access rules can change. Firefox support is planned. The user reports that Chrome Web Store 2.5.2 was approved and published, then accidentally unpublished; this GitHub preview does not republish the store listing.
 
 ---
 
@@ -79,7 +79,7 @@ A fresh install opens a separate welcome screen with three short steps. **Contin
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.4-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.5-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -106,11 +106,13 @@ The current preview covers the workflows below. Availability depends on the page
 - Native images/GIFs and accessible MP4/WebM videos. Exact declared URLs, including signatures, are preserved.
 - Genuine looping GIFs from confirmed X and Reddit MP4 animations. Animations longer than 30 seconds or exceeding conversion size limits remain source MP4; other conversion failures are reported.
 - Shared inline save controls on X, Reddit, Pixiv and RedGIFs. Pixiv offers Save this for the selected original page and Save all for a proven multi-page artwork, including supported feed cards.
+- Experimental VK inline saving on vk.ru/vk.com for loaded photos and opened direct-file videos/clips. Controls stay at the visible upper-left corner while the selected media remains onscreen. See the VK limits below.
 - All distinct declared original media from a Pawchive feed preview, including the original cover. Selecting an individual attachment saves that attachment.
 
 ### Manage files
 
 - Choose a writable base folder and an optional subfolder. Save everything into one folder or organize by site/type. One Author folders menu enables any combination of x.com, Reddit and Pixiv: usernames on X/Reddit, author name plus user ID on Pixiv. Save results and redacted error reports stay in the manager.
+- Show the proven X/Reddit/Pixiv post author in page notices, popup and full Downloads, including post batches and retries. Unknown authors and older records omit the label; VK authors are not inferred.
 - Compact popup with wheel/keyboard scrolling, a translucent custom scrollbar and one clear action for finished records; individual removal and details stay in the full manager.
 - Download manager with received/total bytes, speed and approximate remaining time when measurable. Complete files are staged locally before browser export; failed export can retry from retained bytes without another source download.
 
@@ -141,6 +143,7 @@ Both managers group all single and batch downloads by site. A new save reuses an
 | Booru boards | Danbooru, Gelbooru/rule34.xxx/safebooru.org and Moebooru boards such as yande.re, Konachan and Sakugabooru: selected preview/post media resolves to the declared same-post, same-file original; access/challenge pages can still prevent saving |
 | Zerochan | Selected thumbnail or opened-post media resolves to the declared same-post original; unavailable originals are refused |
 | Pixiv | Inline Save this / Save all on supported previews and opened artwork; declared original pages, up to 100 per batch; context-menu preview-all/opened-image-single behavior retained |
+| VK (experimental) | Save this uses the selected loaded photo URL or an opened direct HTTPS video file; Save all appears only for a proven complete list (up to 100). No original-photo parity, general blob/MSE/HLS/DASH or live video/audio acceptance is claimed. |
 | Other sites | Generic discovery plus existing rules, including selected booru paths; coverage varies |
 
 Kemono is deferred while the site is unavailable. Booru originals come from the post's own page or metadata and must name the same file (hash) and post; a sample, JPEG version or thumbnail is never saved as the original. Other booru deployments are not promised. A thumbnail alone does not prove the original file. Ambiguous targets and inaccessible sources can be refused. Sankaku search/subscription limits are respected; this preview does not bypass them.
@@ -183,11 +186,11 @@ GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output
 There is no telemetry or extension backend. Statistics and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
 
 <details>
-<summary>Validation and request safeguards in 2.5.4</summary>
+<summary>Validation and request safeguards in 2.5.5</summary>
 
 Privileged offscreen commands require the extension worker. Public selected pages cannot supply literal local/private-network media addresses, and unchecked server redirects are refused; deliberately selected local pages retain local media access. These restrictions can refuse redirect-dependent links and do not provide DNS-rebinding protection. Zerochan JSON uses a 2 MiB streaming limit with a full three-second deadline.
 
-Accepted changes have independent source reviews and bounded user checks in Helium for inline saving on X, Reddit, Pixiv and RedGIFs, compact Downloads and settings help. Offline/UI checks and isolated native fixtures cover batch accounting, request chronology, keyboard/layout behavior, settings persistence and downloaded PNG bytes. Exact release packaging is verified separately; these checks do not establish every live layout, Google Chrome, exhaustive audio, crash or quota behavior.
+Accepted changes have independent source reviews and bounded user checks in Helium for inline saving on X, Reddit, Pixiv and RedGIFs, compact Downloads and settings help. Offline/UI checks and isolated native fixtures cover batch accounting, request chronology, keyboard/layout behavior, settings persistence and downloaded PNG bytes. Author labels were also user checked on X/Reddit/Pixiv. VK button appearance after hard reload is user confirmed; placement/scroll checks use isolated fixtures, not live download/original/audio acceptance. Exact release packaging is verified separately; these checks do not establish every live layout, Google Chrome, exhaustive audio, crash or quota behavior.
 
 </details>
 
@@ -200,19 +203,19 @@ Statuses distinguish implemented features from future work. They describe direct
 | Area | Planned result | Status |
 |---|---|---|
 | Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Booru families included in this preview; reported manual board checks passed, access/layout limits remain; image-result discovery planned |
-| Controls and selection | Shared inline controls and optional post/media multi-selection | Shared X/Reddit/Pixiv/RedGIFs inline controls included and user checked; arbitrary multi-selection and VK photo-post downloading remain planned |
+| Controls and selection | Shared inline controls and optional post/media multi-selection | Shared X/Reddit/Pixiv/RedGIFs controls included and user checked; VK inline is experimental with full media support incomplete; arbitrary multi-selection planned |
 | Download manager | Compact site groups, separate individual/post lists, batch totals, Cancel remaining and updating notices | Included in popup and full manager; deferred resolution and source-range resume remain planned |
 | Local statistics | Compact per-site views with shared Booru totals and preserved historical counts | Included; global opt-in and clear, user-reported migration/count checks passed in Helium |
 | Complete-file staging | Disk-backed acquisition/validation before export and local retry; broaden native restart, quota and media checks | Included in preview; ordinary Helium checks passed, stress checks pending |
-| Batch archives | Selected-post/page batches, ZIP first; 7z only if a practical bounded implementation is justified | Planned |
+| Batch archives | Selected-post/page batches and packs of saved images/GIFs/videos by author, ZIP first; 7z only if justified | Planned |
 | Destination and naming | Writable base-directory selection, flat/site/type layouts and x.com/Reddit/Pixiv author folders | Included; reported flat and author-folder checks passed in Helium; broader permission-recovery checks remain |
 | Kemono | Declared same-post originals and scoped feed behavior | Deferred until the site is usable |
 | Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
-| Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Planned; security/privacy gates first |
+| Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Firefox/broader coverage planned; Chrome listing previously approved, currently unpublished; republication separate |
 | Settings and documentation | Compact settings, floating help and EN/RU documentation | Included; help opens without layout movement, header hover is limited to the select; user checked |
 | First-run setup | One-time three-step welcome screen with Continue to Saving; settings save states; readable download failures and list retry | Included; isolated fresh-install checks passed; user smoke evidence concerns the earlier interface |
 
-The optional Telegram/VK composers concern **publishing**. Planned VK inline downloading is a separate feature and is not included in this release.
+The optional Telegram/VK composers concern **publishing**. Experimental VK inline downloading is included; complete photo/video/clip/mixed-post support remains unfinished.
 
 ---
 
