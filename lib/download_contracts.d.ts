@@ -18,6 +18,10 @@ export interface DownloadJob {
   ready?: boolean;
   /** Post batch this job belongs to (a "Save all" list of an X or Reddit post, a multi-file Pixiv artwork or Pawchive post), when it has one. */
   batch?: string;
+  /** Original zero-based post position; independent of enqueue/completion time. */
+  batchIndex?: number;
+  /** Existing service label for independent saves, without a source URL. */
+  site?: string;
 }
 
 /** Progress of one post batch: every proven item is in exactly one count. Only `saved` is confirmed by the browser or the chosen folder. */

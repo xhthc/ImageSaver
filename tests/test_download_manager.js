@@ -665,6 +665,33 @@ function env(stored={jobs:[],paused:false}) {
       assert.deepEqual(e.data.batches,[]);
     }
   }
+  // Read-only post grouping metadata follows declared slots, never concurrent enqueue order.
+  {
+    const e=env({jobs:[],paused:false});const m=createManager(e.d);await m.ready;
+    const id=await m.openBatch('pixiv',3);
+    await m.bindSlot({id,i:2},'op-last');await m.bindSlot({id,i:0},'op-first');await m.bindSlot({id,i:1},'op-preparing');
+    await m.enqueue({url:'https://media.test/last',filename:'last.png'},{op:'op-last',site:'pixiv'});
+    await m.enqueue({url:'https://media.test/first',filename:'first.png'},{op:'op-first',site:'pixiv'});
+    const l=await m.list();
+    assert.deepEqual(l.jobs.map(j=>[j.filename,j.batch,j.batchIndex,j.site]),[['first.png',id,0,'pixiv'],['last.png',id,2,'pixiv']]);
+    assert.deepEqual(m.batchPosition('op-preparing'),{batch:id,batchIndex:1});
+    assert.equal(m.batchOf('op-preparing'),id,'existing caller API is preserved');
+    assert.equal(m.batchPosition('op-unknown'),null);
+    const again=createManager(e.d);await again.ready;
+    assert.deepEqual((await again.list()).jobs.map(j=>[j.filename,j.batchIndex,j.site]),l.jobs.map(j=>[j.filename,j.batchIndex,j.site]),'reopen retains metadata without schema migration');
+  }
+
+  // Original request time is durable even when automatic recovery replaces the operation record.
+  {
+    const e=env({jobs:[],paused:true}),m=createManager(e.d);await m.ready;
+    void m.enqueue({url:'https://media.test/slow',filename:'slow.png'},{op:'op-original',site:'x',createdAt:10}).catch(()=>{});
+    await until(async()=>(await m.list()).jobs.length===1);assert.equal((await m.list()).jobs[0].createdAt,10,'enqueue keeps original user request time, not queue admission time');
+    const restarted=env(e.data);let recovered=0;restarted.d.recoverAttempt=async()=>{recovered++;return 'op-recovered-at-'+Date.now();};
+    const again=createManager(restarted.d);await again.ready;const row=(await again.list()).jobs[0];
+    assert.equal(recovered,1);assert.match(row.op,/^op-recovered-at-/);assert.equal(row.createdAt,10,'new recovery operation cannot promote old site activity');
+    await again.command('cancel',row.id);await m.command('cancel',row.id);
+  }
+
   // 6c. Batch change announcements (MANAGER-BATCH-NOTICES-01): one call per saved change of a batch's canonical counts, nothing else.
   {
     const key=b=>[b.saved,b.failed,b.cancelled,b.skipped,b.remaining].join('/');
@@ -713,13 +740,14 @@ function env(stored={jobs:[],paused:false}) {
     assert.equal(summary.failed,0,'a rejected result cannot enter a notification');assert.equal(summary.remaining,2);
     e.d.store.set=store;
   }
-  // The admitted owning site is private durable metadata, even for converted blobs without a selected page.
+  // The admitted site label survives converted blobs; the public view exposes only that label, never media addresses.
   {
     const e=env({jobs:[],paused:true}),m=createManager(e.d);await m.ready;
     void m.enqueue({url:'blob:chrome-extension://test/converted',filename:'converted.gif'},{op:'op-retained-site',site:'reddit',mime:'image/gif'}).catch(()=>{});
     await wait();const raw=e.data;
     assert.equal(raw.jobs[0].site,'reddit','converted output keeps its admitted owning site on disk');
-    assert.equal((await m.list()).jobs[0].site,undefined,'private owning metadata is absent from public jobs');
+    const view=(await m.list()).jobs[0];assert.equal(view.site,'reddit','the public card can label the owning site');
+    assert.equal(view.source,undefined);assert.equal(view.selectedPage,undefined);assert(!JSON.stringify(view).includes('blob:'),'private media addresses are not exposed');
     const restarted=env(raw),m2=createManager(restarted.d);await m2.ready;
     assert.equal(restarted.data.jobs[0].site,'reddit','worker hydration retains the admitted site');
     await m.command('cancel',raw.jobs[0].id);

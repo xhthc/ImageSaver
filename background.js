@@ -1163,7 +1163,7 @@ async function managedDownload(options, feedbackOp=null, mime='', maxBytes=0, se
   // Only the admitting origin is needed by delayed staging; do not persist its full page URL.
   let selectedOrigin='';try{selectedOrigin=new URL(selectedPage).origin;}catch(_){}
   const record=feedbackOp ? await feedbackTracker?.get(feedbackOp).catch(()=>null) : null;
-  return downloadManager.enqueue(options,{op:feedbackOp,mime,maxBytes,site:record?.site || fbSiteOf(selectedOrigin,''),selectedPage:selectedOrigin,directoryId:saveDirectoryId});
+  return downloadManager.enqueue(options,{op:feedbackOp,createdAt:record?.createdAt,mime,maxBytes,site:record?.site || fbSiteOf(selectedOrigin,''),selectedPage:selectedOrigin,directoryId:saveDirectoryId});
 }
 // Post batches (MANAGER-BATCH-PROGRESS-01; model in worker/download_manager.js). Best effort: a batch that cannot be recorded never stops,
 // delays or changes a save, and batch data never reaches a fetch decision.
@@ -1244,8 +1244,10 @@ async function batchNoticeDeliver(id) {
 async function downloadManagerSnapshot() {
   const snapshot=await downloadManager.list();
   const owned=new Set(snapshot.jobs.map(j=>j.op));
-  const preparations=(await feedbackTracker.list()).filter(r=>!owned.has(r.id) && ['resolving','converting','failed','interrupted'].includes(r.state));
-  for(const r of preparations){const batch=downloadManager.batchOf?.(r.id);snapshot.jobs.push({id:r.id,op:r.id,managed:false,filename:r.filename || '',state:r.state==='interrupted'?'failed':r.state,received:0,total:null,speed:0,error:r.failure?.code || '',createdAt:r.createdAt,...(batch?{batch}:{})});}
+  const records=await feedbackTracker.list();
+  for(const j of snapshot.jobs){const r=records.find(r=>r.id===j.op);if(r && !j.site)j.site=r.site || '';}
+  const preparations=records.filter(r=>!owned.has(r.id) && ['resolving','converting','failed','interrupted'].includes(r.state));
+  for(const r of preparations){const batch=downloadManager.batchPosition?.(r.id);snapshot.jobs.push({id:r.id,op:r.id,managed:false,filename:r.filename || '',state:r.state==='interrupted'?'failed':r.state,received:0,total:null,speed:0,error:r.failure?.code || '',createdAt:r.createdAt,site:r.site || '',...(batch || {})});}
   if(downloadManager.pruneBatches)snapshot.batches=await downloadManager.pruneBatches(new Set(preparations.map(r=>r.id)));
   snapshot.jobs.sort((a,b)=>b.createdAt-a.createdAt);return snapshot;
 }

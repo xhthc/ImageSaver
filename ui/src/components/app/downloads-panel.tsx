@@ -1,18 +1,18 @@
-import {useCallback,useEffect,useRef,useState} from "react"
+import {useCallback,useEffect,useId,useRef,useState} from "react"
 import {Ban, CheckCircle2, ChevronDown, Clock, Download, Inbox, Layers, Loader2, Pause, Play, RotateCcw, X, Trash2, XCircle} from "lucide-react"
 import {ScrollArea} from "radix-ui"
 import {Button} from "@/components/ui/button"
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from "@/components/ui/collapsible"
 import {Alert, AlertDescription} from "@/components/ui/alert"
 import {SectionHeader} from "@/components/app/section"
-import {createDownloads} from "@/core/downloads.js"
+import {createDownloads,groupDownloads} from "@/core/downloads.js"
 import {useStore} from "@/hooks/use-store"
 import {useI18n} from "@/hooks/use-i18n"
 import {getEnv} from "@/lib/env"
 import {cn} from "@/lib/utils"
 import {createFeedbackList} from "@/core/feedbackList.js"
 import {ResultRow} from "@/components/app/result-row"
-import {jobFailure} from "@/core/present.js"
+import {jobFailure,formatTime,formatDateTime} from "@/core/present.js"
 import type {DownloadBatch} from "../../../../lib/download_contracts"
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const bytes=(n:number)=>n>=1048576?`${(n/1048576).toFixed(1)} MB`:n>=1024?`${(n/1024).toFixed(1)} KB`:`${n} B`
@@ -54,6 +54,33 @@ function BatchSummary({batch:b,pending,busy,onCancel}:{batch:DownloadBatch;pendi
     </Button>:null}
   </li>
 }
+/** One disclosure per site for all single and batch saves. Only a new request reopens/promotes it. */
+function SiteGroup({site,label,createdAt,count,remaining,failed,focused,full,children}:{site:string;label:string;createdAt:number;count:number;remaining:number;failed:number;focused:boolean;full:boolean;children:React.ReactNode}) {
+  const {t,locale}=useI18n()
+  const nameId=useId()
+  const [open,setOpen]=useState(remaining>0 || focused)
+  const previous=useRef(createdAt)
+  useEffect(()=>{if(createdAt>previous.current)setOpen(true);previous.current=createdAt},[createdAt])
+  useEffect(()=>{if(focused)setOpen(true)},[focused])
+  return <li data-slot="site-group" data-site={site} className="overflow-hidden rounded-xl border bg-card">
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger aria-labelledby={`${nameId}-action ${nameId}-summary${createdAt>0?` ${nameId}-time`:""}`} data-slot="site-toggle" className="group flex w-full items-start gap-2 rounded-xl bg-muted/60 px-3 py-3 text-left text-xs leading-4 focus-visible:-outline-offset-2">
+        <span id={`${nameId}-action`} className="sr-only">{t(open?'downloads.batch.hideFiles':'downloads.batch.showFiles')}{': '}</span>
+        <Layers className="mt-px size-3.5 shrink-0 text-muted-foreground" aria-hidden="true"/>
+        <span className="min-w-0 flex-1 space-y-1">
+          <span id={`${nameId}-summary`} role="status" className="block tabular-nums"><span className="font-semibold" data-slot="site-title">{label}</span>
+            {count>0?<span className="text-muted-foreground">{' · '}{t('downloads.site.files',{n:count})}</span>:null}
+            {remaining>0?<span className="text-muted-foreground">{' · '}{t('downloads.batch.remaining',{n:remaining})}</span>:null}
+            {failed>0?<span className="text-danger">{' · '}{t('downloads.batch.failed',{n:failed})}</span>:null}
+          </span>
+          {createdAt>0?<span id={`${nameId}-time`} className="block text-[11px] text-muted-foreground tabular-nums">{full?formatDateTime(createdAt,locale):formatTime(createdAt,locale)}</span>:null}
+        </span>
+        <ChevronDown className="mt-px size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none" aria-hidden="true"/>
+      </CollapsibleTrigger>
+      <CollapsibleContent forceMount hidden={!open}><ul data-slot="site-jobs" className="space-y-2 p-2">{children}</ul></CollapsibleContent>
+    </Collapsible>
+  </li>
+}
 // Keep the manager and toolbar popup on the same themed rail.
 export function DownloadsScrollbar() {
   return <ScrollArea.Scrollbar orientation="vertical" className="flex w-3 touch-none select-none rounded-full bg-muted/30 p-0.5" data-slot="downloads-scrollbar">
@@ -79,7 +106,7 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
   const jobs=s.jobs.slice()
   // Keep old notification deep links inspectable even after their byte-queue record was removed.
   const focused=records.find(r=>r.id===focusId)
-  if(focused && !s.removingIds?.includes(focused.id) && !s.dismissedIds?.includes(focused.id) && !jobs.some(j=>(j.op || j.id)===focusId))jobs.push({id:focused.id,op:focused.id,managed:false,filename:focused.filename || '',state:focused.state==='interrupted'?'failed':focused.state,received:0,total:null,speed:0,error:'',createdAt:focused.createdAt})
+  if(focused && !s.removingIds?.includes(focused.id) && !s.dismissedIds?.includes(focused.id) && !jobs.some(j=>(j.op || j.id)===focusId))jobs.push({id:focused.id,op:focused.id,managed:false,filename:focused.filename || '',state:focused.state==='interrupted'?'failed':focused.state,received:0,total:null,speed:0,error:'',createdAt:focused.createdAt,site:focused.site || focused.sourceHost || ''})
   // Retry stays busy until the read it requested has finished (load() also waits behind an automatic refresh in flight). It stays
   // focusable while busy (aria-disabled), and the alert holding it stays mounted until that result even if an older automatic read
   // succeeds meanwhile (then it says "Loading", not the old failure). A failed retry keeps focus on it; a successful one removes it,
@@ -99,7 +126,6 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
     await controller.command('cancelBatch',b.id)
     if(list && (!document.activeElement || document.activeElement===document.body || !list.contains(document.activeElement)))list.focus()
   }
-  const batchSummary=(b:DownloadBatch)=><BatchSummary key={'batch-'+b.id} batch={b} pending={s.pendingBatch===b.id} busy={s.busy} onCancel={e=>void cancelBatch(e,b)}/>
   const batches=new Map<string,DownloadBatch>(s.batches.filter(b=>b.remaining>0 || jobs.some(j=>j.batch===b.id)).map(b=>[b.id,b]))
   const finished=s.jobs.some(j=>TERMINAL.includes(j.state))
   const pauseLabel=t(s.paused?'downloads.resume':'downloads.pause')
@@ -133,7 +159,7 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
     if(record && feedback)return <ResultRow key={j.id} jobId={j.id} record={record} env={{FB:env.FB,...feedback.env}} unread={unreadIds.includes(record.id)} defaultOpen={focusId===record.id} actions={actions} detailsActions={detailsActions}><div className="pr-3 pb-3 pl-14 has-[>div:empty]:hidden">{progress}</div></ResultRow>
     const summary=<><JobIcon state={j.state}/><div className="min-w-0 flex-1 pt-px">
         <p className="line-clamp-2 text-[13px] leading-[18px] font-medium break-all">{j.filename || t('downloads.pendingName')}</p>
-        <p className={cn("text-xs leading-4",j.state==='failed'?"text-danger":j.state==='complete'?"text-success":"text-muted-foreground")} role="status">{t(`downloads.${j.state}`)}</p>
+        <p className={cn("text-xs leading-4",j.state==='failed'?"text-danger":j.state==='complete'?"text-success":"text-muted-foreground")} role="status">{t(`downloads.${j.state}`)}{!batches.has(j.batch) && j.site?<span className="text-muted-foreground">{' · '}{env.FB.siteLabel(j.site)}</span>:null}</p>
       </div></>
     return <li key={j.id} className={cn("space-y-2.5 rounded-xl border bg-card p-3",j.state==='failed' && "border-danger/35")} data-job={j.id} data-state={j.state}>
       {detailsActions?<Collapsible className="space-y-2.5">
@@ -151,12 +177,17 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
       </>}
     </li>
   }
-  const list=<ul className="space-y-2" data-slot="download-jobs">{[...batches.values()].filter(b=>!jobs.some(j=>j.batch===b.id)).map(batchSummary)}{jobs.flatMap((j,i)=>{
-      // the first row of a batch brings its summary and the batch's other rows; a batch is placed where its newest row is
-      const batch=j.batch?batches.get(j.batch):undefined
-      if(batch && jobs.findIndex(x=>x.batch===batch.id)!==i)return []
-      return batch?[batchSummary(batch),...jobs.filter(x=>x.batch===batch.id).map(row)]:[row(j)]
-    })}</ul>
+  const groups=groupDownloads(jobs,s.batches)
+  const siteLabel=(site:string)=>{
+    if(site==='unknown-site')return t('row.siteUnknown')
+    if(site==='x')return 'x.com'
+    const key='statistics.site.'+site,label=t(key)
+    return label===key?site:label
+  }
+  const batchSummary=(b:DownloadBatch)=><BatchSummary key={'batch-'+b.id} batch={b} pending={s.pendingBatch===b.id} busy={s.busy} onCancel={e=>void cancelBatch(e,b)}/>
+  const list=<ul className="space-y-2" data-slot="download-jobs">{groups.map(group=><SiteGroup key={group.site} site={group.site} label={siteLabel(group.site)} createdAt={group.createdAt} count={group.jobs.length} remaining={group.remaining} failed={group.failed} focused={!!focusId && group.jobs.some(j=>(j.op || j.id)===focusId)} full={full}>
+    {group.entries.flatMap(entry=>entry.batch?[batchSummary(entry.batch),...entry.jobs.map(row)]:entry.jobs.map(row))}
+  </SiteGroup>)}</ul>
   return <section aria-label={t('downloads.heading')} tabIndex={-1} className={cn("outline-none",full?"space-y-4":"space-y-2.5")} data-slot={full?'results-section':undefined}>
     {full
       ?<SectionHeader title={t('downloads.heading')} description={t('section.downloads')}>{queueControls}</SectionHeader>

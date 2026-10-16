@@ -69,7 +69,7 @@
     // `keep` is the one step that survives a refused write (bindSlot): it is re-applied in the same lock turn as the rollback, before anything queued behind this write can run.
     const edit = (fn, keep) => lock(async () => { const old = JSON.stringify(batches); if (!fn()) return false; try { await save(); } catch (e) { batches = JSON.parse(old); keep?.(); throw e; } return true; });
     const patch = (j, p) => lock(async () => { const old = {...j}; Object.assign(j, p, {updatedAt: Date.now()}); try { await save(); } catch(e) { Object.assign(j, old); syncBatches(); throw e; } });
-    const publicJob = j => ({id:j.id, op:j.op, filename:(j.actualFilename || j.filename).split(/[\\/]/).pop(), state:j.state, received:j.received, total:j.total, speed:j.speed, error:j.error, downloadId:Number.isInteger(j.downloadId)?j.downloadId:null, createdAt:j.createdAt, ready:!!j.prepared, ...(j.batch ? {batch:j.batch.id} : {})});
+    const publicJob = j => ({id:j.id, op:j.op, filename:(j.actualFilename || j.filename).split(/[\\/]/).pop(), state:j.state, received:j.received, total:j.total, speed:j.speed, error:j.error, downloadId:Number.isInteger(j.downloadId)?j.downloadId:null, createdAt:j.createdAt, ready:!!j.prepared, ...(j.site ? {site:j.site} : {}), ...(j.batch ? {batch:j.batch.id,batchIndex:j.batch.i} : {})});
     const settle = (j, error) => { const w = waiting.get(j.id); if(w) { waiting.delete(j.id); error ? w.reject(error) : w.resolve(j.downloadId); } };
     const ready = (async () => {
       const stored = await d.store.get(); jobs = stored?.jobs || []; paused = stored?.paused === true; batches = cleanBatches(stored?.batches);
@@ -220,7 +220,7 @@
     }
     async function enqueue(options, meta = {}) {
       await ready;
-      const j = {id:'job-'+d.id(), op:meta.op || null, site:/^[a-z0-9.-]{1,50}$/.test(meta.site || '') ? meta.site : '', source:options.url, selectedPage:meta.selectedPage || '', filename:options.filename, expectedMime:meta.mime || '', ...(Number.isSafeInteger(meta.maxBytes) && meta.maxBytes>0 ? {maxBytes:meta.maxBytes} : {}), directoryId:meta.directoryId || '', createdAt:Date.now(), state:'queued', received:0, total:null, speed:0, prepared:false, error:''};
+      const j = {id:'job-'+d.id(), op:meta.op || null, site:/^[a-z0-9.-]{1,50}$/.test(meta.site || '') ? meta.site : '', source:options.url, selectedPage:meta.selectedPage || '', filename:options.filename, expectedMime:meta.mime || '', ...(Number.isSafeInteger(meta.maxBytes) && meta.maxBytes>0 ? {maxBytes:meta.maxBytes} : {}), directoryId:meta.directoryId || '', createdAt:Number.isSafeInteger(meta.createdAt) && meta.createdAt>0?meta.createdAt:Date.now(), state:'queued', received:0, total:null, speed:0, prepared:false, error:''};
       let resolve, reject; const result = new Promise((a,b) => {resolve=a;reject=b;});
       await lock(async()=> {
         // Resolve the live slot under the lock: a failed batch edit can replace the slot objects before enqueue runs.
@@ -333,7 +333,8 @@
       const next = batches.filter(keep); if (next.length === batches.length) return;
       const old = batches; batches = next; try { await save(); } catch (e) { batches = old; throw e; }
     }); return batches.map(view); };
-    return {ready, enqueue, command, openBatch, bindSlot, keepSlot, settleSlot, closeBatch, stopped, slotInfo, batchSummary, isBatchOp: op => memberOps.has(op), pruneBatches, batchOf(op) { return batches.find(b => b.slots.some(s => s.op === op))?.id; }, activityCount(){return jobs.filter(j=>!terminal.has(j.state)).length;}, output(id){
+    const batchPosition = op => { const b = batches.find(b => b.slots.some(s => s.op === op)); return b ? {batch:b.id,batchIndex:b.slots.findIndex(s => s.op === op)} : null; };
+    return {ready, enqueue, command, openBatch, bindSlot, keepSlot, settleSlot, closeBatch, stopped, slotInfo, batchSummary, isBatchOp: op => memberOps.has(op), pruneBatches, batchPosition, batchOf(op) { return batchPosition(op)?.batch; }, activityCount(){return jobs.filter(j=>!terminal.has(j.state)).length;}, output(id){
       const j=jobs.find(j=>j.downloadId===id);if(!j?.mime)return null;
       return {mime:j.mime,evidence:'verified_mime',type:j.mime.startsWith('video/')?'video':j.mime==='image/gif'?'gif':'pic',sizeBytes:j.total,sizeKind:'measured'};
     },async drain(){await ready;while(running)await d.sleep(100);}, async progress(id,p){await progress.get(id)?.(p);}, async list(){await ready;await chain;return {jobs:jobs.map(publicJob).reverse(),paused,batches:batches.map(view)};}};

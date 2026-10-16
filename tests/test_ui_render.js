@@ -1390,19 +1390,19 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
         const p = await mk({ jobs: [job('single', 'complete'), job('m1', 'complete', { batch: 'batch-1' }), job('m2', 'failed', { batch: 'batch-1' }), job('m3', 'receiving', { batch: 'batch-1' })], batches: [batch()] });
         const summaries = p.qa('[data-slot="batch-summary"]');
         assert(summaries.length === 1 && summaries[0].querySelector('[role="status"]').textContent.replace(/\s+/g, ' ').trim() === `${t.title} · ${t.saved(2, 4)} · ${t.failed(1)} · ${t.remaining(1)}`, `R27a ${kind}/${lang}: one localized summary with distinct saved / failed / in-progress counts (${summaries[0] && summaries[0].textContent})`);
-        const order = p.qa('[data-slot="download-jobs"] > li').map((li) => li.getAttribute('data-batch') ? 'S' : li.getAttribute('data-job'));
+        const order = p.qa('[data-slot="site-jobs"] > li').map((li) => li.getAttribute('data-batch') ? 'S' : li.getAttribute('data-job'));
         assert(order.join(',') === 'single,S,m1,m2,m3' || order.join(',') === 'S,m1,m2,m3,single', `R27b ${kind}/${lang}: the summary heads its own rows and the unrelated row stays outside (${order.join(',')})`);
         assert(p.qa('[data-job]').length === 4 && p.q('[data-job="m2"] button[aria-label="' + t.retry + '"]') && p.q('[data-job="m3"] button[aria-label="' + t.cancel + '"]') && p.q('progress[value="1024"]'), `R27c ${kind}/${lang}: individual rows keep their progress and Cancel / Retry`);
-        assert(!/\/s|%|MB|KB|[0-9] s\b/.test(summaries[0].querySelector('[role="status"]').textContent) && !summaries[0].querySelector('progress, a, [role="status"] button') && [...summaries[0].querySelectorAll('button')].every((b) => b.getAttribute('data-slot') === 'batch-cancel'), `R27d ${kind}/${lang}: the status line has no byte, speed, percentage or ETA and no control; the only action of the summary is Cancel remaining`);
+        assert(!/\/s|%|MB|KB|[0-9] s\b/.test(summaries[0].querySelector('[role="status"]').textContent) && !summaries[0].querySelector('progress, a, [role="status"] button') && [...summaries[0].querySelectorAll('button')].every((b) => ['batch-cancel','batch-toggle'].includes(b.getAttribute('data-slot'))), `R27d ${kind}/${lang}: the status line has no byte, speed, percentage or ETA and no control; the summary offers only disclosure and Cancel remaining`);
         await p.unmount();
       }
       // finished: all saved is only said when every file is saved; a mixed result is a count, not "complete"
       {
         const all = await mk({ jobs: [job('a', 'complete', { batch: 'batch-1' }), job('b', 'complete', { batch: 'batch-1' }), job('c', 'complete', { batch: 'batch-1' })], batches: [batch({ count: 3, saved: 3, failed: 0, remaining: 0 })] });
-        assert(all.q('[data-slot="batch-summary"]').textContent.replace(/\s+/g, ' ').trim() === `${t.title} · ${t.all(3)}`, `R27e ${kind}/${lang}: every file saved`);
+        assert(all.q('[data-slot="batch-summary"] [role="status"]').textContent.replace(/\s+/g, ' ').trim() === `${t.title} · ${t.all(3)}`, `R27e ${kind}/${lang}: every file saved`);
         await all.unmount();
         const mixed = await mk({ jobs: [job('a', 'complete', { batch: 'batch-1' }), job('b', 'failed', { batch: 'batch-1' }), job('c', 'cancelled', { batch: 'batch-1', error: 'CANCELLED' })], batches: [batch({ count: 5, saved: 1, failed: 2, cancelled: 1, skipped: 1, remaining: 0 })] });
-        const text = mixed.q('[data-slot="batch-summary"]').textContent.replace(/\s+/g, ' ').trim();
+        const text = mixed.q('[data-slot="batch-summary"] [role="status"]').textContent.replace(/\s+/g, ' ').trim();
         assert(text === `${t.title} · ${t.saved(1, 5)} · ${t.failed(2)} · ${t.cancelled(1)} · ${t.skipped(1)}` && !text.includes(t.all(5)), `R27f ${kind}/${lang}: finished with failures says what was saved, never "all saved" (${text})`);
         await mixed.unmount();
       }
@@ -1473,6 +1473,40 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     }
   }
 
+  // Site groups contain every single/batch save; new requests promote/reuse their owning site in both surfaces.
+  for(const lang of ['en','ru'])for(const kind of ['quick','full']) {
+    const batch={id:'post-x',site:'x',createdAt:10,count:2,saved:2,failed:0,cancelled:0,skipped:0,remaining:0};
+    const j=(id,site,createdAt,over={})=>({id,site,createdAt,filename:id+'.png',state:'complete',received:2048,total:2048,speed:0,error:'',...over});
+    const state={session:[],history:[],local:{uiLanguage:lang},batches:[batch],jobs:[j('x-last','x',100,{batch:'post-x',batchIndex:1}),j('reddit-old','reddit.com',20),j('x-single','x.com',15),j('x-first','twitter.com',12,{batch:'post-x',batchIndex:0}),j('pixiv-old','pixiv',5)]};
+    const p=await page(kind,state,{hash:'#downloads'}),group=(site)=>p.q(`[data-slot="site-group"][data-site="${site}"]`),toggle=(site)=>group(site).querySelector('[data-slot="site-toggle"]'),content=(site)=>group(site).querySelector('[data-slot="site-jobs"]').parentElement;
+    const order=()=>p.qa('[data-slot="download-jobs"] > li').map(n=>n.getAttribute('data-site')).join();
+    const refresh=async()=>{await p.U.act(async()=>{for(const cb of state.msgListeners||[])cb({action:'DOWNLOADS_CHANGED'});await sleep(5)});await p.settle(5)};
+    assert(order()==='reddit,x,pixiv' && p.qa('[data-slot="site-group"]').length===3,`S1 ${kind}/${lang}: one group per owning site including canonical aliases`);
+    assert(group('x').querySelectorAll('[data-job]').length===3 && group('x').querySelector('[data-job="x-single"]') && !group('x').querySelector('[data-job="reddit-old"]'),`S2 ${kind}/${lang}: single and batch X downloads share one group without foreign files`);
+    assert([...group('x').querySelectorAll('[data-job]')].map(n=>n.getAttribute('data-job')).join()==='x-single,x-first,x-last',`S3 ${kind}/${lang}: recent singles first; batch members in original source order`);
+    assert(p.qa('[data-slot="site-toggle"]').every(t=>t.getAttribute('aria-expanded')==='false') && content('x').hidden,`S4 ${kind}/${lang}: terminal site groups start folded`);
+    await p.click(toggle('x'));toggle('x').focus();
+    assert(!content('x').hidden && !group('x').querySelector('[data-slot="batch-toggle"]') && p.calls.messages.filter(m=>m==='DOWNLOADS_COMMAND').length===0,`S5 ${kind}/${lang}: one mouse disclosure reveals single/batch files with no nested post toggle or queue command`);
+    await p.click(toggle('x'));assert(content('x').hidden && p.doc.activeElement===toggle('x'),`S6 ${kind}/${lang}: collapse retains trigger focus`);
+    state.jobs.push(j('x-new','twitter.com',30,{state:'receiving',total:4096}));await refresh();
+    assert(order()==='x,reddit,pixiv' && p.qa('[data-slot="site-group"]').length===3 && group('x').querySelectorAll('[data-job]').length===4,`S7 ${kind}/${lang}: a new X single promotes and reuses X's existing group`);
+    assert(toggle('x').getAttribute('aria-expanded')==='true' && !content('x').hidden,`S8 ${kind}/${lang}: new activity reopens the existing site without moving focus`);
+    state.jobs=state.jobs.map(j=>j.id==='x-new'?{...j,state:'complete',received:4096,total:4096}:j);await refresh();
+    assert(order()==='x,reddit,pixiv' && toggle('x').getAttribute('aria-expanded')==='true',`S9 ${kind}/${lang}: progress/completion does not reorder or auto-fold`);
+    state.jobs.push(j('pixiv-new','www.pixiv.net',40));await refresh();assert(order()==='pixiv,x,reddit' && p.qa('[data-slot="site-group"]').length===3,`S10 ${kind}/${lang}: switching to Pixiv promotes its same site group`);
+    state.jobs.push(j('reddit-new','reddit',50,{state:'failed',error:'NETWORK_FAILED'}));await refresh();assert(order()==='reddit,pixiv,x' && group('reddit').querySelectorAll('[data-job]').length===2 && group('reddit').querySelector('button[title="'+(lang==='en'?'Retry download':'Повторить загрузку')+'"]'),`S11 ${kind}/${lang}: returning to Reddit promotes/reuses it; failed row keeps Retry`);
+    await p.unmount();const again=await page(kind,state,{hash:'#downloads'});assert(again.qa('[data-slot="download-jobs"] > li').map(n=>n.getAttribute('data-site')).join()==='reddit,pixiv,x' && again.qa('[data-slot="site-toggle"]').every(t=>t.getAttribute('aria-expanded')==='false'),`S12 ${kind}/${lang}: reopen reconstructs site order and folds finished groups`);await again.unmount();
+  }
+  {
+    const record=rec({filename:'linked-page.png',site:'pixiv'}),state={session:[record],history:[],local:{uiLanguage:'en'},jobs:[{id:'linked-job',op:record.id,batch:'linked-post',batchIndex:0,createdAt:1,site:'pixiv',filename:record.filename,state:'complete',received:100,total:100}],batches:[{id:'linked-post',site:'pixiv',createdAt:1,count:1,saved:1,failed:0,cancelled:0,skipped:0,remaining:0}]};
+    const p=await page('full',state,{hash:'#downloads',search:`?op=${record.id}`});assert(p.q('[data-site="pixiv"] [data-slot="site-toggle"]').getAttribute('aria-expanded')==='true' && p.q('[data-job="linked-job"] [data-slot="result-details"]'), 'S13: notification deep link expands its site and the exact diagnostic row');await p.unmount();
+  }
+
+  {
+    const p=await page('quick',{session:[],history:[],local:{uiLanguage:'en'},jobs:[{id:'retained-success',site:'pixiv',filename:'retained.png',batch:'expired-failure',batchIndex:1,createdAt:2,state:'complete',received:1,total:1}],batches:[{id:'expired-failure',site:'pixiv',createdAt:1,count:22,saved:21,failed:1,cancelled:0,skipped:0,remaining:0}]});
+    assert(p.q('[data-site="pixiv"] [data-slot="site-toggle"]').getAttribute('aria-expanded')==='false' && p.q('[data-site="pixiv"] [data-slot="site-toggle"]').textContent.includes('1 failed'),'S14: collapsed site retains canonical batch error after its failed preparation card expires');await p.unmount();
+  }
+
   // MANAGER-BATCH-CANCEL-01: one "Cancel remaining" action on a batch summary that still has unfinished work, in the popup and the full manager.
   {
     const T = {
@@ -1490,7 +1524,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
         const sites = ['x', 'reddit', 'pixiv', 'pawchive'];
         const p = await mk({ jobs: sites.flatMap((s, i) => [job('r' + i, 'receiving', { batch: 'b' + i })]).concat([job('done', 'complete', { batch: 'bd' })]), batches: sites.map((s, i) => batch({ id: 'b' + i, site: s })).concat([batch({ id: 'bd', site: 'x', count: 2, saved: 2, remaining: 0 })]) });
         const buttons = p.qa('[data-slot="batch-cancel"]');
-        assert(buttons.length === 4 && buttons.every((b, i) => b.textContent.trim() === t.cancel && b.getAttribute('aria-label') === `${t.cancel}: ${t.title[sites[i]]}`), `R29a ${kind}/${lang}: one localized Cancel remaining per unfinished batch, named for its post (${buttons.map((b) => b.getAttribute('aria-label'))})`);
+        assert(buttons.length === 4 && buttons.every(b => b.textContent.trim() === t.cancel) && buttons.map(b=>b.getAttribute('aria-label')).sort().join('|')===sites.map(s=>`${t.cancel}: ${t.title[s]}`).sort().join('|'), `R29a ${kind}/${lang}: one localized Cancel remaining per unfinished batch, named for its post (${buttons.map((b) => b.getAttribute('aria-label'))})`);
         assert(!p.q('[data-batch="bd"] [data-slot="batch-cancel"]') && p.qa('[data-slot="batch-summary"]').every((s) => !s.querySelector('progress')), `R29b ${kind}/${lang}: a finished batch has no action; the summary still aggregates no bytes`);
         assert(p.qa('[data-job] button[aria-label]').length >= 4, `R29c ${kind}/${lang}: the file rows keep their own actions`);
         await p.unmount();

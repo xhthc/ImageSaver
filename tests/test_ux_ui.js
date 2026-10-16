@@ -167,6 +167,22 @@ function makeChrome(state) {
   const { createQuick } = await core('quick.js');
   const { createSettings, DEFAULTS, ALLOWED_HOSTS, cleanHost, STATUS_MS } = await core('settings.js');
   const present = await core('present.js');
+  {
+    const {downloadSite,groupDownloads}=await core('downloads.js');
+    const job=(id,site,createdAt,over={})=>({id,site,createdAt,state:'complete',filename:id+'.png',received:0,total:null,speed:0,error:'',...over});
+    assert(['x','x.com','www.twitter.com','pbs.twimg.com'].every(s=>downloadSite(s)==='x') && downloadSite('i.pximg.net')==='pixiv' && downloadSite('reddit.com')==='reddit','SG1: aliases use canonical site catalogue');
+    assert(downloadSite('notreddit.com')==='notreddit.com' && downloadSite('reddit.com.example.org')==='reddit.com.example.org','SG2: foreign domain lookalikes stay separate');
+    assert([undefined,null,'','unknown-site','https://x.com/file.jpg','<img>'].every(s=>downloadSite(s)==='unknown-site'),'SG3: absent/invalid sites never guess from URLs or filenames');
+    const jobs=[job('x1','x',1),job('r1','reddit',2)],batches=[];const order=()=>groupDownloads(jobs,batches).map(g=>g.site).join();
+    assert(order()==='reddit,x','SG4: newer site first');jobs.push(job('x2','x.com',3));assert(order()==='x,reddit' && groupDownloads(jobs,batches)[0].jobs.length===2,'SG5: returning to X reuses and promotes its group');
+    jobs.push(job('p1','pixiv',4));assert(order()==='pixiv,x,reddit','SG6: a different site becomes most recent');jobs.push(job('r2','reddit.com',5));assert(order()==='reddit,pixiv,x' && groupDownloads(jobs,batches).length===3,'SG7: returning to Reddit does not create a duplicate site');
+    const batch={id:'b',site:'x',createdAt:0,count:3,saved:2,failed:0,cancelled:0,skipped:0,remaining:1};batches.push(batch);jobs.push(job('last','x',999,{batch:'b',batchIndex:2}),job('first','x',1000,{batch:'b',batchIndex:0}));
+    const before=JSON.stringify({jobs,batches}),groups=groupDownloads(jobs,batches),x=groups.find(g=>g.site==='x');
+    assert(order()==='reddit,pixiv,x' && x.entries.find(e=>e.batch).jobs.map(j=>j.id).join()==='first,last','SG8: a late batch member neither promotes an old request nor reverses source slots');
+    assert(x.remaining===1 && x.jobs.length===4,'SG9: canonical batch remaining counted once alongside independent files');assert(JSON.stringify({jobs,batches})===before,'SG10: grouping never mutates queue snapshots');
+    batch.failed=1;batch.remaining=0;assert(groupDownloads(jobs,batches).find(g=>g.site==='x').failed===1,'SG11: canonical batch failure stays visible after its feedback-only row expires');
+  }
+
 
   // =================================================================================================
   console.log('\n--- 21. Static contract: pages, build output, tabs, permissions ---');

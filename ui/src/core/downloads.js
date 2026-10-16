@@ -1,5 +1,7 @@
 // @ts-check
 import { createStore } from './store.js';
+import '../../../lib/sites.js';
+const SITES = /** @type {readonly {id:string,domains?:readonly string[]}[]} */ (Reflect.get(globalThis,'MediaLatchSites').SITES);
 /** @param {{chrome: import('../../../lib/download_contracts').DownloadsChrome}} dependencies */
 export function createDownloads({ chrome }) {
     const store = createStore(/** @type {import('../../../lib/download_contracts').DownloadsViewState} */ ({ jobs: [], batches: [], paused: false, status: 'loading', error: '', busy: false, pendingBatch: '', removingIds: [], dismissedIds: [] }));
@@ -89,4 +91,39 @@ export function createDownloads({ chrome }) {
         }
     }
     return { store, load, command, dispose() { disposed = true; chrome.runtime.onMessage?.removeListener(changed); } };
+}
+
+/** Existing service IDs and domain aliases share one Downloads group. No media URL or filename is used.
+ * @param {unknown} value */
+export function downloadSite(value) {
+    const raw = typeof value === 'string' ? value.toLowerCase().replace(/^www\./, '') : '';
+    if (!raw || raw === 'unknown-site' || !/^[a-z0-9.-]{1,100}$/.test(raw)) return 'unknown-site';
+    const site = raw === 'pawchive.pw' ? 'pawchive' : raw;
+    return SITES.find(s => s.id === site || s.domains?.some(domain => site === domain || site.endsWith('.' + domain)))?.id || site;
+}
+/** @typedef {import('../../../lib/download_contracts').DownloadJob} Job */
+/** @typedef {import('../../../lib/download_contracts').DownloadBatch} Batch */
+/** @typedef {{id:string,createdAt:number,site:string,batch?:Batch,jobs:Job[],remaining:number}} Entry */
+/** @typedef {{site:string,createdAt:number,entries:Entry[],jobs:Job[],remaining:number,failed:number}} SiteGroup */
+/** One group per owning site, promoted only by a new download request (not progress or a late batch member).
+ * @param {Job[]} jobs @param {Batch[]} batches @returns {SiteGroup[]} */
+export function groupDownloads(jobs, batches) {
+    const terminal = new Set(['complete', 'failed', 'cancelled']);
+    const shown = new Map(batches.filter(b => b.remaining > 0 || jobs.some(j => j.batch === b.id)).map(b => [b.id, b]));
+    const ordinal = (/** @type {Job} */ j) => typeof j.batchIndex === 'number' && Number.isSafeInteger(j.batchIndex) && j.batchIndex >= 0 ? j.batchIndex : Number.MAX_SAFE_INTEGER;
+    /** @type {Entry[]} */
+    const entries = [...shown.values()].map(batch => ({id:'batch-' + batch.id,createdAt:batch.createdAt,site:downloadSite(batch.site),batch,
+        jobs:jobs.filter(j => j.batch === batch.id).sort((a,b) => ordinal(a)-ordinal(b) || (a.createdAt || 0)-(b.createdAt || 0) || a.id.localeCompare(b.id)),remaining:batch.remaining}));
+    for (const job of jobs) if (!job.batch || !shown.has(job.batch)) entries.push({id:'job-' + job.id,createdAt:job.createdAt || 0,site:downloadSite(job.site),jobs:[job],remaining:terminal.has(job.state)?0:1});
+    /** @type {Map<string,SiteGroup>} */
+    const groups = new Map();
+    for (const entry of entries) {
+        let group = groups.get(entry.site);
+        if (!group) { group = {site:entry.site,createdAt:entry.createdAt,entries:[],jobs:[],remaining:0,failed:0}; groups.set(entry.site,group); }
+        group.createdAt = Math.max(group.createdAt,entry.createdAt);
+        group.entries.push(entry);group.jobs.push(...entry.jobs);group.remaining += entry.remaining;
+        group.failed += entry.batch ? entry.batch.failed : entry.jobs.filter(j => j.state === 'failed').length;
+    }
+    for (const group of groups.values()) group.entries.sort((a,b) => b.createdAt-a.createdAt);
+    return [...groups.values()].sort((a,b) => b.createdAt-a.createdAt || a.site.localeCompare(b.site));
 }

@@ -2479,10 +2479,16 @@ const settings = { subfolder: 'SavedImages', folderOrganizationMode: 'single' };
     let a = snap.batches[0];
     assert(snap.batches.length === 1 && a.count === 6 && counts(a) === '0/2/0/2/2', `29a: while item 0 is still preparing and item 1 is exporting: 0 saved, 2 failed (staging, refusal), 2 skipped duplicates (busy and discarded), 2 remaining (${counts(a)})`);
     assert(snap.jobs.filter((j) => j.batch === a.id).length === 4 && snap.jobs.every((j) => j.batch === a.id), '29b: the rows of the batch carry its id: the preparing item, the exporting and the failed job, and the refused operation (the duplicates have no row)');
+    assert(snap.jobs.every(j=>Number.isInteger(j.batchIndex)) && snap.jobs.some(j=>j.managed===false && j.batchIndex===0) && snap.jobs.some(j=>j.managed!==false && j.batchIndex===1), '29b-order: preparations and enqueued files retain their original post positions');
+    const requestTime=snap.jobs.find(j=>j.managed===false && j.batchIndex===0).createdAt;
     env.openGate();
     await until(async () => (await env.snapshot()).jobs.filter((j) => j.state === 'exporting').length === 2, 'both exports accepted');
     snap = await env.snapshot(); a = snap.batches[0];
+    assert(snap.jobs.find(j=>j.managed!==false && j.batchIndex===0).createdAt===requestTime, '29b-time: queued export retains the original user request timestamp instead of late enqueue time');
     assert(counts(a) === '0/2/0/2/2' && env.downloadCalls.length === 2, `29c: both files are with the browser but unfinished: still 0 saved, 2 remaining (${counts(a)})`);
+    const tracker=vm.runInContext('feedbackTracker',env.sandbox),keptList=tracker.list;
+    tracker.list=async()=>[];const withoutFeedback=await env.snapshot();tracker.list=keptList;
+    assert(withoutFeedback.jobs.find(j=>j.batchIndex===0).createdAt===requestTime, '29b-expiry: losing bounded feedback cannot change a retained job timestamp');
     assert(env.plan.filter((u) => u.includes('IMG0')).length === 1, '29d: the repeated item was not requested a second time');
     // the browser finishes both files; repeated completion events change nothing
     const [first, second] = [...env.downloadsDb.keys()];
