@@ -9,13 +9,14 @@ async function until(fn){for(let i=0;i<1000;i++){if(await fn())return;await wait
 const f2=async(name,fn)=>{try{await fn();}catch(x){console.log('FAIL f2 '+name+': '+String(x.message).split(String.fromCharCode(10))[0]);process.exitCode=1;}};
 const png=require('node:fs').readFileSync('icons/128.png');
 function disk(fetcher,quota=1e8){
-  const files=new Map(), writes=[];let fetches=0,objects=[];
+  const files=new Map(), writes=[], revoked=[];let fetches=0,objects=[];
   const dir={getDirectoryHandle:async()=>dir,getFileHandle:async(id,{create}={})=>{
     if(!files.has(id)){if(!create)throw Object.assign(Error('missing'),{name:'NotFoundError'});files.set(id,new Blob());}
     return {createWritable:async()=>{let chunks=[];return {write:async x=>{writes.push(x.length);chunks.push(x)},close:async()=>files.set(id,new Blob(chunks)),abort:async()=>{}};},getFile:async()=>files.get(id)};
   },removeEntry:async id=>{files.delete(id)}};
-  const s=createStaging({directory:async()=>dir,estimate:async()=>({quota,usage:0}),origin:'chrome-extension://test',fetch:async(...args)=>{fetches++;return fetcher(...args)},sniff:sniffMediaMagicBytes,malformed:isMalformedMediaContainer,url:file=>{objects.push(file);return 'blob:chrome-extension://test/local'},revoke:()=>{}});
-  return {s,files,writes,objects,get fetches(){return fetches}};
+  const d={directory:async()=>dir,estimate:async()=>({quota,usage:0}),origin:'chrome-extension://test',fetch:async(...args)=>{fetches++;return fetcher(...args)},sniff:sniffMediaMagicBytes,malformed:isMalformedMediaContainer,url:file=>{objects.push(file);return 'blob:chrome-extension://test/local-'+objects.length},revoke:url=>revoked.push(url)};
+  const s=createStaging(d);
+  return {s,d,dir,files,writes,objects,revoked,get fetches(){return fetches}};
 }
 function env(stored={jobs:[],paused:false}) {
   let data=structuredClone(stored),next=1,stages=0,exports=0,removed=[],failWrite=null,autoComplete=true;
@@ -45,6 +46,54 @@ function env(stored={jobs:[],paused:false}) {
   const quota=disk(async()=>new Response(png,{headers:{'content-length':String(png.length)}}),100);await assert.rejects(quota.s.stage({id:'job-quota',source:'https://media.test/x'},async()=>{}),/STORAGE_QUOTA/);
   const binary=disk(async()=>new Response(png));assert.equal((await binary.s.stage({id:'job-binary',source:'https://media.test/x',expectedMime:'application/octet-stream'},async()=>{})).mime,'image/png');
   const cancelled=disk(async()=>new Response(png));await cancelled.s.abort('job-cancel','attempt-1');await assert.rejects(cancelled.s.stage({id:'job-cancel',attempt:'attempt-1',source:'https://media.test/x'},async()=>{}),/CANCELLED/);assert.equal(cancelled.fetches,0);
+  // STAGING-LIFECYCLE-01: observable cancellation/byte identity/quota results at the production staging API.
+  const stagingCase=async(name,fn)=>{try{await fn();console.log('PASS staging '+name);}catch(e){process.exitCode=1;console.error('FAIL staging '+name+': '+e.message);}};
+  await stagingCase('cancel while validating removes the file and settles abort; a fresh attempt can proceed',async()=>{
+    const x=disk(async()=>new Response(png)),job={id:'job-late-cancel',attempt:'late-1',source:'https://media.test/a'};let stopped;
+    await assert.rejects(x.s.stage(job,async p=>{if(p.state==='validating')stopped=x.s.abort(job.id,job.attempt);}),/CANCELLED/);
+    await stopped;assert.equal(x.files.size,0);
+    assert.equal((await x.s.stage({...job,attempt:'late-2'},async()=>{})).size,png.length);
+  });
+  await stagingCase('cancel during writable close removes committed bytes instead of returning success',async()=>{
+    const x=disk(async()=>new Response(png)),job={id:'job-close-cancel',attempt:'close-1',source:'https://media.test/a'};let stopped;
+    const get=x.dir.getFileHandle;
+    x.dir.getFileHandle=async(...args)=>{const h=await get(...args),open=h.createWritable;h.createWritable=async()=>{const w=await open(),close=w.close;w.close=async()=>{stopped=x.s.abort(job.id,job.attempt);await close();};return w;};return h;};
+    await assert.rejects(x.s.stage(job,async()=>{}),/CANCELLED/);await stopped;assert.equal(x.files.size,0);
+  });
+  await stagingCase('restaging a job invalidates its old URL and exposes the new exact bytes',async()=>{
+    const second=require('node:fs').readFileSync('icons/48.png');let body=png;
+    const x=disk(async()=>new Response(body)),job={id:'job-restage',source:'https://media.test/a'};
+    await x.s.stage(job,async()=>{});const first=await x.s.fileUrl(job.id,'image/png');
+    body=second;await x.s.stage({...job,source:'https://media.test/b'},async()=>{});const next=await x.s.fileUrl(job.id,'image/png');
+    assert.notEqual(next,first);assert(x.revoked.includes(first));assert(Buffer.from(await x.objects.at(-1).arrayBuffer()).equals(second));
+    assert.equal(await x.s.fileUrl(job.id,'image/png'),next,'unchanged prepared bytes retain one cached URL');
+  });
+  for(const known of [true,false])await stagingCase('fully used quota refuses '+(known?'known':'unknown')+' body length before writing',async()=>{
+    const x=disk(async()=>new Response(png,{headers:known?{'content-length':String(png.length)}:{}}));x.d.estimate=async()=>({quota:100,usage:100});
+    await assert.rejects(x.s.stage({id:'job-full-quota',source:'https://media.test/a'},async()=>{}),/STORAGE_QUOTA/);
+    assert.equal(x.writes.length,0);assert.equal(x.files.size,0);
+  });
+  await stagingCase('quota refusal aborts the fetch even before a body reader was opened',async()=>{
+    let signal;const x=disk(async(_url,options)=>{signal=options.signal;return new Response(png,{headers:{'content-length':String(png.length)}});},100);
+    await assert.rejects(x.s.stage({id:'job-quota-body',source:'https://media.test/a'},async()=>{}),/STORAGE_QUOTA/);
+    assert.equal(signal.aborted,true,'the rejected network body must not remain in flight');assert.equal(x.writes.length,0);
+  });
+  await stagingCase('missing quota estimates are unknown rather than zero capacity',async()=>{
+    const x=disk(async()=>new Response(png));x.d.estimate=async()=>({});
+    assert.equal((await x.s.stage({id:'job-unknown-quota',source:'https://media.test/a'},async()=>{})).size,png.length);
+  });
+  for(const phase of ['write','close'])await stagingCase('native quota failure during '+phase+' remains retryable and removes partial bytes',async()=>{
+    const x=disk(async()=>new Response(png)),get=x.dir.getFileHandle;
+    x.dir.getFileHandle=async(...args)=>{const h=await get(...args),open=h.createWritable;h.createWritable=async()=>{const w=await open();w[phase]=async()=>{throw new DOMException('full','QuotaExceededError');};return w;};return h;};
+    await assert.rejects(x.s.stage({id:'job-native-quota',source:'https://media.test/a'},async()=>{}),/STORAGE_QUOTA/);assert.equal(x.files.size,0);
+  });
+  await stagingCase('recreating the staging controller recovers complete local bytes without refetching',async()=>{
+    const x=disk(async()=>new Response(png)),job={id:'job-reload-ready',source:'https://media.test/a'};
+    await x.s.stage(job,async()=>{});const restarted=createStaging(x.d);
+    assert(await restarted.verify(job.id,png.length,'image/png'));await restarted.fileUrl(job.id,'image/png');
+    assert(Buffer.from(await x.objects.at(-1).arrayBuffer()).equals(png));assert.equal(x.fetches,1);
+  });
+
   // Independent exports overlap; ready is not synonymous with saved.
   const e=env();e.autoComplete=false;const m=createManager(e.d);await m.ready;
   const a=m.enqueue({url:'https://media.test/a?signature=preserve',filename:'folder/a.png'},{mime:'image/png'});
