@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — TikTok/Reels controls and author folders
+## 2.5.9 — TikTok/Reels controls, author folders and staging reliability
 
 - TikTok and Instagram Reels: optional author folders now use the posting username from the exact item that supplies the selected video file, for inline and browser-menu saves. Both existing folder layouts and saved folder preferences apply; an unknown or invalid username keeps the ordinary layout. Download cards retain the proven account.
 
@@ -11,6 +11,10 @@
 - TikTok: separate Copy link and Download buttons directly below the video's native More (⋯) icon. Their local media anchor follows scrolling, resizing and card replacement without altering TikTok's menu or avatar/action rail. It saves the card's own video through the existing proven-player resolver and download manager (exact signed address); a covered, offscreen, recycled or ambiguous player is refused visibly, and a quick double press makes one job.
 - TikTok: Copy link no longer appears inside TikTok's right-click menu or at an unproven player/container location, and an extra copy placed by an earlier version is removed. Cause: a selector list picked the player section before the action rail, every container of a card was injected separately, and the Share scan matched the menu's Share item.
 - TikTok right-click: a plain right-click keeps TikTok's own menu; Shift+right-click on the player now reliably opens the browser menu with MediaLatch: Save media. Cause of the earlier instability: the press lands on TikTok's overlay outside the player wrapper, where the previous rule did not apply.
+
+- Harden disk-backed staging cancellation during validation/commit, same-job replacement file identity and full-versus-unknown quota handling; failed transfers release their source.
+- User checks confirm TikTok/Reels controls, saved audio, embed links and username folders. Broader feed/layout, separate-track streams and crash/full-disk coverage remain limited.
+- Update EN/RU documentation and privacy disclosures, and separate implemented extraction/MV3 safeguards from future universal-media work in [the architecture roadmap](docs/ROADMAP.md). No new permission, dependency or storage schema.
 
 ## 2.5.8 — tested inline scope and experimental social videos
 

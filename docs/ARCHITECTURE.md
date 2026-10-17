@@ -2,7 +2,7 @@
 
 The directory map follows the current source checkout. Existing published archives keep their original committed layout.
 
-This document describes the v2.5.8 preview. Finished browser downloads have a native Show in folder action in both the popup and full manager. The Explorer companion and native messaging remain absent. Custom save directories, author folders and the manager-return notification fix remain. The user reported working ordinary saves and smoke checks of the earlier interface; the redesigned UI has separate isolated browser checks; exhaustive audio/bytes, crash/restart and quota checks remain separate. Repository history records provenance; `history/SOURCE_BASELINE.json` describes the initial import, not the current release.
+This document describes the v2.5.9 preview. Finished browser downloads have a native Show in folder action in both the popup and full manager. The Explorer companion and native messaging remain absent. Custom save directories, author folders and the manager-return notification fix remain. The user reported working ordinary saves and smoke checks of the earlier interface; the redesigned UI has separate isolated browser checks; exhaustive audio/bytes, crash/restart and quota checks remain separate. Repository history records provenance; `docs/history/SOURCE_BASELINE.json` describes the initial import, not the current release.
 
 VK inline freezes the selected exact source and uses the existing acquisition/export pipeline without late DOM rediscovery. Controls keep a constant local offset from the media’s upper-left corner and scroll with it. A post batch requires intrinsic post identity and one complete declared carousel or media grid; comments, reposts and hidden +N remainders are excluded. Declared lazy photo sources can be counted before decoding; pointer selection still requires loaded pixels. Limited linked-video tiles in admitted mixed posts resolve exact matching IDs through bounded first-party progressive metadata and an MP4 byte probe, using the same pipeline. Full standalone video/clip support is deferred; general stream assembly is not added. VK posting accounts require the selected post's own header and ownership checks. Original-photo quality remains unverified. The stable vk category retains prior ordering and unknown historical attribution.
 
@@ -92,7 +92,7 @@ Post-batch progress uses the same private queue record, with a finite service to
 
 ## Storage and UI
 
-The MediaLatch rename preserves existing internal message/DOM identifiers and storage keys, including the `SavedImages` default folder. No migration or reinstallation is needed. `history/SOURCE_BASELINE.json` retains the original import identity.
+The MediaLatch rename preserves existing internal message/DOM identifiers and storage keys, including the `SavedImages` default folder. No migration or reinstallation is needed. `docs/history/SOURCE_BASELINE.json` retains the original import identity.
 
 The preview uses the original MediaLatch mark with theme colors in the full page, compact popup and toolbar: Violet retains purple, Blue uses blue, Dark uses graphite and Light uses a silver tile with a dark glyph. Toolbar PNG variants are derived from `icons/source.svg` and the UI brand tokens; the worker applies the saved `uiTheme` on cold start and changes, serializing icon writes separately from badge updates. Manifest identity assets stay the original Violet mark.
 
@@ -141,6 +141,8 @@ All existing post-batch providers (Pixiv, Pawchive, X and Reddit) use the same 1
 X/Reddit batch ownership proofs retain their existing three-minute lifetime. A long-running batch can refuse later items after expiry or a changed owner/list; increasing the count does not extend stale proof validity. Batch totals do not extend proof validity; progressive proof renewal remains separate work.
 
 Zerochan feed metadata is read in the pinned selected page session, with a bounded same-origin JSON request and unchanged source/anchor/document checks. The worker admits the selected owner before that lookup (a refused or unproven owner makes no request; only a frame that cannot be scripted at all keeps the id-bound extension route), runs the read pinned to the admitted document (a lost document, a rejected injection or a missing answer refuses, never the extension route) and validates the declared same-post HTTPS original before normal MIME probing; the preview may scroll away meanwhile. Opened-post selection retains the DOM original-link route; previews cannot become successful original saves when lookup fails.
+
+Future expansion is tracked in [the architecture roadmap](ROADMAP.md). Existing selected-source ownership, scoped inline controls, exact signed URLs and durable export identity remain requirements for new adapters.
 
 ## Source organization
 
