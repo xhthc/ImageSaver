@@ -67,13 +67,12 @@
 .image-saver-yt-copy-wrap svg {
   width: 24px;
   height: 24px;
-  fill: currentColor;
   pointer-events: none;
 }
 `;
 
-  const SVG_LINK_ICON = `<svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>`;
-  const SVG_CHECK_ICON = `<svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>`;
+  const SVG_LINK_ICON = globalThis.MediaLatchCopyKit.copyIcon('image-saver-yt-icon');
+  const SVG_CHECK_ICON = `<svg fill="currentColor" viewBox="0 0 24 24" focusable="false" aria-hidden="true"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>`;
 
   const ALLOWED_YT_SHARE_HOSTS = ['youtube.com', 'yfxtube.com', 'koutube.com'];
   const DEFAULT_YT_SHARE_HOST = 'koutube.com';

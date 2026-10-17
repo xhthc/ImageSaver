@@ -68,7 +68,7 @@ const tests = [
   'test_export_directory.js',
   'test_statistics.js',
   'test_sankaku_original.js',
-  'test_post_media.js', 'test_pixiv_saving.js', 'test_pixiv_inline.js', 'test_generic_inline.js', 'test_vk_inline.js', 'test_provider_routing.js', 'test_show_in_folder.js',
+  'test_post_media.js', 'test_pixiv_saving.js', 'test_pixiv_inline.js', 'test_inline_scope.js', 'test_vk_inline.js', 'test_provider_routing.js', 'test_show_in_folder.js', 'test_social_video.js',
   'test_zerochan_original.js',
   'test_suite.js', 'test_animation_duration_policy.js', 'test_context_target_avatar.js', 'test_debug_journal.js',
   'test_media_sources.js', 'test_resolver_metadata.js', 'test_booru_engines.js', 'test_generic_context_boundary.js', 'test_offscreen_resources.js', 'test_reddit_frame_lifecycle.js',

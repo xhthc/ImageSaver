@@ -30,7 +30,7 @@
   const controls = [];
   const on = (target, type, fn, opts) => { target.addEventListener(type, fn, opts); listeners.push([target, type, fn, opts]); };
   // ONE runtime message listener per document answers the worker's proof questions of every control here; each handler answers only its own
-  // actions (undefined = not mine). It exists only once a handler does, and teardown removes it.
+  // actions (undefined = not mine). It also serves context-menu account proofs; teardown removes it.
   let proofListener = null;
   function addProof(fn) {
     proofs.push(fn);
@@ -542,71 +542,6 @@
       return site === 'instagram' && branch.textContent.trim() ? null : author;
     } catch (_) {}
     return null;
-  }
-
-  // Individual, declared HTTP(S) assets on other sites. Specialized routes keep their own surface.
-  function genericHandler() {
-    const G = {...K, MIN_W:160, MIN_H:96, Z:2147483000};
-    const source = el => {
-      let raw = el.currentSrc || el.src || '';
-      if (!raw && el.tagName==='VIDEO' && !el.getAttribute('src')) for(const item of Array.from(el.querySelectorAll('source')).slice(0,16)) {
-        if(item.parentElement!==el)continue;
-        const type=item.getAttribute('type'),media=item.getAttribute('media');
-        if(type && el.canPlayType(type)==='')continue;
-        if(media && typeof window.matchMedia==='function' && !window.matchMedia(media).matches)continue;
-        raw=item.src || item.getAttribute('src') || '';if(raw)break;
-      }
-      try { const u = new URL(raw); return /^https?:$/.test(u.protocol) && !u.username && !u.password && !/\.(?:m3u8|mpd)$/i.test(u.pathname) ? raw : ''; } catch (_) { return ''; }
-    };
-    function snapshot(el) {
-      try {
-        if (!el || !['IMG','VIDEO'].includes(el.tagName) || el.isConnected === false || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('role') === 'presentation') return null;
-        if (el.tagName === 'IMG' && (!el.complete || !el.naturalWidth)) return null;
-        const src = source(el); if (!src) return null;
-        const r = el.getBoundingClientRect(); if (r.width < G.MIN_W || r.height < G.MIN_H) return null;
-        const chain = []; for (let p = el.parentElement, n = 0; p && n < 24; p = p.parentElement, n++) chain.push(new WeakRef(p));
-        return {elRef:new WeakRef(el),kind:el.tagName === 'VIDEO'?'video':'image',src,href:here(),chain,author:postAuthorOf(el)};
-      } catch (_) { return null; }
-    }
-    const same = (a,b) => Boolean(a && b && a.elRef.deref() === b.elRef.deref() && a.kind === b.kind && a.src === b.src && a.href === b.href && sameChain(a,b) && JSON.stringify(a.author) === JSON.stringify(b.author));
-    const holds = snap => same(snap, snapshot(snap.elRef.deref()));
-    function place(el) {
-      try {
-        const r = el.getBoundingClientRect(), left = r.left + G.INSET, top = r.top + G.INSET;
-        let L = Math.max(0,r.left), T = Math.max(0,r.top), R = Math.min(window.innerWidth,r.right), B = Math.min(window.innerHeight,r.bottom);
-        for (let p = el.parentElement, n = 0; p && n < 24; p = p.parentElement,n++) if (clipsOf(window.getComputedStyle(p))) { const b = p.getBoundingClientRect(); L=Math.max(L,b.left);T=Math.max(T,b.top);R=Math.min(R,b.right);B=Math.min(B,b.bottom); }
-        if (left < L || top < T || left+G.SIZE > R || top+G.SIZE > B) return null;
-        for (const [x,y] of [[left+3,top+3],[left+G.SIZE-3,top+3],[left+3,top+G.SIZE-3],[left+G.SIZE-3,top+G.SIZE-3]]) {
-          const hit = document.elementFromPoint(x,y);
-          if (!hit || !(ctl.own(hit) || hit === el || el.contains(hit))) return null;
-        }
-        return {left:Math.round(left),top:Math.round(top),w:G.SIZE,h:G.SIZE,vis:{left:L,top:T,right:R,bottom:B},sig:[left,top,R,B].map(Math.round).join(',')};
-      } catch (_) { return null; }
-    }
-    const atPlace = snap => {
-      const el = snap.elRef.deref(), expected = el && place(el), box = ctl.st.host?.getBoundingClientRect();
-      return Boolean(expected && box && Math.abs(expected.left-box.left)<=G.TOL && Math.abs(expected.top-box.top)<=G.TOL);
-    };
-    const ctl = createControl(c => ({
-      name:'generic',K:G,fixed:true,align:'flex-start',hideOn:['popstate'],rearmOn:[],followOn:['scroll','resize'],
-      candidate(stack) { for (const el of stack.slice(0,G.MAX_STACK)) { if (c.own(el)) continue; if (['IMG','VIDEO'].includes(el.tagName)) return {el,kind:el.tagName==='VIDEO'?'video':'image'}; } return null; },
-      snapshot,holds,plan(el) { const lay=place(el);return lay?{n:0,compact:false,lay}:null; },
-      watch(observer,el,snap) { observer.observe(el,{attributes:true,attributeFilter:['src','srcset','class','style','role','aria-hidden'],childList:true,subtree:true}); for(const ref of snap.chain){const p=ref.deref();if(p)observer.observe(p,{childList:true,attributes:true,attributeFilter:['style','class']});} },
-      focusTarget(el) { if (!['IMG','VIDEO'].includes(el.tagName) && el.tagName==='A') { const media=el.querySelectorAll('img,video');el=media.length===1?media[0]:null; } return el && ['IMG','VIDEO'].includes(el.tagName)?{el,kind:el.tagName==='VIDEO'?'video':'image'}:null; },
-      showDetail:(_,snap)=>({kind:snap.kind}),
-      prepare(_,shown,cid) {
-        const fresh=shown && snapshot(shown.elRef.deref());
-        if (!same(shown,fresh) || !atPlace(shown)) return {gate:'STALE_OWNER'};
-        return {key:fresh.src,store:'pending',entry:{snap:fresh,href:here(),cid},action:'GENERIC_INLINE_SAVE',start:()=>({kind:fresh.kind})};
-      },
-      proof:{GENERIC_INLINE_OWNER:{phase:'proof',detail:()=>({}),run(m){
-        const entry=c.pending.get(m.token);c.pending.delete(m.token);
-        if(!entry || Date.now()-entry.at>G.TOKEN_TTL)return {ok:false,reason:'NO_TOKEN'};
-        if(entry.href!==here() || !holds(entry.snap) || !atPlace(entry.snap))return {ok:false,reason:'STALE_OWNER'};
-        return {ok:true,media:{kind:entry.snap.kind,url:entry.snap.src,author:entry.snap.author}};
-      }}}
-    }));
-    return ctl;
   }
 
   // ---- Pixiv (https://www.pixiv.net/*): the artwork images ----
@@ -2598,17 +2533,20 @@
   };
   function start() {
     if (typeof document === 'undefined' || typeof window === 'undefined') return;
-    let host = '';
-    try { host = new URL(location.href).hostname.toLowerCase(); } catch (_) {}
-    if (SITE.x) api.x = xHandler(SITE.x);
-    if (SITE.reddit) api.reddit = redditHandler(SITE.reddit);
-    if (SITE.redgifs && SITE.redgifs.allowed()) api.redgifs = redgifsHandler(SITE.redgifs);
-    if (host === 'www.pixiv.net') api.pixiv = pixivHandler();
-    if (host === 'vk.ru' || host === 'vk.com') api.vk = vkHandler();
-    // every other http(s) top document gets the generic control; a site with its own surface never does (one shared host list, lib/sites.js)
-    if (!controls.length && globalThis.MediaLatchSites && !MediaLatchSites.hasOwnInline(host) && window.top === window && typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) api.generic = genericHandler();
-    if (!controls.length || typeof window.addEventListener !== 'function') return;
+    let page = null;
+    try { page = new URL(window.location.href); } catch (_) {}
+    const host = page?.hostname || '';
+    // Provider helpers can be fallback-injected on other pages/frames; they do not grant inline host authority.
+    if (window.top === window && page?.protocol === 'https:') {
+      if ((host === 'x.com' || host === 'twitter.com') && SITE.x) api.x = xHandler(SITE.x);
+      if ((host === 'reddit.com' || host.endsWith('.reddit.com')) && SITE.reddit) api.reddit = redditHandler(SITE.reddit);
+      if (host === 'www.redgifs.com' && SITE.redgifs && SITE.redgifs.allowed()) api.redgifs = redgifsHandler(SITE.redgifs);
+      if (host === 'www.pixiv.net') api.pixiv = pixivHandler();
+      if (host === 'vk.ru' || host === 'vk.com') api.vk = vkHandler();
+    }
+    // Account proofs also serve context-menu saves on Instagram/TikTok, without download controls.
     addProof(accountProof);
+    if (!controls.length || typeof window.addEventListener !== 'function') return;
     on(window, 'pagehide', (e) => { if (e && e.persisted === true) controls.forEach((c) => c.suspend()); else api.teardown(); }, true);
     on(window, 'pageshow', (e) => { if (e && e.persisted === true) controls.forEach((c) => { c.suspend(); c.st.href = here(); c.resume?.(); }); }, true);
   }

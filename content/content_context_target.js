@@ -185,6 +185,37 @@
     const r = el.getBoundingClientRect();
     return area(r) > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   };
+
+  // TikTok and Instagram (TT-IG-VIDEO-01): their players sit several levels below the layer that receives the press (Instagram: a
+  // same-size overlay whose parent does not hold the video), so detect() finds nothing. On these two sites only, the one <video> in the
+  // hit stack at the gesture point is the selected player; two players there (or none) select nothing. Never a neighbour off the point.
+  const SOCIAL_HOSTS = new Set(['www.tiktok.com', 'tiktok.com', 'www.instagram.com', 'instagram.com']);
+  const socialSite = () => { try { return SOCIAL_HOSTS.has(location.hostname) && location.protocol === 'https:'; } catch (e) { return false; } };
+  const socialPlayerAt = (target, x, y) => {
+    if (!socialSite() || !Number.isFinite(x) || !Number.isFinite(y) || typeof document.elementsFromPoint !== 'function') return null;
+    const stack = hitList(target, x, y);
+    if (!stack.includes(target)) return null;
+    const videos = stack.filter((e) => e.tagName === 'VIDEO');
+    if (videos.length !== 1) return null;
+    const m = mediaOf(videos[0]);
+    return m && m !== 'multi' ? { el: videos[0], url: m.url, kind: m.kind } : null;
+  };
+  const findMedia = (target, x, y) => {
+    const media = detect(target, x, y) || socialPlayerAt(target, x, y);
+    // A covering login/consent dialog does not own the player behind it; a viewing dialog may contain its own player.
+    const surface = media && socialSite() && typeof target.closest === 'function'
+      ? target.closest('dialog, [role="dialog"], [aria-modal="true"], [class*="Modal" i], tiktok-cookie-banner') : null;
+    return surface && !surface.contains(media.el) ? null : media;
+  };
+  // TikTok cancels the contextmenu event on its player, so the browser menu (and "MediaLatch: Save media") never opens there. A real
+  // right-click inside a TikTok player wrapper is kept from the page's own handlers; nothing is prevented, Chrome shows its own menu.
+  const keepBrowserMenu = (event, target) => {
+    try {
+      if (event.type !== 'contextmenu' || !/^(?:www\.)?tiktok\.com$/.test(location.hostname) || !target || typeof target.closest !== 'function') return;
+      const wrap = target.closest('[id^="xgwrapper-"]');
+      if (wrap && wrap.querySelector('video')) event.stopImmediatePropagation();
+    } catch (e) {}
+  };
   const parentOf = (el) => el.parentElement || (typeof el.getRootNode === 'function' && el.getRootNode().host) || null;
   // Chrome offers its media contexts only on these elements; anything else pressed is not media by itself.
   const MEDIA_TAGS = 'img,video,audio,picture,canvas,svg,object,embed,input[type=image]';
@@ -240,7 +271,7 @@
       } else if (typeof target.closest === 'function' && target.closest(MEDIA_TAGS)) {
         selectable = true;
       } else {
-        const f = found !== undefined ? found : (target.tagName !== 'HTML' && target.tagName !== 'BODY' ? detect(target, x, y) : null);
+        const f = found !== undefined ? found : (target.tagName !== 'HTML' && target.tagName !== 'BODY' ? findMedia(target, x, y) : null);
         if (f) {
           selectable = true;
           media = foundEvidence(f);
@@ -291,7 +322,7 @@
         };
       }
     } else {
-      const found = detect(target, x, y);
+      const found = findMedia(target, x, y);
       if (found) {
         const url = found.url;
         const kind = found.kind;
@@ -307,7 +338,7 @@
             const m = mref.deref();
             if (!t || !m || t.isConnected === false || m.isConnected === false || !same(t) || !msame(m)) return false;
             if (kind === 'player' && (m.currentSrc || m.src || '') !== playerSrc) return false;
-            const now = detect(t, x, y);
+            const now = findMedia(t, x, y);
             return Boolean(now) && now.el === m && now.url === url;
           }
         };
@@ -545,6 +576,7 @@
     if (event.type === 'mousedown' && event.button !== 2) return;
     const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
     const target = path[0] || event.target;
+    keepBrowserMenu(event, target);
     try {
       globalThis[KEY] = target && target.nodeType === 1 ? record(target, event.clientX, event.clientY) : null;
     } catch (e) {

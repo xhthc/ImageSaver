@@ -30,7 +30,7 @@ MP4Box 2.4.1 (BSD-3-Clause): offscreen/vendor/mp4box/2.4.1/LICENSE and PROVENANC
 Extension UI dependency notices: popup/THIRD_PARTY_NOTICES.txt.
 
 MediaLatch logo: project-owned artwork (GPL-3.0-only).
-UI icons: Lucide, from lucide-react 1.50.0.
+UI and content-script copy icons: Lucide, from lucide-react 1.50.0.
 ISC License
 
 Copyright (c) 2026 Lucide Icons and Contributors

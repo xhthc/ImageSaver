@@ -3,14 +3,14 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.7"><img src="https://img.shields.io/badge/pre--release-v2.5.7-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.7"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.8"><img src="https://img.shields.io/badge/pre--release-v2.5.8-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.8"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.7"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.8"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
     <img src="docs/assets/store-chrome-unavailable.svg" height="44" alt="Chrome Web Store listing currently unpublished">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
@@ -19,7 +19,8 @@
 
 MediaLatch (formerly Image Saver) saves accessible original images, videos and GIFs directly from your browser. Choose the media you want, follow the save in the download manager and find the file where you expect it. No companion application is needed.
 
-> **Current pre-release: [v2.5.7](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.7).** Adds generic inline saves for directly declared files, conservative posting-account folders on seven services and Show in folder in both download managers. Header rules are limited to extension requests. Embed and Explorer reveal were user checked in Helium. Full VK video and clip support remains planned. [What changed](CHANGELOG.md).
+> **Current pre-release: [v2.5.8](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.8).** Limits inline downloads to tested services, uses clearer Copy icons and adds experimental TikTok/Instagram video saving through the browser context menu. Unrelated-page button removal is user confirmed. Full live social-video/feed and audible playback coverage remains pending. [What changed](CHANGELOG.md).
+
 
 | What you want to do | What MediaLatch offers |
 |---|---|
@@ -79,7 +80,7 @@ A fresh install opens a separate welcome screen with three short steps. **Contin
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.7-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.8-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -105,7 +106,8 @@ The current preview covers the workflows below. Availability depends on the page
 - Original discovery through site adapters, image links, `srcset`, media attributes and unambiguous CSS backgrounds or overlays.
 - Native images/GIFs and accessible MP4/WebM videos. Exact declared URLs, including signatures, are preserved.
 - Genuine looping GIFs from confirmed X and Reddit MP4 animations. Animations longer than 30 seconds or exceeding conversion size limits remain source MP4; other conversion failures are reported.
-- Shared inline save controls on X, Reddit, Pixiv, RedGIFs and VK. Pixiv offers Save this for the selected original page and Save all for a proven multi-page artwork, including supported feed cards. Other http(s) sites get a generic Save this control for an individual, directly declared image or video file (not blob/MSE, HLS, DASH or DRM players).
+- Shared inline save controls on X, Reddit, Pixiv, RedGIFs and VK. Pixiv offers Save this for the selected original page and Save all for a proven multi-page artwork, including supported feed cards. Inline downloads are limited to these tested services. On other sites, use the browser context menu; TikTok/Instagram retain copy/embed controls without inline download buttons.
+- Selected TikTok videos and Instagram Reels/video posts through the browser menu **MediaLatch: Save media** (right-click the playing video). The file is the progressive MP4 that the selected item itself declares, with its audio; a neighbouring video, poster or guessed address is never used. On TikTok a right-click on the player opens the browser menu instead of TikTok's own player menu. Instagram items that the page offers only as separate video/audio streams (for example some items loaded later in a signed-in feed) end with "unsupported source" rather than a silent or guessed file.
 - Experimental VK photo saving on vk.ru/vk.com: Save this and Save all for proven complete carousels/collages. Controls keep a constant offset from the media’s own upper-left corner and scroll with it.
 - All distinct declared original media from a Pawchive feed preview, including the original cover. Selecting an individual attachment saves that attachment.
 
@@ -187,11 +189,11 @@ GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output
 There is no telemetry or extension backend. Statistics and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
 
 <details>
-<summary>Validation and request safeguards in 2.5.7</summary>
+<summary>Validation and request safeguards in 2.5.8</summary>
 
 Privileged offscreen commands require the extension worker. Public selected pages cannot supply literal local/private-network media addresses, and unchecked server redirects are refused; deliberately selected local pages retain local media access. These restrictions can refuse redirect-dependent links and do not provide DNS-rebinding protection. Zerochan JSON uses a 2 MiB streaming limit with a full three-second deadline.
 
-Accepted changes have independent source reviews and bounded user checks in Helium for inline saving on X, Reddit, Pixiv and RedGIFs, compact Downloads, settings help and author labels. VK photo/carousel/collage saving, Embed interactions and native Show in folder are user confirmed. The 2.5.7 source and UI checks passed 87/87 before release preparation; the release commit and runtime archive are verified separately. Expanded live Instagram/TikTok/RedGIFs attribution remains unverified. Recorded live checks saved selected photos and complete observed lists; one mixed seven-item post produced five JPEGs and two progressive MP4s. Audio tracks were inspected structurally, not listened to. Offline/UI checks and isolated native fixtures cover accounting, chronology, keyboard/layout, settings and export bytes. Exact release packaging is checked separately; this does not establish every live layout, original-photo quality, full VK video/clip support, other browsers, crash or quota behavior.
+Accepted changes have independent source reviews and bounded user checks in Helium for inline saving on X, Reddit, Pixiv and RedGIFs, compact Downloads, settings help and author labels. VK photo/carousel/collage saving, Embed interactions and native Show in folder are user confirmed. The earlier 2.5.7 source/UI gate passed 87/87; the 2.5.8 candidate adds independent inline-scope and selected-social-video regressions. Final release checks and exact-commit runtime packaging are recorded separately. The user confirmed removal of unrelated-page inline false positives. Covering dialogs are rejected without selecting the underlying video. Expanded live Instagram/TikTok/RedGIFs attribution remains unverified. Recorded live checks saved selected photos and complete observed lists; one mixed seven-item post produced five JPEGs and two progressive MP4s. Audio tracks were inspected structurally, not listened to. Offline/UI checks and isolated native fixtures cover accounting, chronology, keyboard/layout, settings and export bytes. Exact release packaging is checked separately; this does not establish every live layout, original-photo quality, full VK video/clip support, other browsers, crash or quota behavior.
 
 </details>
 
@@ -205,6 +207,7 @@ Statuses distinguish implemented features from future work. They describe direct
 |---|---|---|
 | Booru engines and generic media | Reuse proven original/ownership rules across evidenced engines; improve selected media and Yandex/Google image-result discovery | Booru families included in this preview; reported manual board checks passed, access/layout limits remain; image-result discovery planned |
 | Controls and selection | Shared inline controls and optional post/media multi-selection | X/Reddit/Pixiv/RedGIFs controls and VK photo/carousel/collage flows user checked; VK remains experimental; arbitrary multi-selection planned |
+| TikTok / Instagram videos | Save the selected video through the browser context menu | Experimental progressive-file adapter included; later separate-track feed items refuse honestly; full live feed and audible-playback checks pending |
 | VK videos and clips | Save selected standalone videos and clips through the existing inline controls and manager | Planned; deferred while the photo release ships; general VK video support is not claimed |
 | Download manager | Compact site groups, separate individual/post lists, batch totals, Cancel remaining and updating notices | Included in popup and full manager; deferred resolution and source-range resume remain planned |
 | Local statistics | Compact per-site views with shared Booru totals and preserved historical counts | Included; global opt-in and clear, user-reported migration/count checks passed in Helium |

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MediaLatch",
-  "version": "2.5.7",
+  "version": "2.5.8",
   "description": "Save available original images, videos and GIFs, with parallel downloads, custom folders and local statistics.",
   "homepage_url": "https://github.com/xhthc/MediaLatch",
   "minimum_chrome_version": "120",
@@ -106,8 +106,10 @@
         "https://www.redgifs.com/*",
         "https://vk.ru/*",
         "https://vk.com/*",
-        "http://*/*",
-        "https://*/*"
+        "https://*.instagram.com/*",
+        "https://instagram.com/*",
+        "https://*.tiktok.com/*",
+        "https://tiktok.com/*"
       ],
       "js": [
         "lib/debug_journal.js",

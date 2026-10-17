@@ -1776,3 +1776,127 @@ async function resolvePawchiveOriginalPlan({ srcUrl, pageUrl, linkUrl, allowPost
   const out = await probePawchiveOriginal(picked.chosen, post.url, srcUrl);
   return out.plan || out.fail || refuse('original');
 }
+
+// ============================================================================
+// TikTok and Instagram selected video (TT-IG-VIDEO-01)
+// ============================================================================
+// Both sites play an address-less MSE stream (blob:). The selected player's OWN item declares one progressive MP4 with audio (observed
+// 2026-10-17: TikTok item.video.playAddr; Instagram item.video_versions). Only the player the gesture captured, in the document the
+// capture was read in, is asked; its source is used exactly as declared. No page-wide first video, neighbour, poster or guessed address.
+const SOCIAL_VIDEO_SITES = Object.freeze({
+  tiktok: { pages: ['tiktok.com', 'www.tiktok.com'], cdn: (u) => /^v\d+[a-z0-9-]*\.tiktok\.com$/.test(u.hostname) && u.pathname.startsWith('/video/') },
+  instagram: { pages: ['instagram.com', 'www.instagram.com'], cdn: (u) => ['cdninstagram.com', 'fbcdn.net'].some((d) => u.hostname.endsWith('.' + d)) }
+});
+
+function socialVideoSiteOf(pageUrl) {
+  try {
+    const u = new URL(pageUrl);
+    if (u.protocol !== 'https:') return '';
+    return Object.keys(SOCIAL_VIDEO_SITES).find((site) => SOCIAL_VIDEO_SITES[site].pages.includes(u.hostname)) || '';
+  } catch (_) { return ''; }
+}
+
+// The exact declared file on that site's CDN: https, no credentials, no port, the address left untouched (a URL the parser would rewrite is refused).
+function validateSocialVideoUrl(site, raw) {
+  try {
+    const u = new URL(raw);
+    return u.href === raw && u.protocol === 'https:' && !u.username && !u.password && !u.port && SOCIAL_VIDEO_SITES[site].cdn(u) ? raw : '';
+  } catch (_) { return ''; }
+}
+
+// Isolated world of the clicked frame: the player the latest gesture captured (a layer over it, or the <video> itself), still fresh,
+// connected, unchanged and still playing the stream it played at the gesture. Its stream address identifies it in the page's world.
+function selectSocialPlayer(expect) {
+  try {
+    const cap = globalThis.__imageSaverContextTarget;
+    const age = cap ? Date.now() - cap.at : Infinity;
+    if (!(age >= 0 && age < 30000)) return null;
+    if (Number.isFinite(expect.gestureAt) && cap.at !== expect.gestureAt) return null;
+    let video = null;
+    if (cap.media && cap.media.kind === 'player' && typeof cap.media.check === 'function' && cap.media.check()) video = cap.media.ref.deref();
+    else if (!cap.media) {
+      const el = cap.ref && cap.ref.deref();
+      if (el && el.tagName === 'VIDEO' && el.isConnected !== false && typeof cap.unchanged === 'function' && cap.unchanged(el)) video = el;
+    }
+    const stream = video ? String(video.currentSrc || '') : '';
+    if (!stream.startsWith('blob:') || (expect.stream && expect.stream !== stream)) return null;
+    return { stream };
+  } catch (e) { return null; }
+}
+
+// The page's own world of the same document (React props are not visible to content scripts): the one player playing `stream` and the item
+// its own component tree names. TikTok: the wrapper id names the item, whose props carry video.playAddr. Instagram: the player props name the
+// item (videoFBID = pk); its video_versions come from the page's own JSON. Must stay self-contained (serialized by chrome.scripting).
+function readSocialPlayerItem(site, stream) {
+  try {
+    const players = Array.from(document.querySelectorAll('video')).filter((v) => v.currentSrc === stream);
+    if (players.length !== 1) return { reason: 'PLAYER_CHANGED' };
+    const v = players[0];
+    const fiberOf = (el) => {
+      for (let i = 0; el && i < 6; i++, el = el.parentElement) {
+        const key = Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
+        if (key) return el[key];
+      }
+      return null;
+    };
+    if (site === 'tiktok') {
+      const wrap = v.closest('[id^="xgwrapper-"]');
+      const m = /^xgwrapper-\d+-(\d{5,30})$/.exec(wrap ? wrap.id : '');
+      if (!m) return { reason: 'NO_ITEM' };
+      for (let f = fiberOf(v), i = 0; f && i < 80; f = f.return, i++) {
+        const p = f.memoizedProps;
+        if (!p || typeof p !== 'object') continue;
+        for (const c of [p.item, p.props && p.props.item, p.value && p.value.item]) {
+          if (!c || typeof c !== 'object' || String(c.id) !== m[1] || !c.video || typeof c.video !== 'object') continue;
+          if (c.imagePost) return { itemId: m[1], reason: 'NOT_VIDEO' };
+          return { itemId: m[1], url: typeof c.video.playAddr === 'string' ? c.video.playAddr : '' };
+        }
+      }
+      return { itemId: m[1], reason: 'NO_ITEM' };
+    }
+    let id = '', manifest = false;
+    for (let f = fiberOf(v), i = 0; f && i < 12 && !id; f = f.return, i++) {
+      const p = f.memoizedProps, meta = p && p.coreVideoPlayerMetaData;
+      if (meta && /^\d{5,30}$/.test(String(meta.videoFBID || ''))) { id = String(meta.videoFBID); manifest = typeof p.manifest === 'string' && p.manifest.length > 0; }
+    }
+    if (!id) return { reason: 'NO_ITEM' };
+    for (const s of Array.from(document.querySelectorAll('script[type="application/json"]')).slice(0, 300)) {
+      const text = s.textContent || '';
+      if (text.length > 8000000 || !text.includes(id) || !text.includes('video_versions')) continue;
+      let item = null;
+      const seen = new Set();
+      const walk = (o, d) => {
+        if (item || !o || typeof o !== 'object' || d > 48 || seen.has(o)) return;
+        seen.add(o);
+        if (String(o.pk) === id && Array.isArray(o.video_versions)) { item = o; return; }
+        for (const k in o) walk(o[k], d + 1);
+      };
+      try { walk(JSON.parse(text), 0); } catch (_) { continue; }
+      if (!item) continue;
+      const best = item.video_versions.filter((x) => x && typeof x.url === 'string').sort((a, b) => (Number(b.width) || 0) - (Number(a.width) || 0))[0];
+      return { itemId: id, url: best ? best.url : '', hasAudio: item.has_audio === true ? true : item.has_audio === false ? false : null };
+    }
+    // the player streams separate video and audio tracks of an item for which the page declares no progressive file (a later feed item)
+    return { itemId: id, reason: manifest ? 'SEPARATE_TRACKS' : 'NO_ITEM' };
+  } catch (_) { return { reason: 'NO_ITEM' }; }
+}
+
+// The selected TikTok/Instagram player's own progressive file, or a refusal. `documentId` pins both reads to the admitting document.
+async function resolveSocialPlayerMedia({ tabId, frameId = 0, documentId = '', site, gestureAt = null, stream = '' }) {
+  const refuse = (reason) => ({ success: false, error: 'UNRESOLVED_BLOB_MEDIA', reason, diagnostics: { rejectionReasons: [reason], provider: site } });
+  if (!tabId || !SOCIAL_VIDEO_SITES[site] || !chrome.scripting?.executeScript) return refuse('NO_DIRECT_MEDIA_FOUND');
+  const target = documentId ? { tabId, documentIds: [documentId] } : { tabId, frameIds: [Number.isInteger(frameId) ? frameId : 0] };
+  let picked = null, item = null;
+  try {
+    picked = (await chrome.scripting.executeScript({ target, injectImmediately: true, func: selectSocialPlayer, args: [{ gestureAt: Number.isFinite(gestureAt) ? gestureAt : null, stream: String(stream || '').startsWith('blob:') ? stream : '' }] }))?.[0]?.result;
+    if (!picked || typeof picked.stream !== 'string') return refuse('FRAME_CHANGED');
+    item = (await chrome.scripting.executeScript({ target, world: 'MAIN', injectImmediately: true, func: readSocialPlayerItem, args: [site, picked.stream] }))?.[0]?.result;
+  } catch (_) { return refuse('FRAME_CHANGED'); }
+  if (!item || typeof item !== 'object') return refuse('NO_DIRECT_MEDIA_FOUND');
+  // separate DASH tracks would need muxing that this pipeline does not do: an unsupported source, never a silent or guessed file
+  if (item.reason === 'SEPARATE_TRACKS') return { ...refuse('UNSUPPORTED_STREAM'), diagnostics: { rejectionReasons: ['SEPARATE_TRACKS'], provider: site, streamType: 'dash' } };
+  if (item.reason) return refuse(item.reason === 'PLAYER_CHANGED' ? 'FRAME_CHANGED' : item.reason === 'NOT_VIDEO' ? 'NOT_VIDEO' : 'NO_DIRECT_MEDIA_FOUND');
+  const url = validateSocialVideoUrl(site, item.url);
+  if (!url) return { ...refuse('NO_VALID_CANDIDATE'), validationError: 'FOREIGN_HOST' };
+  return { success: true, targetUrl: url, provider: site, itemId: String(item.itemId || ''), audio: item.hasAudio === false ? 'absent' : item.hasAudio === true ? 'present' : 'unknown', diagnostics: { provider: site } };
+}

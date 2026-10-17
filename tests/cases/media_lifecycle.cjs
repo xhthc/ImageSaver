@@ -1348,35 +1348,20 @@ exports.verifyResourceLifecycle = async function ({REPO_ROOT, assert, downloaded
       );
     }
 
-    // 202.4. SVG geometry and centering test
+    // 202.4. Copy glyph stays within the standard viewport and inherits the button color without filling its outlines.
     {
       const art = new XMockElement('article', { 'data-testid': 'tweet' });
       const grp = new XMockElement('div', { role: 'group' });
       art.appendChild(grp);
-
       xSandbox.__injectCopyButtonToActionBar(grp, art);
-      const wrap = grp.children[0];
-      const btn = wrap.children[0];
-      const svgHtml = btn.innerHTML || '';
-
-      // Verify SVG dimensions and viewBox
-      const hasViewBox = svgHtml.includes('viewBox="3 3 18 18"');
-      const hasWidth20 = svgHtml.includes('width="20"');
-      const hasHeight20 = svgHtml.includes('height="20"');
-      const hasFillCurrentColor = svgHtml.includes('fill="currentColor"');
-
-      // Verify horizontally centered coordinates (M15.89 / L6.33 instead of uncentered M18.36 / L8.80)
-      const hasCenteredPath = svgHtml.includes('M15.89 5.64') && svgHtml.includes('L6.33 8.13');
-      const hasUncenteredCoords = svgHtml.includes('M18.36') || svgHtml.includes('L8.8 ');
-
+      const svgHtml = grp.children[0].children[0].innerHTML || '';
       assert(
-        hasViewBox &&
-        hasWidth20 &&
-        hasHeight20 &&
-        hasFillCurrentColor &&
-        hasCenteredPath &&
-        !hasUncenteredCoords,
-        'Тест 202.4: SVG chain icon geometry maintains width=20, height=20, viewBox="3 3 18 18" and verified centered coordinates'
+        svgHtml.includes('viewBox="0 0 24 24"') &&
+        svgHtml.includes('width="20"') && svgHtml.includes('height="20"') &&
+        svgHtml.includes('fill="none"') && svgHtml.includes('stroke="currentColor"') &&
+        svgHtml.includes('aria-hidden="true"') && svgHtml.includes('focusable="false"') &&
+        svgHtml.includes('<rect') && svgHtml.includes('<path'),
+        '202.4: Copy link uses a full-viewport decorative outline glyph and inherits its button color'
       );
     }
 

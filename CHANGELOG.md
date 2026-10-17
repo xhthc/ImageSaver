@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.5.8 — tested inline scope and experimental social videos
+
+- Limit inline download controls to tested X/Twitter, Reddit, Pixiv, RedGIFs and VK surfaces. Remove the generic control and worker route that caused false positives on unrelated pages. Preserve browser context-menu saving, Instagram/TikTok author-folder proofs and copy/embed actions.
+
+- Replace the paperclip-like share glyph with the existing Lucide Copy icon across X, Instagram, TikTok and YouTube Shorts. One shared outline glyph keeps its full viewport and inherits the button color; copied links, selected embed hosts and action placement are unchanged.
+
+- Add experimental selected-video saving for TikTok and Instagram Reels/video posts through the browser context menu. Bind the progressive file to the gesture-selected player and its own item metadata, preserve exact signed URLs, and use the existing manager. TikTok's header rule is limited to the extension's own CDN requests. Separate DASH tracks remain unsupported; full feed and audible-playback acceptance remain pending.
+- Reject underlying TikTok/Instagram players when the pressed login/modal/consent surface does not contain that player. Retain legitimate player viewing dialogs; cover both cases with no-request and exact-file regressions.
+
+The user confirmed that unrelated-page inline false positives are gone. Existing tested-site photo and download-manager acceptance is retained. TikTok/Instagram video support is experimental: recorded native Instagram export and separate TikTok acquisition evidence do not establish every live selection/feed layout or audible playback. No new permission, dependency or storage schema; this is a GitHub pre-release, with Chrome Web Store publication separate.
+
 ## 2.5.7 — generic inline saves and Show in folder
 
 - Show in folder in the popup and the full Downloads manager reveals the exact saved file of a finished browser download (also a renamed "photo (1).jpg") through `chrome.downloads.show`; a refusal stays on that card. Chosen-folder exports have no browser download record and show no icon.

@@ -4505,18 +4505,23 @@ async function runTests() {
     const count1001 = dynamicRules.filter(r => r.id === 1001).length;
     const count1002 = dynamicRules.filter(r => r.id === 1002).length;
     const count1003 = dynamicRules.filter(r => r.id === 1003).length;
-    const exactManagedCounts = count1001 === 1 && count1002 === 1 && count1003 === 1;
+    const count1004 = dynamicRules.filter(r => r.id === 1004).length;
+    const exactManagedCounts = count1001 === 1 && count1002 === 1 && count1003 === 1 && count1004 === 1;
+    // TT-IG-VIDEO-01: the TikTok CDN Referer applies to this extension's own requests only, exactly like the three earlier rules
+    const tiktok = dynamicRules.find(r => r.id === 1004);
+    const tiktokScoped = Boolean(tiktok) && JSON.stringify(tiktok.condition.requestDomains) === '["tiktok.com"]' && JSON.stringify(tiktok.condition.initiatorDomains) === JSON.stringify([sandbox.chrome.runtime.id]) &&
+      JSON.stringify(tiktok.condition.resourceTypes) === '["xmlhttprequest","other"]' && !tiktok.condition.urlFilter && JSON.stringify(tiktok.action.requestHeaders) === '[{"header":"referer","operation":"set","value":"https://www.tiktok.com/"}]';
 
     const updated1001 = dynamicRules.find(r => r.id === 1001);
     const isStaleReplaced = Boolean(updated1001) &&
       JSON.stringify(updated1001.condition.requestDomains) === '["pximg.net"]' &&
       updated1001.action.requestHeaders.some(h => h.value === 'https://www.pixiv.net/');
 
-    const totalCountCorrect = dynamicRules.length === 4;
+    const totalCountCorrect = dynamicRules.length === 5;
 
     assert(
-      hasPreservedForeign && exactManagedCounts && isStaleReplaced && totalCountCorrect,
-      'DNR isolation: постороннее правило 9001 сохраняется, старое 1001 заменяется, 1001-1003 присутствуют ровно по одному'
+      hasPreservedForeign && exactManagedCounts && isStaleReplaced && totalCountCorrect && tiktokScoped,
+      'DNR isolation: постороннее правило 9001 сохраняется, старое 1001 заменяется, 1001-1004 присутствуют ровно по одному (1004: Referer TikTok только для своих запросов)'
     );
   }
 
@@ -23175,7 +23180,7 @@ async function runTests() {
         const retention = (source) => {
           const child = `const vm = require('vm');
             const L = {};
-            vm.runInNewContext(process.argv[1], { WeakRef, Date, Set, window: { addEventListener: (t, f) => { L[t] = f; } } });
+            vm.runInNewContext(require('fs').readFileSync(0, 'utf8'), { WeakRef, Date, Set, window: { addEventListener: (t, f) => { L[t] = f; } } });
             const gesture = () => {
               const t = { nodeType: 1, tagName: 'IMG', currentSrc: 'u', src: 'u', parentElement: null, getAttribute: () => null };
               L.contextmenu({ type: 'contextmenu', isTrusted: true, target: t, composedPath: () => [t] });
@@ -23186,7 +23191,8 @@ async function runTests() {
               for (let i = 0; i < 12; i++) { await new Promise(setImmediate); global.gc(); }
               console.log(weak.deref() ? 'retained' : 'collected');
             })();`;
-          const r = require('child_process').spawnSync(process.execPath, ['--expose-gc', '-e', child, source], { encoding: 'utf8', timeout: 10000 });
+          // the source goes through stdin: a whole script as one argument exceeds the Windows command-line limit (ENAMETOOLONG)
+          const r = require('child_process').spawnSync(process.execPath, ['--expose-gc', '-e', child], { input: source, encoding: 'utf8', timeout: 10000 });
           return r.status === 0 ? r.stdout.trim() : 'error: ' + (r.stderr || r.error || r.status);
         };
         const leaky = 'globalThis.__imageSaverContextTarget = null; window.addEventListener("contextmenu", (e) => { const t = e.target; globalThis.__imageSaverContextTarget = { unchanged: (x) => x === t }; }, true);';
@@ -25492,6 +25498,7 @@ async function runTests() {
         getComputedStyle: (e) => { const c = (e && e._cs) || {}; const ov = c.overflow || 'visible'; return { backgroundImage: 'none', position: c.position || 'static', overflow: ov, overflowX: ov, overflowY: ov }; }
       };
       w.win.window = w.win;
+      w.win.top = w.win;
       // top-most first: a floating button (z-index) over the deepest element that holds the point
       w.stackAt = (x, y) => {
         const all = [];

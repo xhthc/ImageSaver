@@ -83,9 +83,7 @@
 }
 `;
 
-  const SVG_LINK_ICON = `<svg class="image-saver-ig-icon" viewBox="3 3 18 18" width="20" height="20" fill="currentColor">
-    <path d="M15.89 5.64a5 5 0 0 0-7.07 0L6.33 8.13a1 1 0 0 0 1.41 1.41l2.49-2.49a3 3 0 0 1 4.24 4.24l-3.53 3.53a3 3 0 0 1-4.24 0 1 1 0 0 0-1.42 1.42 5 5 0 0 0 7.07 0l3.54-3.53a5 5 0 0 0 0-7.07zm-7.78 12.72a5 5 0 0 0 7.07 0l2.49-2.49a1 1 0 0 0-1.41-1.41l-2.49 2.49a3 3 0 0 1-4.24-4.24l3.53-3.53a3 3 0 0 1 4.24 0 1 1 0 0 0 1.42-1.42 5 5 0 0 0-7.07 0l-3.54 3.53a5 5 0 0 0 0 7.07z"/>
-  </svg>`;
+  const SVG_LINK_ICON = globalThis.MediaLatchCopyKit.copyIcon('image-saver-ig-icon');
 
   const SVG_CHECK_ICON = `<svg class="image-saver-ig-icon" viewBox="2 2 20 20" width="20" height="20" fill="currentColor">
     <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>

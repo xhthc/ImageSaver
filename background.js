@@ -291,13 +291,15 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
 
 let isDnrSetupInProgress = false;
 
-// Referer/Cookie headers that three CDNs require. Only requests this extension makes are changed (the offscreen document's and the worker's
+// Referer/Cookie headers that four CDNs require. Only requests this extension makes are changed (the offscreen document's and the worker's
 // own acquisition fetches; the extension origin is the initiator, its id the initiator domain): normal browsing, other extensions and
 // lookalike hosts keep their own headers. requestDomains match the domain and its subdomains, never a longer foreign name.
 const MANAGED_DNR_RULES = Object.freeze([
   [1001, ['pximg.net'], [['referer', 'https://www.pixiv.net/']]],
   [1002, ['oimages.anime-pictures.net'], [['referer', 'https://anime-pictures.net/'], ['cookie', 'kira=1']]],
-  [1003, ['gelbooru.com'], [['referer', 'https://gelbooru.com/']]]
+  [1003, ['gelbooru.com'], [['referer', 'https://gelbooru.com/']]],
+  // TikTok video CDN (TT-IG-VIDEO-01): answers 403 without this Referer (the browser's own cookies are sent by the credentialed fetch)
+  [1004, ['tiktok.com'], [['referer', 'https://www.tiktok.com/']]]
 ].map(([id, requestDomains, headers]) => Object.freeze({
   id,
   priority: 1,
@@ -1606,7 +1608,7 @@ let contextOwnerProofs = 0;
 // gesture-captured owner gate; X keeps its selected-player path.
 const inlineRoutes = new WeakMap();
 const viaInline = (info, ...routes) => routes.includes(inlineRoutes.get(info));
-const OWN_PROOF_ROUTES = ['generic', 'reddit', 'redgifs', 'pixiv', 'vk'];
+const OWN_PROOF_ROUTES = ['reddit', 'redgifs', 'pixiv', 'vk'];
 async function onContextMenuClicked(info, tab) {
   // DEBUG-MENU-01: one attempt id per save (an inline save brings the id of its click); journal only, never an authority
   if (!info.dbgCid) info.dbgCid = dbgNewCid();
@@ -1640,7 +1642,6 @@ async function onContextMenuClicked(info, tab) {
     // An inline Pixiv click (PIXIV-INLINE-01) was proven by its own document right before this call, bound to that document id.
     // An inline VK click (VK-INLINE-01) was proven by its own document right before this call (the one-shot token, the same frame and document).
     const owner = viaInline(info, ...OWN_PROOF_ROUTES) || postMediaItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, ownerClaim);
-    if (viaInline(info, 'generic')) ownerClaim.documentId = info.genericDocumentId;
     if (viaInline(info, 'pixiv')) ownerClaim.documentId = info.pixivInline.documentId;
     if (owner === 'proven' && !viaInline(info, 'reddit')) Object.assign(info, { authorProof: ownerProof, authorDocumentId: ownerClaim.documentId || '' });
     dbg('menu', 'owner', owner === 'refused' || owner === 'preview' ? 'refused' : 'ok', owner === 'preview' ? 'SEEK_PREVIEW' : (owner === 'refused' ? 'STALE_OWNER' : undefined), { owner }, { cid: info.dbgCid, tab: tab && tab.id });
@@ -1725,7 +1726,9 @@ async function onContextMenuClicked(info, tab) {
       dbg('menu', 'gesture', gestureMedia ? 'ok' : 'skipped', gestureMedia ? undefined : 'NO_GESTURE_MEDIA', () => (gestureMedia ? { kind: gestureMedia.kind, host: gestureMedia.url } : null), { cid: info.dbgCid, tab: tab && tab.id });
       if (gestureMedia && gestureMedia.kind === 'player') {
         const frameIsRedGifs = isRedGifsUrl(info.frameUrl) || (!info.frameUrl && !info.frameId && isRedGifsUrl(info.pageUrl || tab?.url));
-        if (frameIsRedGifs && tab?.id) {
+        // TikTok / Instagram (TT-IG-VIDEO-01): the top document of the site itself answers for its own player (worker/site_resolvers.js)
+        const frameIsSocial = Boolean(socialVideoSiteOf(info.frameUrl) || (!info.frameUrl && !info.frameId && socialVideoSiteOf(info.pageUrl || tab?.url)));
+        if ((frameIsRedGifs || frameIsSocial) && tab?.id) {
           gesturePlayer = true;
           gestureDocumentId = gestureMedia.documentId || '';
           gestureAt = gestureMedia.gestureAt;
@@ -1894,10 +1897,11 @@ async function onContextMenuClicked(info, tab) {
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
             frameId: info.frameId,
-            domMeta: viaInline(info, 'vk', 'generic') ? {} : undefined,
+            domMeta: viaInline(info, 'vk') ? {} : undefined,
             gesturePlayer,
             gestureDocumentId,
             gestureAt,
+            ownerDocumentId: ownerClaim.documentId || '',
             inlineToken,
             redGifsEmbed: viaInline(info, 'reddit') && info.redditInlineRedGifs ? info.redditInlineRedGifs : undefined
           });
@@ -1915,9 +1919,9 @@ async function onContextMenuClicked(info, tab) {
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
             frameId: info.frameId,
-            allowPostMedia: !viaInline(info, 'generic'),
+            allowPostMedia: true,
             // VK admission froze this selected source; later URL-based DOM lookup could select a recycled node.
-            domMeta: viaInline(info, 'vk', 'generic') ? {} : undefined,
+            domMeta: viaInline(info, 'vk') ? {} : undefined,
             // the explicit inline scope of a proven Pixiv control; only this trusted route sets it
             pixivInline: viaInline(info, 'pixiv') ? { mode: info.pixivInline.mode, count: info.pixivInline.count } : undefined
           });
@@ -3014,27 +3018,7 @@ async function handleRedgifsInlineSave(message, sender) {
 }
 
 // One router for the inline actions of the content script (content/content_inline.js): the route, and the label its failure is logged with.
-// A generic inline click is admitted only by its own document-bound, one-shot proof.
-// any other http(s) page: a site with its own inline surface never reaches the generic route (the same host list as the content script)
-const isGenericPageUrl = (url) => { try { const u = new URL(url); return /^https?:$/.test(u.protocol) && !u.username && !u.password && !MediaLatchSites.hasOwnInline(u.hostname); } catch (_) { return false; } };
-const genericInlineSenderOk = (message, sender) => inlineSenderOk(message, sender, isGenericPageUrl, { top: true, doc: true });
-function sanitizeGenericInline(raw, sender) {
-  if (!raw || !['image','video'].includes(raw.kind) || typeof raw.url !== 'string' || raw.url.length > 4096 || /[\u0000-\u0020]/.test(raw.url)) return null;
-  try { const u = new URL(raw.url); if (!/^https?:$/.test(u.protocol) || u.username || u.password || /\.(?:m3u8|mpd)$/i.test(u.pathname)) return null; } catch (_) { return null; }
-  const site = fbSiteOf(sender.url, '');
-  return {kind:raw.kind,url:raw.url,author:FeedbackLib.safeAuthor(site,raw.author)};
-}
-function handleGenericInlineSave(message, sender) {
-  return runInlineSingle({scope:'generic.inline',phase:'save',senderOk:genericInlineSenderOk,ask:{action:'GENERIC_INLINE_OWNER',token:message.token},
-    sanitize:raw=>sanitizeGenericInline(raw,sender),why:answer=>inlineWhy(answer),warn:()=>['[MediaLatch] Inline save refused: the selected asset changed'],
-    async run(tab,sn,media,cid) {
-      const info={menuItemId:'save-image-item',srcUrl:media.url,pageUrl:sn.url,frameId:sn.frameId,mediaType:media.kind,dbgCid:cid,selectedAuthor:media.author,genericDocumentId:sn.documentId};
-      inlineRoutes.set(info, 'generic');await onContextMenuClicked(info,tab);
-    }
-  },message,sender);
-}
 const INLINE_ROUTES = {
-  GENERIC_INLINE_SAVE: ['Inline Save', handleGenericInlineSave],
   X_INLINE_SAVE: ['Inline X Save', handleXInlineSave],
   X_INLINE_SAVE_ALL: ['Inline X Save all', handleXInlineSaveAll],
   PIXIV_INLINE_SAVE: ['Inline Pixiv Save', (m, s) => handlePixivInlineSave(m, s, 'one')],

@@ -325,6 +325,8 @@ function createMockEnvironment(opts = {}) {
     getComputedStyle(el) { return el.style; }
   };
 
+  window.top = window;
+
   const chrome = {
     runtime: {
       id: 'image-saver-extension-id',

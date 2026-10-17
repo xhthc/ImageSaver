@@ -998,9 +998,20 @@ async function resolveMediaTargetImpl(options = {}) {
       };
       const isReddit = options.gesturePlayer !== true && (isRedditDomain(hostFromUrl(options.pageUrl || mediaDesc.pageUrl || '')) ||
                        isRedditDomain(hostFromUrl(options.linkUrl || mediaDesc.linkUrl || '')));
+      // TikTok / Instagram (TT-IG-VIDEO-01): the selected player's own item answers, read in the admitting document; RedGIFs validation is not involved
+      const social = isReddit ? '' : socialVideoSiteOf(options.pageUrl || mediaDesc.pageUrl || '');
 
       if (options.tabId) {
-        if (isReddit) {
+        if (social) {
+          frameRes = await resolveSocialPlayerMedia({
+            tabId: options.tabId,
+            frameId,
+            documentId: options.gestureDocumentId || options.ownerDocumentId || '',
+            site: social,
+            gestureAt: options.gesturePlayer === true ? options.gestureAt : null,
+            stream: videoUrl && videoUrl.startsWith('blob:') ? videoUrl : ''
+          });
+        } else if (isReddit) {
           frameRes = await resolveRedditFrameBlobMedia({
             tabId: options.tabId,
             frameId,
@@ -1042,7 +1053,7 @@ async function resolveMediaTargetImpl(options = {}) {
         const mediaPlan = createCandidateGroup({
           id: `video_${encodeURIComponent(frameRes.targetUrl.slice(-40))}`,
           source: 'frame_resolver',
-          provider: isReddit ? 'reddit' : 'redgifs',
+          provider: social || (isReddit ? 'reddit' : 'redgifs'),
           tier: 'legacy',
           score: 100,
           validationMode: 'probe',

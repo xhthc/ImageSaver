@@ -154,6 +154,14 @@
     return { copied, method };
   }
 
+  // Lucide Copy from the pinned lucide-react 1.50.0 (ISC; THIRD_PARTY_NOTICES.txt). The action copies a link, not HTML embed code.
+  function copyIcon(className = '') {
+    return `<svg xmlns="http://www.w3.org/2000/svg" class="${className}" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+    </svg>`;
+  }
+
   // isLabel(element, field, key, fallback, vars): text or an attribute that follows the interface language (lib/i18n.js); without the catalogue it is the plain fallback.
   function labeler() {
     const i18n = globalThis.ImageSaverI18n;
@@ -166,5 +174,5 @@
     };
   }
 
-  globalThis.MediaLatchCopyKit = { shareHost, scheduler, observer, navigation, whenReady, labeler, copyText };
+  globalThis.MediaLatchCopyKit = { shareHost, scheduler, observer, navigation, whenReady, labeler, copyText, copyIcon };
 })();

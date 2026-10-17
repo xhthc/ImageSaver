@@ -266,7 +266,7 @@ async function probeCandidateImpl(candidate) {
     const controller = new AbortController();
     timeoutId = setTimeout(() => controller.abort(), 3500);
 
-    // DNR rules (1001, 1002, 1003) manage Referer/Cookie at network layer;
+    // DNR rules (1001-1004) manage Referer/Cookie at network layer;
     // do not manually set Referer in JavaScript here.
     const probeHeaders = {};
 
