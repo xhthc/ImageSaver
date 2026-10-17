@@ -17306,9 +17306,19 @@ async function runTests() {
       );
     }
 
-    // TIKTOK-CONTROLS-01: a control goes only into a video's own action rail (no container fallback). Cases that test copying, hosts, keys and feedback
-    // give their card the smallest rail (an action container with one native action item); their assertions are unchanged.
-    const ttRail = (card) => { const rail = new TestDomElement('div', { class: 'ActionItemContainer' }); rail.appendChild(new TestDomElement('div', { 'data-e2e': 'feed-action-item' })); card.appendChild(rail); return rail; };
+    // Copy/host/feedback fixtures provide the observed native More and its local containing block.
+    const ttAnchor = card => {
+      let more = card.querySelector('button[data-e2e="more-menu-icon"]') || card.querySelector('button[data-more-menu-item-id]');
+      if (!more) more = new TestDomElement('button');
+      more.setAttribute('data-e2e', 'more-menu-icon');
+      if (more.parentElement) more.parentElement.removeChild(more);
+      more.isConnected = true;
+      const host = new TestDomElement('div', { class: 'DivMediaCardOverlay' });
+      host.appendChild(more); card.appendChild(host);
+      Object.assign(more, { offsetParent: host, offsetLeft: 300, offsetTop: 8, offsetWidth: 48, offsetHeight: 48 });
+      return host;
+    };
+    const ttCopy = card => card.querySelector('.image-saver-tt-copy-wrap');
 
     // 225.4 Injection and duplicate prevention without replacing native Share button
     {
@@ -17320,15 +17330,16 @@ async function runTests() {
       nativeShareItem.appendChild(nativeShareBtn);
       actionContainer.appendChild(nativeShareItem);
 
+      ttAnchor(item);
       const inj1 = ttSandbox.__injectCopyButtonToTikTokVideo(item);
       const inj2 = ttSandbox.__injectCopyButtonToTikTokVideo(item);
 
       assert(
         inj1 === true &&
         inj2 === false &&
-        actionContainer.children.length === 2 &&
+        actionContainer.children.length === 1 &&
         actionContainer.children[0] === nativeShareItem &&
-        actionContainer.children[1].classList.contains('image-saver-tt-copy-wrap'),
+        ttCopy(item).classList.contains('image-saver-tt-copy-wrap') && ttCopy(item).parentElement !== actionContainer,
         '225.4: Кнопка копирования внедряется как отдельная кнопка, не заменяя и не удаляя нативную кнопку Share TikTok'
       );
     }
@@ -17340,8 +17351,9 @@ async function runTests() {
       const actionContainer = new TestDomElement('div');
       item.appendChild(actionContainer);
       actionContainer.appendChild(new TestDomElement('div', { 'data-e2e': 'feed-action-item' }));
+      ttAnchor(item);
       ttSandbox.__injectCopyButtonToTikTokVideo(item);
-      const wrap = actionContainer.children[1];
+      const wrap = ttCopy(item);
 
       ttClipboardText = '';
       wrap.click();
@@ -17366,9 +17378,9 @@ async function runTests() {
     {
       const item = new TestDomElement('div', { 'data-e2e': 'feed-item' });
       item.appendChild(new TestDomElement('a', { href: '/@sync_user/video/7999888777666555444' }));
-      const itemRail = ttRail(item);
+      const itemRail = ttAnchor(item);
       ttSandbox.__injectCopyButtonToTikTokVideo(item);
-      const wrap = itemRail.children[itemRail.children.length - 1];
+      const wrap = ttCopy(item);
 
       mockStorageListeners.forEach(cb => cb({ ttShareHost: { newValue: 'tnktok.com' } }, 'local'));
       ttClipboardText = '';
@@ -17407,9 +17419,9 @@ async function runTests() {
     {
       const item = new TestDomElement('div', { 'data-e2e': 'feed-item' });
       item.appendChild(new TestDomElement('a', { href: '/@fallback_user/video/7333222111000999888' }));
-      const itemRail = ttRail(item);
+      const itemRail = ttAnchor(item);
       ttSandbox.__injectCopyButtonToTikTokVideo(item);
-      const wrap = itemRail.children[itemRail.children.length - 1];
+      const wrap = ttCopy(item);
 
       const origWriteWin = ttSandbox.window.navigator.clipboard.writeText;
       const origWriteNav = ttSandbox.navigator.clipboard.writeText;
@@ -17431,9 +17443,9 @@ async function runTests() {
     {
       const item = new TestDomElement('div', { 'data-e2e': 'feed-item' });
       item.appendChild(new TestDomElement('a', { href: '/@total_fail/video/7444333222111000999' }));
-      const itemRail = ttRail(item);
+      const itemRail = ttAnchor(item);
       ttSandbox.__injectCopyButtonToTikTokVideo(item);
-      const wrap = itemRail.children[itemRail.children.length - 1];
+      const wrap = ttCopy(item);
 
       const origWriteWin = ttSandbox.window.navigator.clipboard.writeText;
       const origWriteNav = ttSandbox.navigator.clipboard.writeText;
@@ -17458,7 +17470,7 @@ async function runTests() {
     {
       const newItem = new TestDomElement('div', { 'data-e2e': 'feed-item' });
       newItem.appendChild(new TestDomElement('a', { href: '/@creator/video/7888777666555444333' }));
-      ttRail(newItem);
+      ttAnchor(newItem);
       ttMockDoc.body.appendChild(newItem);
 
       const injectedCount = ttSandbox.__scanAndInjectTikTokCopyButtons(ttMockDoc.body);
@@ -17539,25 +17551,26 @@ async function runTests() {
       });
       card1.appendChild(moreMenu1);
 
+      ttAnchor(card0); ttAnchor(card1);
       ttMockDoc.body.appendChild(card0);
       ttMockDoc.body.appendChild(card1);
 
       const injectedCount = ttSandbox.__scanAndInjectTikTokCopyButtons(ttMockDoc.body);
-      const copyWrap0 = sec0.children[0];
-      const copyWrap1 = sec1.children[0];
+      const copyWrap0 = ttCopy(card0);
+      const copyWrap1 = ttCopy(card1);
 
       // Exact insertion BEFORE avatar action item:
       assert(
         injectedCount >= 2 &&
         copyWrap0 && copyWrap0.classList.contains('image-saver-tt-copy-wrap') &&
         copyWrap1 && copyWrap1.classList.contains('image-saver-tt-copy-wrap') &&
-        sec0.children[0] === copyWrap0 &&
-        sec0.children[1] === avatarContainer0 &&
-        sec1.children[0] === copyWrap1 &&
-        sec1.children[1] === avatarContainer1 &&
+        copyWrap0.parentElement !== sec0 &&
+        sec0.children[0] === avatarContainer0 &&
+        copyWrap1.parentElement !== sec1 &&
+        sec1.children[0] === avatarContainer1 &&
         sec0.children.find(c => c.getAttribute('data-e2e') === 'share-icon') === share0 &&
         sec1.children.find(c => c.getAttribute('data-e2e') === 'share-icon') === share1,
-        '225.11: На реальной ленте TikTok без авторизации (article + section) кнопка внедряется строго ПЕРЕД элементом аватара автора, не затрагивая нативный share-icon'
+        '225.11: На реальной ленте TikTok без авторизации (article + section) кнопка расположена под More отдельно от аватара автора, не затрагивая нативный share-icon'
       );
 
       // Verify per-item URL ownership: Card 0 click copies Card 0 URL
@@ -17595,18 +17608,19 @@ async function runTests() {
       secUncertain.appendChild(new TestDomElement('div', { 'data-e2e': 'share-icon' }));
       uncertainCard.appendChild(secUncertain);
       // No valid numeric video id on card
+      ttAnchor(uncertainCard);
       ttMockDoc.body.appendChild(uncertainCard);
 
       const injectedCount = ttSandbox.__scanAndInjectTikTokCopyButtons(ttMockDoc.body);
-      const copyWrapUncertain = secUncertain.children[0];
+      const copyWrapUncertain = ttCopy(uncertainCard);
 
       assert(
         injectedCount >= 1 &&
         copyWrapUncertain &&
         copyWrapUncertain.classList.contains('image-saver-tt-copy-wrap') &&
-        secUncertain.children[0] === copyWrapUncertain &&
-        secUncertain.children[1] === avatarContainerUncertain,
-        '225.12: Кнопка MediaLatch видна даже если URL видео еще не доказан (внедрена перед аватаром)'
+        copyWrapUncertain.parentElement !== secUncertain &&
+        secUncertain.children[0] === avatarContainerUncertain,
+        '225.12: Кнопка MediaLatch видна даже если URL видео еще не доказан (расположена под More)'
       );
 
       ttClipboardText = 'PREVIOUS_CLIPBOARD';
@@ -17634,9 +17648,10 @@ async function runTests() {
       cardSpa.appendChild(oldSec);
       cardSpa.appendChild(new TestDomElement('button', { 'data-more-menu-item-id': '7999111222333444555' }));
 
+      ttAnchor(cardSpa);
       ttSandbox.__injectCopyButtonToTikTokVideo(cardSpa);
-      assert(oldSec.children[0].classList.contains('image-saver-tt-copy-wrap'), 'Initial copy button injected before avatar');
-      assert(oldSec.children.length === 2, 'Initial rail has 2 children (button + avatar)');
+      assert(ttCopy(cardSpa).classList.contains('image-saver-tt-copy-wrap'), 'Copy initially below More');
+      assert(oldSec.children.length === 1, 'Native avatar rail stays untouched');
 
       // Simulate React SPA unmounting oldSec and rendering a new section
       cardSpa.removeChild(oldSec);
@@ -17646,16 +17661,18 @@ async function runTests() {
       newSec.appendChild(newAvatar);
       cardSpa.appendChild(newSec);
 
+      const oldCopy = ttCopy(cardSpa);
+      ttSandbox.__scanAndInjectTikTokCopyButtons(cardSpa);
       const reinjected = ttSandbox.__injectCopyButtonToTikTokVideo(cardSpa);
       const dupAttempt = ttSandbox.__injectCopyButtonToTikTokVideo(cardSpa);
 
       assert(
-        reinjected === true &&
+        reinjected === false &&
         dupAttempt === false &&
-        newSec.children[0].classList.contains('image-saver-tt-copy-wrap') &&
-        newSec.children[1] === newAvatar &&
-        newSec.children.length === 2,
-        '225.13: При замене секции действий в SPA кнопка чисто повторно внедряется перед аватаром, а дубликаты предотвращаются'
+        ttCopy(cardSpa) === oldCopy &&
+        newSec.children[0] === newAvatar &&
+        newSec.children.length === 1,
+        '225.13: При замене секции действий в SPA кнопка чисто остаётся под More, а дубликаты предотвращаются'
       );
     }
 
@@ -17756,15 +17773,16 @@ async function runTests() {
       rootCard.appendChild(rootMoreMenu);
 
       // Inject copy button targeting innerContainer
+      ttAnchor(rootCard);
       const injected = ttSandbox.__injectCopyButtonToTikTokVideo(innerContainer);
-      const copyWrap = nestedSec.children[0];
+      const copyWrap = ttCopy(rootCard);
 
       assert(
         injected === true &&
         copyWrap && copyWrap.classList.contains('image-saver-tt-copy-wrap') &&
-        nestedSec.children[0] === copyWrap &&
-        nestedSec.children[1] === avatarContainer,
-        '225.17: Кнопка успешно внедрена перед аватаром внутри вложенного контейнера DivContentContainer'
+        copyWrap.parentElement !== nestedSec &&
+        nestedSec.children[0] === avatarContainer,
+        '225.17: Кнопка успешно расположена под More внутри вложенного контейнера DivContentContainer'
       );
 
       // Click button: resolves rootCard to find more-menu ID outside innerContainer
@@ -17783,9 +17801,9 @@ async function runTests() {
     {
       const keyCard = new TestDomElement('article', { 'data-e2e': 'feed-item' });
       keyCard.appendChild(new TestDomElement('a', { href: '/@keyboard_user/video/7666777888999000111' }));
-      const keyCardRail = ttRail(keyCard);
+      const keyCardRail = ttAnchor(keyCard);
       ttSandbox.__injectCopyButtonToTikTokVideo(keyCard);
-      const copyWrap = keyCardRail.children[keyCardRail.children.length - 1];
+      const copyWrap = ttCopy(keyCard);
 
       // Simulate Enter keydown
       ttClipboardText = '';
@@ -17811,9 +17829,9 @@ async function runTests() {
     {
       // 1. Unavailable URL: should show is-unavailable, title 'MediaLatch: Ссылка на видео недоступна', NOT is-success
       const unavailCard = new TestDomElement('article', { 'data-e2e': 'feed-item' });
-      const unavailCardRail = ttRail(unavailCard);
+      const unavailCardRail = ttAnchor(unavailCard);
       ttSandbox.__injectCopyButtonToTikTokVideo(unavailCard);
-      const unavailWrap = unavailCardRail.children[unavailCardRail.children.length - 1];
+      const unavailWrap = ttCopy(unavailCard);
 
       ttClipboardText = '';
       unavailWrap.click();
@@ -17830,9 +17848,9 @@ async function runTests() {
       // 2. Clipboard Write Error: should show is-clipboard-error, title 'MediaLatch: Не удалось скопировать в буфер обмена', NOT is-success
       const clipFailCard = new TestDomElement('article', { 'data-e2e': 'feed-item' });
       clipFailCard.appendChild(new TestDomElement('a', { href: '/@clip_err/video/7777888999000111222' }));
-      const clipFailCardRail = ttRail(clipFailCard);
+      const clipFailCardRail = ttAnchor(clipFailCard);
       ttSandbox.__injectCopyButtonToTikTokVideo(clipFailCard);
-      const clipFailWrap = clipFailCardRail.children[clipFailCardRail.children.length - 1];
+      const clipFailWrap = ttCopy(clipFailCard);
 
       const origWriteWin = ttSandbox.window.navigator.clipboard.writeText;
       const origWriteNav = ttSandbox.navigator.clipboard.writeText;
@@ -17857,9 +17875,9 @@ async function runTests() {
       // 3. Success: should show is-success, title '✓ Ссылка скопирована!', NOT is-unavailable, NOT is-clipboard-error
       const successCard = new TestDomElement('article', { 'data-e2e': 'feed-item' });
       successCard.appendChild(new TestDomElement('a', { href: '/@success_user/video/7888999000111222333' }));
-      const successCardRail = ttRail(successCard);
+      const successCardRail = ttAnchor(successCard);
       ttSandbox.__injectCopyButtonToTikTokVideo(successCard);
-      const successWrap = successCardRail.children[successCardRail.children.length - 1];
+      const successWrap = ttCopy(successCard);
 
       ttClipboardText = '';
       successWrap.click();
@@ -17909,15 +17927,16 @@ async function runTests() {
       c3Sec.appendChild(c3Avatar);
       c3.appendChild(c3Sec);
 
+      ttAnchor(c1); ttAnchor(c2); ttAnchor(c3);
       mixedRoot.appendChild(c1);
       mixedRoot.appendChild(c2);
       mixedRoot.appendChild(c3);
 
       const injectedCount = ttSandbox.__scanAndInjectTikTokCopyButtons(mixedRoot);
 
-      const btn1 = c1Sec.children[0];
-      const btn2 = c2Sec.children[0];
-      const btn3 = c3Sec.children[0];
+      const btn1 = ttCopy(c1);
+      const btn2 = ttCopy(c2);
+      const btn3 = ttCopy(c3);
 
       // Card 1 copies Card 1
       ttClipboardText = '';
@@ -18075,8 +18094,9 @@ async function runTests() {
       diagCard.appendChild(diagSec);
       diagCard.appendChild(new TestDomElement('button', { 'data-more-menu-item-id': '7999111222333444555' }));
 
+      ttAnchor(diagCard);
       ttSandbox.__injectCopyButtonToTikTokVideo(diagCard);
-      const diagWrap = diagSec.children[0];
+      const diagWrap = ttCopy(diagCard);
 
       // 1. Success click: diagnostic attributes record success, author true, videoId true, source more-menu-attr
       ttClipboardText = '';
@@ -18104,8 +18124,9 @@ async function runTests() {
       const emptyCard = new TestDomElement('article', { 'data-e2e': 'recommend-list-item-container' });
       const emptySec = new TestDomElement('section', { class: 'SectionActionBarContainer' });
       emptyCard.appendChild(emptySec);
+      ttAnchor(emptyCard);
       ttSandbox.__injectCopyButtonToTikTokVideo(emptyCard);
-      const emptyWrap = emptySec.children[0];
+      const emptyWrap = ttCopy(emptyCard);
 
       emptyWrap.click();
       await new Promise(r => setTimeout(r, 15));

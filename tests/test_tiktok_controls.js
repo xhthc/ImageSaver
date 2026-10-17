@@ -1,5 +1,5 @@
 'use strict';
-// TIKTOK-CONTROLS-01: one Copy and one Download control in the selected TikTok video's own action rail, the Download proof and route, and the
+// TIKTOK-CONTROLS-02: separate Copy and Download controls below the selected TikTok video's native More button, the Download proof and route, and the
 // Shift-scoped browser menu. SYNTHETIC: jsdom pages shaped like the TikTok structure observed live on 2026-10-17
 // (local-notes/checks/tiktok-controls01/discovery/discovery.md): article > section#media-card (player, overlay) then section.SectionActionBarContainer,
 // and TikTok's own menu as a body portal [data-e2e=context-menu]. Layout, fibers, trusted input, network and export are simulated; the production
@@ -49,6 +49,13 @@ function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true } 
   const env = createTestEnv(), s = env.bgSandbox, dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true }), w = dom.window, d = w.document;
   Object.defineProperty(w, 'innerHeight', { configurable: true, value: 1800 }); // both cards on screen
   const rects = new WeakMap(), content = [], p = { w, d, s, rects, sent: [], exported: [], fetched: [], failures: [], scripts: [], docId, content };
+  p.resizeInstances = [];
+  w.ResizeObserver = class {
+    constructor(cb) { this.cb = cb; this.targets = new Set(); p.resizeInstances.push(this); }
+    observe(el) { this.targets.add(el); }
+    unobserve(el) { this.targets.delete(el); }
+    disconnect() { this.targets.clear(); }
+  };
   for (const v of d.querySelectorAll('video')) Object.defineProperty(v, 'currentSrc', { configurable: true, get() { return this.getAttribute('data-stream') || ''; } });
   // layout: card n occupies a 446x640 player at y = 80 + n*890, its rail to the right
   p.layout = () => {
@@ -63,6 +70,16 @@ function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true } 
     const menu = d.querySelector('[data-e2e="context-menu"]'); if (menu) for (const el of [menu, ...menu.querySelectorAll('*')]) rects.set(el, { left: 200, top: 200, width: 300, height: 400 });
   };
   p.layout();
+  const anchorGeometry = new WeakMap(); p.anchorGeometry = anchorGeometry;
+  const prepareAnchors = () => {
+    for (const more of d.querySelectorAll('button[data-e2e="more-menu-icon"]')) {
+      if (Object.hasOwn(more, 'offsetParent')) continue;
+      anchorGeometry.set(more, { host: more.parentElement, left: 390, top: 8, width: 48, height: 48 });
+      for (const [key, field] of [['offsetParent','host'],['offsetLeft','left'],['offsetTop','top'],['offsetWidth','width'],['offsetHeight','height']])
+        Object.defineProperty(more, key, { configurable: true, get: () => anchorGeometry.get(more)[field] });
+    }
+  };
+  prepareAnchors(); p.prepareAnchors = prepareAnchors;
   w.Element.prototype.getBoundingClientRect = function () { const b = rects.get(this) || { left: 0, top: 0, width: 0, height: 0 }; return { ...b, right: b.left + b.width, bottom: b.top + b.height, x: b.left, y: b.top }; };
   const stack = (x, y) => [...d.querySelectorAll('*')].filter((el) => { const b = el.getBoundingClientRect(); return b.width && x >= b.left && x <= b.right && y >= b.top && y <= b.bottom; }).reverse();
   d.elementsFromPoint = stack; d.elementFromPoint = (x, y) => stack(x, y)[0] || null;
@@ -105,7 +122,7 @@ function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true } 
   p.inject = () => { w.eval(code('content/content_copy_kit.js')); w.eval(code('content/content_tiktok.js')); };
   w.eval(code('content/content_context_target.js'));
   p.inject();
-  p.scan = async () => { w.__scanAndInjectTikTokCopyButtons(d); p.layout(); await sleep(5); };
+  p.scan = async () => { prepareAnchors(); w.__scanAndInjectTikTokCopyButtons(d); p.layout(); await sleep(5); };
   p.rail = (n) => d.querySelector(`#one-column-item-${n} section[class*="SectionActionBarContainer"]`);
   p.ours = (root = d) => [...root.querySelectorAll('.image-saver-tt-copy-wrap, .image-saver-tt-save-wrap')];
   p.save = (n) => d.querySelector(`#one-column-item-${n} .image-saver-tt-save-wrap`);
@@ -123,22 +140,69 @@ const rightClick = (p, el, shift) => {
 };
 
 (async () => {
-  // ---- placement: one Copy and one Download in the video's own rail ----
-  await test('each loaded card gets exactly one Copy and one Download, adjacent, inside its own action rail (never in the player section or loose in the card)', async () => {
-    const p = page(); await p.scan();
-    for (const n of [0, 1]) {
-      const rail = p.rail(n), mine = p.ours(p.d.getElementById(`one-column-item-${n}`));
-      assert.equal(mine.length, 2, `card ${n}: ${mine.map((e) => e.className + '@' + e.parentElement.className).join(' | ')}`);
-      assert(mine.every((e) => e.parentElement === rail), 'both are direct items of the action rail');
-      assert(mine[0].classList.contains('image-saver-tt-copy-wrap') && mine[1].classList.contains('image-saver-tt-save-wrap') && mine[0].nextElementSibling === mine[1], 'Copy, then Download');
-      assert.equal(p.d.querySelectorAll(`#media-card-${n} .image-saver-tt-copy-wrap, #media-card-${n} .image-saver-tt-save-wrap`).length, 0);
-      assert.equal(mine[1].getAttribute('role'), 'button'); assert.equal(mine[1].getAttribute('tabindex'), '0'); assert.match(mine[1].getAttribute('aria-label'), /MediaLatch/);
-    }
-    assert.equal(p.ours(p.d.getElementById('placeholder')).length, 0, 'a card without a rail (not rendered yet) gets nothing');
-    p.close();
+  // ---- placement: separate Copy and Download below the owning native More icon ----
+  await test('each loaded card gets one Copy and one Download below its native More button, leaving the action rail untouched', async () => {
+    const p = page();
+    try {
+      await p.scan();
+      for (const n of [0, 1]) {
+        const card = p.d.getElementById('one-column-item-' + n), more = card.querySelector('button[data-e2e="more-menu-icon"]');
+        const mine = p.ours(card);
+        assert.equal(mine.length, 2); assert(mine.every(e => e.parentElement === more.offsetParent));
+        assert.equal(p.ours(p.rail(n)).length, 0, 'native action rail is untouched');
+        assert.equal(mine[0].style.position, 'absolute');
+        assert.equal(mine[0].style.left, '394px'); assert.equal(mine[0].style.top, '62px');
+        assert.equal(mine[1].style.left, '394px'); assert.equal(mine[1].style.top, '108px');
+        assert.equal(mine[1].getAttribute('role'), 'button'); assert.equal(mine[1].getAttribute('tabindex'), '0');
+        assert.match(mine[1].getAttribute('aria-label'), /MediaLatch/);
+      }
+      assert.equal(p.ours(p.d.getElementById('placeholder')).length, 0);
+    } finally { p.close(); }
+  });
+  await test('hovered Copy and Download glyphs retain contrast over a white video frame', async () => {
+    const p = page();
+    try {
+      await p.scan();
+      const rules = [...p.d.styleSheets].flatMap(sheet => [...sheet.cssRules]);
+      const rgb = value => {
+        const channels = value.match(/[\d.]+/g)?.map(Number);
+        assert(channels && channels.length >= 3, 'expected an actual RGB colour');
+        return channels;
+      };
+      const luminance = channels => channels.slice(0, 3).map(c => c / 255).map(c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4).reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+      for (const control of p.ours(p.d.getElementById('one-column-item-0'))) {
+        const selector = '.' + control.classList[0] + ':hover';
+        const rule = rules.find(rule => rule.selectorText?.split(',').map(s => s.trim()).includes(selector));
+        assert(rule, 'production hover rule exists for ' + selector);
+        const bg = rgb(rule.style.getPropertyValue('background-color')), fg = rgb(p.w.getComputedStyle(control).color);
+        const alpha = bg[3] ?? 1, overWhite = bg.slice(0, 3).map(c => c * alpha + 255 * (1 - alpha));
+        const light = Math.max(luminance(fg), luminance(overWhite)), dark = Math.min(luminance(fg), luminance(overWhite));
+        const contrast = (light + 0.05) / (dark + 0.05);
+        assert(contrast >= 3, selector + ' contrast over white is ' + contrast.toFixed(2) + ':1; expected at least 3:1');
+      }
+    } finally { p.close(); }
+  });
+  await test('native More removal, replacement, ambiguity and resize never leave detached or duplicate controls', async () => {
+    const p = page();
+    try {
+      await p.scan(); const art = p.d.getElementById('one-column-item-0');
+      const old = art.querySelector('button[data-e2e="more-menu-icon"]'), host = old.parentElement;
+      old.remove(); await sleep(80);
+      assert.equal(p.ours(art).length, 0, 'More-only removal triggers cleanup without an explicit scan');
+      const fresh = old.cloneNode(); host.append(fresh); p.prepareAnchors(); await sleep(80);
+      assert.equal(p.ours(art).length, 2);
+      p.anchorGeometry.get(fresh).left = 250; p.anchorGeometry.get(fresh).top = 14;
+      p.w.dispatchEvent(new p.w.Event('resize')); await sleep(80);
+      assert.equal(p.ours(art)[0].style.left, '254px'); assert.equal(p.ours(art)[0].style.top, '68px');
+      const duplicate = fresh.cloneNode(); host.append(duplicate); p.prepareAnchors(); await sleep(80);
+      assert.equal(p.ours(art).length, 0, 'two native More anchors are ambiguous');
+      duplicate.remove(); await sleep(80); assert.equal(p.ours(art).length, 2);
+    } finally { p.close(); }
   });
   await test('repeated scans, a second injection of the scripts and the observer never duplicate a control', async () => {
     const p = page(); await p.scan(); await p.scan(); p.inject(); await sleep(80); await p.scan();
+    p.w.dispatchEvent(new p.w.PopStateEvent('popstate')); await sleep(80);
+    assert.equal(p.resizeInstances.filter(r => r.targets.size > 0).length, 1, 'old reinjected callbacks cannot restart disconnected observers');
     for (const n of [0, 1]) assert.equal(p.ours(p.d.getElementById(`one-column-item-${n}`)).length, 2);
     p.close();
   });
@@ -152,15 +216,17 @@ const rightClick = (p, el, shift) => {
     for (const n of [0, 1]) assert.equal(p.ours(p.d.getElementById(`one-column-item-${n}`)).length, 2, 'menu open/close leaves the rails as they were');
     p.close();
   });
-  await test('controls placed outside the rail by an earlier version are cleaned up; a replaced rail gets its controls back once', async () => {
+  await test('old action-rail controls move below More; replacing its host restores exactly one pair', async () => {
     const p = page();
-    for (const where of ['#media-card-0', '#media-card-0 [class*="DivVideoPlayerContainer"]', '#one-column-item-0']) { const old = p.d.createElement('div'); old.className = 'image-saver-tt-copy-wrap'; p.d.querySelector(where).append(old); }
-    await p.scan();
-    assert.equal(p.ours(p.d.getElementById('one-column-item-0')).length, 2); assert(p.ours(p.d.getElementById('one-column-item-0')).every((e) => e.parentElement === p.rail(0)));
-    const oldRail = p.rail(0), fresh = oldRail.cloneNode(true); for (const e of p.ours(fresh)) e.remove(); oldRail.replaceWith(fresh); p.layout();
-    await p.scan(); await p.scan();
-    assert.equal(p.ours(p.d.getElementById('one-column-item-0')).length, 2); assert(p.ours(p.d.getElementById('one-column-item-0')).every((e) => e.parentElement === fresh), 'the disconnected old controls do not suppress the new rail');
-    p.close();
+    try {
+      p.rail(0).insertAdjacentHTML('beforeend', '<div class="image-saver-tt-copy-wrap"></div><div class="image-saver-tt-save-wrap"></div>');
+      await p.scan();
+      assert.equal(p.ours(p.rail(0)).length, 0);
+      const old = p.d.querySelector('#media-card-0 [class*="DivVideoPlayerContainer"]'), fresh = old.cloneNode(true);
+      for (const e of p.ours(fresh)) e.remove(); old.replaceWith(fresh); p.layout(); await p.scan(); await p.scan();
+      assert.equal(p.ours(p.d.getElementById('one-column-item-0')).length, 2);
+      assert(p.ours(p.d.getElementById('one-column-item-0')).every(e => e.parentElement === fresh));
+    } finally { p.close(); }
   });
   await test('a card with two players is ambiguous: Copy may stay, no Download', async () => {
     const p = page(); const extra = p.d.createElement('video'); p.d.querySelector('#media-card-0 .xg').append(extra);
@@ -168,11 +234,11 @@ const rightClick = (p, el, shift) => {
     assert.equal(p.d.querySelectorAll('#one-column-item-0 .image-saver-tt-save-wrap').length, 0); assert.equal(p.d.querySelectorAll('#one-column-item-1 .image-saver-tt-save-wrap').length, 1);
     p.close();
   });
-  await test('review regression: unknown containers and stale controls never substitute for a native rail', async () => {
+  await test('review regression: unknown containers cannot replace a missing More anchor', async () => {
     for (const shape of ['DivContentContainer', 'RightContainer', 'ActionItemContainer', '']) {
       const p = page();
       try {
-        p.rail(0).remove();
+        p.d.querySelector('#one-column-item-0 button[data-e2e="more-menu-icon"]').remove();
         if (shape) p.d.querySelector('#one-column-item-0').insertAdjacentHTML('beforeend', '<div class="css-unknown-' + shape + '">Caption only</div>');
         p.d.querySelector('#media-card-0').insertAdjacentHTML('beforeend', '<div class="image-saver-tt-copy-wrap"></div><div class="image-saver-tt-save-wrap"></div>');
         await p.scan();

@@ -1,6 +1,6 @@
 /**
  * content/content_tiktok.js - TikTok DOM video-link copying and embed-friendly sharing.
- * Injects a lightweight copy button into TikTok video action bars.
+ * Places Copy and Download below the selected video's native More button.
  * Strictly resolves canonical @user/video/id URLs and copies using the user's selected host.
  */
 
@@ -22,24 +22,17 @@
   cursor: pointer;
   user-select: none;
   outline: none;
-  background-color: rgba(255, 255, 255, 0.08);
   transition: background-color 0.2s, color 0.2s, transform 0.15s;
   box-sizing: border-box;
-  margin: 6px auto;
-  color: inherit;
+  margin: 0;
+  pointer-events: auto;
+  background-color: rgba(20, 20, 20, 0.72);
+  color: #fff;
   z-index: 10;
-  position: relative;
+  position: absolute;
 }
 .image-saver-tt-copy-wrap:hover, .image-saver-tt-save-wrap:hover {
-  background-color: rgba(255, 255, 255, 0.18);
-}
-@media (prefers-color-scheme: light) {
-  .image-saver-tt-copy-wrap, .image-saver-tt-save-wrap {
-    background-color: rgba(0, 0, 0, 0.05);
-  }
-  .image-saver-tt-copy-wrap:hover, .image-saver-tt-save-wrap:hover {
-    background-color: rgba(0, 0, 0, 0.1);
-  }
+  background-color: rgba(20, 20, 20, 0.88);
 }
 .image-saver-tt-copy-wrap:active, .image-saver-tt-save-wrap:active {
   transform: scale(0.92);
@@ -81,6 +74,9 @@
   width: 24px;
   height: 24px;
   pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .image-saver-tt-copy-wrap, .image-saver-tt-save-wrap { animation: none; transition: none; }
 }
 .image-saver-tt-icon {
   width: 20px;
@@ -470,13 +466,9 @@
     return null;
   }
 
-  // TIKTOK-CONTROLS-01. Observed live (2026-10-17): a card is article[data-e2e=recommend-list-item-container]; its FIRST section is the player
-  // (section#media-card-N[data-e2e=feed-video]), the action rail (section.SectionActionBarContainer) comes after it, and TikTok's own right-click
-  // menu is a body portal [data-e2e=context-menu]. The controls go into the video's own rail only: each rail selector is tried alone (a selector
-  // list would return the player's section first), nothing in a portal or menu, nothing in a container that holds several cards or players.
+  // The native More button is inside the card's overlay (observed live). Share/menu/rail containers are never placement fallbacks.
   const CARD = 'article, [data-e2e="recommend-list-item-container"], [data-e2e="feed-item"], [data-e2e="user-post-item"], [data-e2e="browse-video"], [data-e2e="video-detail-container"]';
   const PORTAL = '[data-e2e="context-menu"], [data-e2e*="right-click-menu"], [role="menu"]';
-  const RAILS = ['section[class*="SectionActionBarContainer"]', 'section[class*="ActionBar"]', '[data-e2e="browse-action-item"]', '[data-e2e="feed-action-item"]', '[data-e2e*="action-item"]', 'div[class*="ActionBar"]'];
   const inPortal = (el) => Boolean(el && typeof el.closest === 'function' && el.closest(PORTAL));
   function isOwnCard(card) {
     try {
@@ -484,13 +476,27 @@
       return card.querySelectorAll('article, [data-e2e="recommend-list-item-container"]').length === 0 && card.querySelectorAll('[id^="xgwrapper-"]').length <= 1;
     } catch (_) { return false; }
   }
-  function railOf(card) {
-    for (const sel of RAILS) {
-      const hit = card.querySelector(sel);
-      const rail = hit && /action-item/.test(sel) ? hit.parentElement : hit;
-      if (rail && rail !== card && !inPortal(rail)) return rail;
+  function anchorOf(card) {
+    try {
+      if (!isOwnCard(card)) return null;
+      const candidates = Array.from(card.querySelectorAll('button[data-e2e="more-menu-icon"]')).filter(m => !inPortal(m));
+      if (candidates.length !== 1) return null;
+      const more = candidates[0], host = more.offsetParent;
+      if (!more.isConnected || !host || !host.isConnected || !card.contains(host) || inPortal(host) || resolveOwningTikTokCard(more) !== card) return null;
+      const left = more.offsetLeft + (more.offsetWidth - 40) / 2, top = more.offsetTop + more.offsetHeight + 6;
+      if (![left, top].every(Number.isFinite) || more.offsetWidth <= 0 || more.offsetHeight <= 0) return null;
+      return { more, host, left, top };
+    } catch (_) { return null; }
+  }
+  function positionControls(card, anchor) {
+    let row = 0;
+    for (const cls of ['image-saver-tt-copy-wrap', 'image-saver-tt-save-wrap']) {
+      const el = card.querySelector('.' + cls);
+      if (!el || el.parentElement !== anchor.host) continue;
+      el.style.position = 'absolute';
+      el.style.left = anchor.left + 'px';
+      el.style.top = (anchor.top + row++ * 46) + 'px';
     }
-    return null;
   }
 
   // Download (TikTok only): a trusted press freezes the card's ONE player (wrapper item id, stream address, page) when it is on screen and not
@@ -526,7 +532,8 @@
   function requestSave(wrap) {
     if (wrap.getAttribute('aria-disabled') === 'true') return; // a second press of the same request
     saveState(wrap);
-    const card = resolveOwningTikTokCard(wrap), frozen = isOwnCard(card) && freezePlayer(card, wrap);
+    const card = resolveOwningTikTokCard(wrap), anchor = anchorOf(card);
+    const frozen = anchor && wrap.parentElement === anchor.host && freezePlayer(card, wrap);
     if (!frozen) {
       DBG.log('tiktok.save', 'press', 'refused', 'NO_PLAYER');
       saveState(wrap, true);
@@ -570,7 +577,7 @@
     wrap.addEventListener('keydown', press);
     return wrap;
   }
-  // One Download right after the card's Copy, only while the card holds exactly one player; any other we placed in the card goes.
+  // One Download beside the card's Copy in DOM order, only while the card holds exactly one player.
   function ensureSaveButton(card, rail, copyWrap) {
     try {
       const all = Array.from(card.querySelectorAll('.image-saver-tt-save-wrap'));
@@ -582,22 +589,17 @@
     } catch (_) {}
   }
 
-  /**
-   * Injects a separate visible video URL copy button into a TikTok video action bar.
-   * Modeled on the X post-link copy button. Does NOT replace, intercept, or repurpose
-   * TikTok's native Share button.
-   * Places the button immediately BEFORE the author-avatar action item in the section action rail.
-   * Prevents duplicate injection via DOM check, and allows re-injection if the action bar was replaced.
-   */
-  function injectCopyButtonToTikTokVideo(container, knownShareBtn = null) {
+  // One Copy and Download below this card's unique native More icon; preserve its handlers and the native action rail.
+  function injectCopyButtonToTikTokVideo(container) {
     if (!container || typeof container.querySelector !== 'function') return false;
-    // the video's own card and its rail; an unknown layout (no card, no rail, a portal) gets no control
+    // A missing, hidden or ambiguous native anchor gets no control.
     const videoContainer = resolveOwningTikTokCard(container);
     if (!isOwnCard(videoContainer)) return false;
-    const actionBar = railOf(videoContainer);
-    if (!actionBar) return false;
+    const anchor = anchorOf(videoContainer);
+    if (!anchor) return false;
+    const actionBar = anchor.host;
 
-    // One Copy per card: the one in the rail stays; one we placed anywhere else in the card (an earlier version, a rerender) is removed.
+    // One Copy per card: retain only the one in the native More containing block.
     let existingBtn = null;
     for (const w of Array.from(videoContainer.querySelectorAll('.image-saver-tt-copy-wrap'))) {
       if (!existingBtn && w.parentElement === actionBar) existingBtn = w;
@@ -605,42 +607,8 @@
     }
     if (existingBtn) {
       ensureSaveButton(videoContainer, actionBar, existingBtn);
+      positionControls(videoContainer, anchor);
       return false;
-    }
-
-    // Locate author avatar action item to insert immediately BEFORE it
-    let insertBeforeTarget = null;
-    const avatarCandidates = Array.from(actionBar.querySelectorAll('a[data-e2e="video-author-avatar"], div[class*="AvatarActionItem"], div[class*="DivAvatar"], a[href^="/@"]'));
-    const avatarLink = avatarCandidates.find(el => {
-      const href = (el.getAttribute && el.getAttribute('href')) || el.href || '';
-      return !href.includes('/video/');
-    });
-    if (avatarLink) {
-      let cur = avatarLink;
-      while (cur && cur.parentElement && cur.parentElement !== actionBar) {
-        cur = cur.parentElement;
-      }
-      if (cur && (cur.parentElement === actionBar || cur.parentNode === actionBar)) {
-        insertBeforeTarget = cur;
-      }
-    }
-
-    // If no avatar item found in actionBar, check for native Share control or fallback to firstChild / nextSibling
-    if (!insertBeforeTarget) {
-      const shareBtn = (knownShareBtn && (knownShareBtn.parentElement === actionBar || knownShareBtn.parentNode === actionBar) ? knownShareBtn : null) ||
-                       actionBar.querySelector('[data-e2e="share-icon"], [data-e2e="browse-share"], [data-e2e="feed-share"], [data-e2e*="share"], [aria-label*="Share" i], [aria-label*="Поделиться" i]') ||
-                       videoContainer.querySelector('[data-e2e="share-icon"], [data-e2e="browse-share"], [data-e2e="feed-share"], [data-e2e*="share"], [aria-label*="Share" i], [aria-label*="Поделиться" i]');
-      if (shareBtn) {
-        let cur = shareBtn.closest ? (shareBtn.closest('[data-e2e="browse-action-item"], [data-e2e="feed-action-item"]') || shareBtn) : shareBtn;
-        while (cur && cur.parentElement && cur.parentElement !== actionBar) {
-          cur = cur.parentElement;
-        }
-        if (cur && (cur.parentElement === actionBar || cur.parentNode === actionBar)) {
-          if (cur.nextSibling) {
-            insertBeforeTarget = cur.nextSibling;
-          }
-        }
-      }
     }
 
     if (typeof document === 'undefined') return false;
@@ -764,26 +732,9 @@
       }
     });
 
-    // Insert immediately BEFORE author avatar item if present, otherwise append to action rail
-    if (insertBeforeTarget && typeof actionBar.insertBefore === 'function') {
-      actionBar.insertBefore(wrap, insertBeforeTarget);
-    } else {
-      actionBar.appendChild(wrap);
-    }
+    actionBar.appendChild(wrap);
     ensureSaveButton(videoContainer, actionBar, wrap);
-
-    if (videoContainer.dataset) {
-      videoContainer.dataset.imageSaverBtn = 'true';
-    }
-    if (typeof videoContainer.setAttribute === 'function') {
-      videoContainer.setAttribute('data-image-saver-btn', 'true');
-    }
-    if (actionBar.dataset) {
-      actionBar.dataset.imageSaverBtn = 'true';
-    }
-    if (typeof actionBar.setAttribute === 'function') {
-      actionBar.setAttribute('data-image-saver-btn', 'true');
-    }
+    positionControls(videoContainer, anchor);
 
     return true;
   }
@@ -793,11 +744,11 @@
     if (!root || typeof root.querySelectorAll !== 'function') return 0;
     ensureTtButtonStyles();
 
+    if (!placementActive) return 0;
     let count = 0;
-    const processedContainers = new Set();
     for (const own of Array.from(root.querySelectorAll('.image-saver-tt-copy-wrap, .image-saver-tt-save-wrap'))) {
-      const card = resolveOwningTikTokCard(own), rail = isOwnCard(card) ? railOf(card) : null;
-      if (inPortal(own) || !rail || own.parentElement !== rail) own.remove();
+      const card = resolveOwningTikTokCard(own), anchor = anchorOf(card);
+      if (inPortal(own) || !anchor || own.parentElement !== anchor.host) own.remove();
     }
 
     // 1. Scan recognized video card containers across home feed, browse/detail, and profile pages
@@ -821,43 +772,50 @@
 
     const items = root.querySelectorAll(containerSelectors.join(', '));
     items.forEach(item => {
-      processedContainers.add(item);
       if (injectCopyButtonToTikTokVideo(item)) {
         count++;
       }
     });
 
-    // 2. Scan by SectionActionBarContainer in case article attributes differ
-    const actionBars = root.querySelectorAll('section[class*="SectionActionBarContainer"], section[class*="ActionBar"]');
-    actionBars.forEach(bar => {
-      const container = bar.closest ? (bar.closest('article, [data-e2e*="container"], [data-e2e*="item"]') || bar.parentElement) : bar.parentElement;
-      if (container && !processedContainers.has(container)) {
-        processedContainers.add(container);
-        if (injectCopyButtonToTikTokVideo(container)) {
-          count++;
-        }
+    if (placementResize) {
+      const wanted = new Set();
+      for (const own of root.querySelectorAll('.image-saver-tt-copy-wrap')) {
+        const anchor = anchorOf(resolveOwningTikTokCard(own));
+        if (anchor) { wanted.add(anchor.more); wanted.add(anchor.host); }
       }
-    });
-
-    // 3. Scan by native Share controls ([data-e2e="share-icon"], etc.) for other layouts
-    const shareElements = root.querySelectorAll('[data-e2e="browse-share"], [data-e2e="feed-share"], [data-e2e="share-icon"], [data-e2e="video-share"], [data-e2e*="share"], [aria-label*="Share" i], [aria-label*="Поделиться" i]');
-    shareElements.forEach(shareEl => {
-      if (inPortal(shareEl)) return; // TikTok's own right-click menu has a Share item: not a video's rail
-      const container = shareEl.closest ? (shareEl.closest('article, [data-e2e="feed-item"], [data-e2e="browse-video"], [data-e2e="video-detail-container"], div[class*="Container"], main, section') || shareEl.parentElement) : shareEl.parentElement;
-      if (container && !processedContainers.has(container)) {
-        processedContainers.add(container);
-        if (injectCopyButtonToTikTokVideo(container, shareEl)) {
-          count++;
-        }
-      }
-    });
+      for (const el of observedAnchors) if (!wanted.has(el)) placementResize.unobserve(el);
+      for (const el of wanted) if (!observedAnchors.has(el)) placementResize.observe(el);
+      observedAnchors = wanted;
+    }
 
     return count;
   }
 
-  const requestThrottledScan = globalThis.MediaLatchCopyKit.scheduler((root) => scanAndInjectTikTokCopyButtons(root));
+  const requestThrottledScan = globalThis.MediaLatchCopyKit.scheduler((root) => scanAndInjectTikTokCopyButtons(root && typeof root.querySelectorAll === 'function' ? root : document));
 
-  const initTikTokCopyButtonObserver = globalThis.MediaLatchCopyKit.observer({ prepare: ensureTtButtonStyles, scan: scanAndInjectTikTokCopyButtons, request: requestThrottledScan });
+  let placementResize = null, placementObserver = null, observedAnchors = new Set(), placementActive = true;
+  function initTikTokCopyButtonObserver() {
+    if (typeof document === 'undefined') return null;
+    // Reinjection releases the previous watchers; removing only native More must also remove our controls.
+    globalThis.__mediaLatchTikTokPlacementCleanup?.();
+    placementActive = true;
+    if (typeof ResizeObserver !== 'undefined') placementResize = new ResizeObserver(() => requestThrottledScan());
+    ensureTtButtonStyles();
+    scanAndInjectTikTokCopyButtons(document);
+    if (typeof MutationObserver !== 'undefined') {
+      placementObserver = new MutationObserver(records => {
+        if (records.some(r => r.addedNodes.length || r.removedNodes.length)) requestThrottledScan();
+      });
+      placementObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
+    }
+    window.addEventListener('resize', requestThrottledScan);
+    globalThis.__mediaLatchTikTokPlacementCleanup = () => {
+      placementActive = false;
+      placementObserver?.disconnect(); placementResize?.disconnect();
+      observedAnchors.clear(); window.removeEventListener('resize', requestThrottledScan);
+    };
+    return placementObserver;
+  }
 
   globalThis.MediaLatchCopyKit.navigation(requestThrottledScan);
 
