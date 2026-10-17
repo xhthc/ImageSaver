@@ -3,14 +3,14 @@
   <h1>MediaLatch</h1>
   <p><i>"Save available originals directly from your browser — images, videos and GIFs, organized your way."</i></p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.6"><img src="https://img.shields.io/badge/pre--release-v2.5.6-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.6"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.7"><img src="https://img.shields.io/badge/pre--release-v2.5.7-22d3ee?style=flat&amp;logo=github&amp;logoColor=white" alt="Pre-release v2.5.7"></a>
     <img src="https://img.shields.io/badge/Platform-Chromium-a855f7?style=flat" alt="Platform: Chromium">
     <img src="https://img.shields.io/badge/Extension-Manifest_V3-f97316?style=flat" alt="Extension: Manifest V3">
     <img src="https://img.shields.io/badge/UI-React_%2B_TypeScript-6366f1?style=flat" alt="UI: React + TypeScript">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--only-22c55e?style=flat" alt="License: GPL-3.0-only"></a>
   </p>
   <p>
-    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.6"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
+    <a href="https://github.com/xhthc/MediaLatch/releases/tag/v2.5.7"><img src="docs/assets/download-github.svg" height="44" alt="Download preview on GitHub"></a>
     <img src="docs/assets/store-chrome-unavailable.svg" height="44" alt="Chrome Web Store listing currently unpublished">
     <img src="docs/assets/store-firefox-planned.svg" height="44" alt="Firefox support and distribution planned; not yet available">
   </p>
@@ -19,7 +19,7 @@
 
 MediaLatch (formerly Image Saver) saves accessible original images, videos and GIFs directly from your browser. Choose the media you want, follow the save in the download manager and find the file where you expect it. No companion application is needed.
 
-> **Current pre-release: [v2.5.6](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.6).** Fixes VK photo controls, carousels and collages: Save this / Save all stays at the media’s own upper-left corner. These photo flows were user checked in Helium. Full VK video and clip support is planned; original-photo quality remains unverified. [What changed](CHANGELOG.md).
+> **Current pre-release: [v2.5.7](https://github.com/xhthc/MediaLatch/releases/tag/v2.5.7).** Adds generic inline saves for directly declared files, conservative posting-account folders on seven services and Show in folder in both download managers. Header rules are limited to extension requests. Embed and Explorer reveal were user checked in Helium. Full VK video and clip support remains planned. [What changed](CHANGELOG.md).
 
 | What you want to do | What MediaLatch offers |
 |---|---|
@@ -79,7 +79,7 @@ A fresh install opens a separate welcome screen with three short steps. **Contin
 
 ## Install
 
-1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.6-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
+1. Download the **runtime ZIP** from [Releases](https://github.com/xhthc/MediaLatch/releases) and extract it. Choose `MediaLatch-2.5.7-*.zip` from the current preview; its filename includes the source commit. GitHub's automatic Source code ZIP contains the development repository.
 2. Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked** and choose the folder containing `manifest.json`.
 3. After replacing a build, reload the extension **and refresh site tabs**.
 
@@ -168,7 +168,7 @@ To discover this preview in **Updates**, set **Update channel** to **Regular and
 
 For troubleshooting, enable recording in **Debug**, reproduce the problem, then copy or export the filtered events. Recording starts when enabled; turning it off preserves the journal until it is cleared or expires. Reports stay local unless you share them.
 
-In **Saving**, choose a base folder, optional subfolder and **One folder** or **By site and media type**, then press **Save settings**. Subfolders are created inside that folder; without a chosen folder, the browser's Downloads directory is used. **Author folders** is one dropdown with independent x.com, Reddit and Pixiv checkboxes. X and Reddit use the selected post author's username; Pixiv uses `Name (user ID)`. For example: `SavedImages/x/username/pic/file.jpg` or `SavedImages/pixiv/Name (12345)/pic/file.jpg`. X quotes use their own author; Reddit crossposts, comments and unproven authors retain the usual layout. Existing X author preferences are preserved.
+In **Saving**, choose a base folder, optional subfolder and **One folder** or **By site and media type**, then press **Save settings**. Subfolders are created inside that folder; without a chosen folder, the browser's Downloads directory is used. **Author folders** is one dropdown with independent x.com, Reddit, Pixiv, VK, RedGIFs, Instagram and TikTok checkboxes. The account must belong to the selected media's own post; ambiguous or unsupported attribution uses the normal layout. X and Reddit use the selected post author's username; Pixiv uses `Name (user ID)`. For example: `SavedImages/x/username/pic/file.jpg` or `SavedImages/pixiv/Name (12345)/pic/file.jpg`. X quotes use their own author; Reddit crossposts, comments and unproven authors retain the usual layout. Existing X author preferences are preserved.
 
 Directory selection requires a browser supporting the File System Access API. Selected-folder files are written directly and appear in MediaLatch's manager rather than Chrome's download history. Existing files are preserved with numbered names on collisions. Browser restart may require selecting the same folder again and saving settings to restore write access; prepared files can then be retried. Changing destination affects newly queued files. Cancellation before writing finishes can leave an empty placeholder. The extension receives files into private disk storage and validates them before export. The byte-transfer queue runs up to three files concurrently, at most two per source origin; Pause queue stops new transfers, not source discovery or an active transfer. Unknown totals have no invented percentage or ETA. Processing keeps the existing GIF/HLS resource limits.
 
@@ -187,11 +187,11 @@ GIF conversion is bounded to 50 MiB input, 30 seconds, 150 frames, 640 px output
 There is no telemetry or extension backend. Statistics and Debug recording are off by default; reports are copied or exported only on request. Sites/CDNs receive requests needed to resolve/save media, and GitHub receives release checks. See [Privacy](docs/PRIVACY.md).
 
 <details>
-<summary>Validation and request safeguards in 2.5.6</summary>
+<summary>Validation and request safeguards in 2.5.7</summary>
 
 Privileged offscreen commands require the extension worker. Public selected pages cannot supply literal local/private-network media addresses, and unchecked server redirects are refused; deliberately selected local pages retain local media access. These restrictions can refuse redirect-dependent links and do not provide DNS-rebinding protection. Zerochan JSON uses a 2 MiB streaming limit with a full three-second deadline.
 
-Accepted changes have independent source reviews and bounded user checks in Helium for inline saving on X, Reddit, Pixiv and RedGIFs, compact Downloads, settings help and author labels. VK photo/carousel/collage saving is now user confirmed. Recorded live checks saved selected photos and complete observed lists; one mixed seven-item post produced five JPEGs and two progressive MP4s. Audio tracks were inspected structurally, not listened to. Offline/UI checks and isolated native fixtures cover accounting, chronology, keyboard/layout, settings and export bytes. Exact release packaging is checked separately; this does not establish every live layout, original-photo quality, full VK video/clip support, other browsers, crash or quota behavior.
+Accepted changes have independent source reviews and bounded user checks in Helium for inline saving on X, Reddit, Pixiv and RedGIFs, compact Downloads, settings help and author labels. VK photo/carousel/collage saving, Embed interactions and native Show in folder are user confirmed. The 2.5.7 source and UI checks passed 87/87 before release preparation; the release commit and runtime archive are verified separately. Expanded live Instagram/TikTok/RedGIFs attribution remains unverified. Recorded live checks saved selected photos and complete observed lists; one mixed seven-item post produced five JPEGs and two progressive MP4s. Audio tracks were inspected structurally, not listened to. Offline/UI checks and isolated native fixtures cover accounting, chronology, keyboard/layout, settings and export bytes. Exact release packaging is checked separately; this does not establish every live layout, original-photo quality, full VK video/clip support, other browsers, crash or quota behavior.
 
 </details>
 
@@ -249,13 +249,15 @@ MediaLatch/
 │  ├─ cases/
 │  └─ helpers/
 ├─ tools/
+│  ├─ diagnostics/         Bounded read-only browser diagnostics
 │  └─ fixtures/            Fixture servers and generators
 ├─ docs/
+│  ├─ history/             Original import provenance
 │  └─ assets/              README screenshots and badges
 └─ icons/                  Logo and theme variants
 ```
 
-The unpacked extension stays at the repository root. `background.js` loads the `worker/` modules in one ordered block and `offscreen.html` loads the `offscreen/` modules. A script that more than one context uses stays in `lib/`; site and inline-control scripts live in `content/`. Edit `ui/` and generate `popup/`. Test data and fixture servers are development-only and excluded from runtime packages.
+The unpacked extension stays at the repository root. `background.js` loads the `worker/` modules in one ordered block and `offscreen.html` loads the `offscreen/` modules. A script that more than one context uses stays in `lib/`; site and inline-control scripts live in `content/`. Edit `ui/` and generate `popup/`. Test data, diagnostics and fixture servers are development-only and excluded from runtime packages. Local agent notes, recovery archives, browser captures, dependencies and private files stay ignored; release assets are attached to GitHub Releases.
 
 For local media fixtures: `node tools/fixtures/generic-media-server.js --self-check` or start the server without the flag. See [fixture provenance](tests/fixtures/generic-media/avif/README.md).
 
@@ -271,7 +273,7 @@ node tools/package.mjs HEAD
 
 Edit `ui/`, then rebuild `popup/`. Verification covers offline regressions, UI typechecking/rendering and source/build parity. Native playback, audio and actual saved bytes need separate live checks. Packaging reads an accepted Git commit and writes a runtime ZIP plus source SHA, version and hash metadata under `local-notes/releases/`.
 
-[Architecture](docs/ARCHITECTURE.md) · [Release preparation](docs/RELEASE.md) · [Changelog](CHANGELOG.md)
+[Documentation index](docs/README.md) · [Architecture](docs/ARCHITECTURE.md) · [Release preparation](docs/RELEASE.md) · [Changelog](CHANGELOG.md)
 
 [Tests](tests/test_suite.js): the main offline suite can also run directly with `node tests/test_suite.js`.
 

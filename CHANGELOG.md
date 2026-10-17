@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased — candidate under review (REFACTOR-CHROME-API-01)
+## 2.5.7 — generic inline saves and Show in folder
 
 - Show in folder in the popup and the full Downloads manager reveals the exact saved file of a finished browser download (also a renamed "photo (1).jpg") through `chrome.downloads.show`; a refusal stays on that card. Chosen-folder exports have no browser download record and show no icon.
 - The three header rules for Pixiv, anime-pictures and Gelbooru CDNs now apply only to MediaLatch's own requests to those exact domains; normal browsing and lookalike domains are untouched.
 - Generic Save this control on other http(s) sites for individual, directly declared image/video files. Posting-account labels and optional author folders also cover VK, RedGIFs, Instagram and TikTok; an account is given only when the media is evidently the post's own attachment, so comments, replies, quotes (also without a profile link), header avatars and profile-linked media do not get the post's account.
 - One shared list each for author-folder services and for hosts with their own inline controls; one inline route registry and one sender check in the worker; one proof listener per page. No permission or dependency added.
+
+- Organize import provenance under `docs/history/` and browser diagnostics under `tools/diagnostics/`; refresh both READMEs and current architecture/release guidance. Runtime entry points stay at the extension root.
+
+Independent source/UI checks passed 87/87 on the reviewed runtime candidate. The user confirmed Embed and Explorer file selection in Helium. Expanded live account attribution, original-photo quality, general VK videos/clips and broader browser support remain unclaimed. This is a GitHub pre-release; Chrome Web Store publication is separate.
 
 ## 2.5.6 — VK photo carousels and collages
 

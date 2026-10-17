@@ -1,4 +1,4 @@
-// tools/reddit-inline-diagnostic.js
+// tools/diagnostics/reddit-inline-diagnostic.js
 // Manual read-only diagnostic capture tool for Reddit feed inline controls.
 // Paste into Reddit DevTools console after selecting a target element ($0),
 // or import in Node.js test harness.

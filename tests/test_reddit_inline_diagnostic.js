@@ -1,5 +1,5 @@
 // test_reddit_inline_diagnostic.js
-// Regression test suite for tools/reddit-inline-diagnostic.js
+// Regression test suite for tools/diagnostics/reddit-inline-diagnostic.js
 // Covers: selection refusal, light/open-shadow frame evidence, child document uncertainty,
 // clip ID agreement/mismatch, URL query redaction, HTML attribute extraction without raw HTML leakage,
 // geometry/clipping/position evidence, corner hit-testing, event logging, DOM mutation detection,
@@ -24,7 +24,7 @@ const {
   inspectPostIdentity,
   inspectEmbedAndClip,
   inspectGeometryAndLayout
-} = require('../tools/reddit-inline-diagnostic.js');
+} = require('../tools/diagnostics/reddit-inline-diagnostic.js');
 
 let totalTests = 0;
 let passedTests = 0;
@@ -941,7 +941,7 @@ it('browser-entry VM: auto-starts on $0 without module export and logs report on
     clearTimeout: fakeWin.clearTimeout
   });
 
-  const toolCode = fs.readFileSync(path.join(REPO_ROOT, 'tools/reddit-inline-diagnostic.js'), 'utf8');
+  const toolCode = fs.readFileSync(path.join(REPO_ROOT, 'tools/diagnostics/reddit-inline-diagnostic.js'), 'utf8');
   vm.runInContext(toolCode, vmContext);
 
   assert.ok(fakeWin.__redditInlineDiagnostic);
