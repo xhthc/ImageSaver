@@ -75,6 +75,13 @@
   height: 24px;
   pointer-events: none;
 }
+@media (hover: hover) {
+  .image-saver-tt-hover-area:not(:hover):not(:has(:focus-visible)) .image-saver-tt-copy-wrap,
+  .image-saver-tt-hover-area:not(:hover):not(:has(:focus-visible)) .image-saver-tt-save-wrap {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .image-saver-tt-copy-wrap, .image-saver-tt-save-wrap { animation: none; transition: none; }
 }
@@ -489,6 +496,11 @@
     } catch (_) { return null; }
   }
   function positionControls(card, anchor) {
+    // The overlay may be a pointer-transparent sibling of the video; hover their nearest shared media container.
+    const video = card.querySelector('video');
+    let area = anchor.host;
+    while (area && area !== card && !area.contains(video)) area = area.parentElement;
+    if (area && area !== card && video) area.classList.add('image-saver-tt-hover-area');
     let row = 0;
     for (const cls of ['image-saver-tt-copy-wrap', 'image-saver-tt-save-wrap']) {
       const el = card.querySelector('.' + cls);
@@ -745,6 +757,7 @@
     ensureTtButtonStyles();
 
     if (!placementActive) return 0;
+    for (const area of root.querySelectorAll('.image-saver-tt-hover-area')) area.classList.remove('image-saver-tt-hover-area');
     let count = 0;
     for (const own of Array.from(root.querySelectorAll('.image-saver-tt-copy-wrap, .image-saver-tt-save-wrap'))) {
       const card = resolveOwningTikTokCard(own), anchor = anchorOf(card);

@@ -159,6 +159,23 @@ const rightClick = (p, el, shift) => {
       assert.equal(p.ours(p.d.getElementById('placeholder')).length, 0);
     } finally { p.close(); }
   });
+  await test('hover areas contain the video and both controls but exclude neighboring actions; stale areas are cleaned', async () => {
+    const p = page();
+    try {
+      await p.scan();
+      for (const n of [0, 1]) {
+        const card = p.d.getElementById('one-column-item-' + n), controls = p.ours(card);
+        const area = controls[0].closest('.image-saver-tt-hover-area');
+        assert(area && area !== card && area.contains(card.querySelector('video')), 'one media-local hover area');
+        assert(controls.every(c => area.contains(c)), 'pointer can move from video to either control');
+        assert(!area.contains(p.rail(n)), 'hovering the avatar/action rail does not reveal media controls');
+      }
+      const oldArea = p.save(0).closest('.image-saver-tt-hover-area');
+      p.d.querySelector('#one-column-item-0 button[data-e2e="more-menu-icon"]').remove();
+      await p.scan();
+      assert(!oldArea.classList.contains('image-saver-tt-hover-area'), 'an area without controls leaves no stale marker');
+    } finally { p.close(); }
+  });
   await test('hovered Copy and Download glyphs retain contrast over a white video frame', async () => {
     const p = page();
     try {
