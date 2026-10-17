@@ -43,9 +43,9 @@
         const length=Number(response.headers.get('content-length'));
         const total= !response.headers.get('content-encoding') && Number.isSafeInteger(length) && length>0 ? length : null;
         const estimate=await d.estimate();
-        const available=Math.max(0,(estimate.quota||0)-(estimate.usage||0));
+        const available=Number.isFinite(estimate.quota) && Number.isFinite(estimate.usage) ? Math.max(0,estimate.quota-estimate.usage) : null;
         if(max && total && total>max)throw Error('SIZE_EXCEEDED');
-        if(total && available && total>available)throw Error('STORAGE_QUOTA');
+        if(available!==null && (available===0 || total && total>available))throw Error('STORAGE_QUOTA');
         writer=await (await (await directory()).getFileHandle(job.id,{create:true})).createWritable();
         reader=response.body?.getReader();if(!reader)throw Error('EMPTY_BODY');
         const started=Date.now();let notified=0;
@@ -54,7 +54,7 @@
         if(controller.signal.aborted)throw Error(timedOut?'NETWORK_TIMEOUT':'CANCELLED');
           received+=value.byteLength;
           if(max && received>max)throw Error('SIZE_EXCEEDED');
-          if((total && received>total) || (available && received>available))throw Error(total && received>total?'INCOMPLETE_BODY':'STORAGE_QUOTA');
+          if((total && received>total) || (available!==null && received>available))throw Error(total && received>total?'INCOMPLETE_BODY':'STORAGE_QUOTA');
           if(prefix.length<4096){const n=value.subarray(0,4096-prefix.length), p=new Uint8Array(prefix.length+n.length);p.set(prefix);p.set(n,prefix.length);prefix=p;}
           await writer.write(value);
           if(Date.now()-notified>=250){notified=Date.now();await progress({state:'receiving',received,total,speed:Math.round(received*1000/Math.max(1,Date.now()-started))});}
@@ -64,18 +64,23 @@
         if(!received)throw Error('EMPTY_BODY');
         if(total && total!==received)throw Error('INCOMPLETE_BODY');
         await progress({state:'validating',received,total,speed:0});
+        if(controller.signal.aborted)throw Error(timedOut?'NETWORK_TIMEOUT':'CANCELLED');
         const detected=sniff(prefix), expected=claim(job.expectedMime||'');
         const mime=detected==='application/ogg' && /^(audio|video)\/ogg$/.test(expected)?expected:detected;
         if(!mime || !intact(prefix,received,detected) || (expected && mime!==expected))throw Error('INVALID_MEDIA');
         await writer.close();writer=null;
         const file=await (await (await directory()).getFileHandle(job.id)).getFile();
         if(file.size!==received)throw Error('INCOMPLETE_BODY');
+        if(controller.signal.aborted)throw Error(timedOut?'NETWORK_TIMEOUT':'CANCELLED');
+        // A restaged file replaces the snapshot behind any previously exposed object URL.
+        const previous=urls.get(job.id);if(previous){d.revoke(previous);urls.delete(job.id);}
         saved=true;return {size:received,mime};
       }catch(e){
         if(e.name==='QuotaExceededError')throw Error('STORAGE_QUOTA');
         if(controller.signal.aborted)throw Error(timedOut?'NETWORK_TIMEOUT':'CANCELLED');
         throw e;
       }finally{
+        if(!saved)controller.abort();
         clearTimeout(timer);
         try {
           if(reader)await reader.cancel().catch(()=>{});
