@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — TikTok controls (TIKTOK-CONTROLS-01, under review)
+
+- TikTok: one Download button in each video's own action rail, next to one Copy link button. It saves the card's own video through the existing proven-player resolver and download manager (exact signed address); a covered, offscreen, recycled or ambiguous player is refused visibly, and a quick double press makes one job.
+- TikTok: Copy link no longer appears inside TikTok's right-click menu or inside the player area, and an extra copy placed by an earlier version is removed. Cause: a selector list picked the player section before the action rail, every container of a card was injected separately, and the Share scan matched the menu's Share item.
+- TikTok right-click: a plain right-click keeps TikTok's own menu; Shift+right-click on the player now reliably opens the browser menu with MediaLatch: Save media. Cause of the earlier instability: the press lands on TikTok's overlay outside the player wrapper, where the previous rule did not apply.
+
 ## 2.5.8 — tested inline scope and experimental social videos
 
 - Limit inline download controls to tested X/Twitter, Reddit, Pixiv, RedGIFs and VK surfaces. Remove the generic control and worker route that caused false positives on unrelated pages. Preserve browser context-menu saving, Instagram/TikTok author-folder proofs and copy/embed actions.

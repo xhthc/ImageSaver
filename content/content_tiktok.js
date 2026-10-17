@@ -12,7 +12,7 @@
   const isLabel = globalThis.MediaLatchCopyKit.labeler();
 
   const TT_BUTTON_STYLES = `
-.image-saver-tt-copy-wrap {
+.image-saver-tt-copy-wrap, .image-saver-tt-save-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -30,25 +30,26 @@
   z-index: 10;
   position: relative;
 }
-.image-saver-tt-copy-wrap:hover {
+.image-saver-tt-copy-wrap:hover, .image-saver-tt-save-wrap:hover {
   background-color: rgba(255, 255, 255, 0.18);
 }
 @media (prefers-color-scheme: light) {
-  .image-saver-tt-copy-wrap {
+  .image-saver-tt-copy-wrap, .image-saver-tt-save-wrap {
     background-color: rgba(0, 0, 0, 0.05);
   }
-  .image-saver-tt-copy-wrap:hover {
+  .image-saver-tt-copy-wrap:hover, .image-saver-tt-save-wrap:hover {
     background-color: rgba(0, 0, 0, 0.1);
   }
 }
-.image-saver-tt-copy-wrap:active {
+.image-saver-tt-copy-wrap:active, .image-saver-tt-save-wrap:active {
   transform: scale(0.92);
 }
 .image-saver-tt-copy-wrap.is-success {
   color: #22c55e !important;
 }
 .image-saver-tt-copy-wrap.is-error,
-.image-saver-tt-copy-wrap.is-clipboard-error {
+.image-saver-tt-copy-wrap.is-clipboard-error,
+.image-saver-tt-save-wrap.is-error {
   color: #ef4444 !important;
   animation: imageSaverTtShake 0.3s ease-in-out;
 }
@@ -64,6 +65,14 @@
 @keyframes imageSaverTtPulse {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.18); }
+}
+.image-saver-tt-save-wrap[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: progress;
+}
+.image-saver-tt-copy-wrap:focus-visible, .image-saver-tt-save-wrap:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 .image-saver-tt-copy-btn {
   display: flex;
@@ -83,6 +92,9 @@
 `;
 
   const SVG_LINK_ICON = globalThis.MediaLatchCopyKit.copyIcon('image-saver-tt-icon');
+
+  // the download glyph of the shared inline controls (content/content_inline.js)
+  const SVG_SAVE_ICON = `<svg class="image-saver-tt-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>`;
 
   const SVG_CHECK_ICON = `<svg class="image-saver-tt-icon" viewBox="2 2 20 20" width="20" height="20" fill="currentColor">
     <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
@@ -458,6 +470,118 @@
     return null;
   }
 
+  // TIKTOK-CONTROLS-01. Observed live (2026-10-17): a card is article[data-e2e=recommend-list-item-container]; its FIRST section is the player
+  // (section#media-card-N[data-e2e=feed-video]), the action rail (section.SectionActionBarContainer) comes after it, and TikTok's own right-click
+  // menu is a body portal [data-e2e=context-menu]. The controls go into the video's own rail only: each rail selector is tried alone (a selector
+  // list would return the player's section first), nothing in a portal or menu, nothing in a container that holds several cards or players.
+  const CARD = 'article, [data-e2e="recommend-list-item-container"], [data-e2e="feed-item"], [data-e2e="user-post-item"], [data-e2e="browse-video"], [data-e2e="video-detail-container"]';
+  const PORTAL = '[data-e2e="context-menu"], [data-e2e*="right-click-menu"], [role="menu"]';
+  const RAILS = ['section[class*="SectionActionBarContainer"]', 'section[class*="ActionBar"]', '[data-e2e="browse-action-item"]', '[data-e2e="feed-action-item"]', '[data-e2e*="action-item"]', 'div[class*="ActionBar"]'];
+  const inPortal = (el) => Boolean(el && typeof el.closest === 'function' && el.closest(PORTAL));
+  function isOwnCard(card) {
+    try {
+      if (!card || typeof card.querySelectorAll !== 'function' || typeof card.matches !== 'function' || !card.matches(CARD) || inPortal(card)) return false;
+      return card.querySelectorAll('article, [data-e2e="recommend-list-item-container"]').length === 0 && card.querySelectorAll('[id^="xgwrapper-"]').length <= 1;
+    } catch (_) { return false; }
+  }
+  function railOf(card) {
+    for (const sel of RAILS) {
+      const hit = card.querySelector(sel);
+      const rail = hit && /action-item/.test(sel) ? hit.parentElement : hit;
+      if (rail && rail !== card && !inPortal(rail)) return rail;
+    }
+    return null;
+  }
+
+  // Download (TikTok only): a trusted press freezes the card's ONE player (wrapper item id, stream address, page) when it is on screen and not
+  // covered; only a one-shot token and the item id go to the worker, which asks this document to prove the frozen player again
+  // (TIKTOK_INLINE_PROOF) and resolves that player's own item (worker/site_resolvers.js). No right-click capture is read or written.
+  const saves = new Map();
+  const ITEM = /^xgwrapper-\d+-(\d{5,30})$/;
+  function freezePlayer(card, wrap) {
+    try {
+      const players = Array.from(card.querySelectorAll('[id^="xgwrapper-"] video'));
+      if (players.length !== 1 || !wrap.isConnected || !card.contains(wrap)) return null;
+      const v = players[0], wrapper = v.closest('[id^="xgwrapper-"]'), m = ITEM.exec(wrapper ? wrapper.id : ''), stream = String(v.currentSrc || '');
+      if (!m || !stream.startsWith('blob:' + location.origin + '/')) return null;
+      const r = v.getBoundingClientRect(), x0 = Math.max(r.left, 0), y0 = Math.max(r.top, 0), x1 = Math.min(r.right, window.innerWidth), y1 = Math.min(r.bottom, window.innerHeight);
+      if (x1 <= x0 || y1 <= y0) return null;
+      // the centre of its visible part must show this card on top: covered by a dialog, TikTok's menu or another layer is refused, and offscreen
+      // (no visible part: that centre lies outside the viewport, where elementFromPoint answers null) as well
+      const top = document.elementFromPoint((x0 + x1) / 2, (y0 + y1) / 2);
+      if (!top || !card.contains(top)) return null;
+      const cover = top.closest('dialog, [role="dialog"], [aria-modal="true"], [class*="Modal" i], tiktok-cookie-banner, ' + PORTAL);
+      if (cover && !cover.contains(v)) return null;
+      return { ref: new WeakRef(v), card: new WeakRef(card), item: m[1], stream, href: location.href, at: Date.now() };
+    } catch (_) { return null; }
+  }
+  function saveState(wrap, failed = false) {
+    wrap.classList.toggle('is-error', failed);
+    wrap.querySelector('.image-saver-tt-copy-btn').innerHTML = failed ? SVG_ERROR_ICON : SVG_SAVE_ICON;
+    const key = failed ? 'downloads.commandFailed' : 'inline.saveThisAria';
+    const fallback = failed ? 'The action could not be completed.' : 'MediaLatch: Save this media';
+    isLabel(wrap, 'title', key, fallback);
+    isLabel(wrap, 'aria-label', key, fallback);
+  }
+  function requestSave(wrap) {
+    if (wrap.getAttribute('aria-disabled') === 'true') return; // a second press of the same request
+    saveState(wrap);
+    const card = resolveOwningTikTokCard(wrap), frozen = isOwnCard(card) && freezePlayer(card, wrap);
+    if (!frozen) {
+      DBG.log('tiktok.save', 'press', 'refused', 'NO_PLAYER');
+      saveState(wrap, true);
+      return;
+    }
+    wrap.setAttribute('aria-disabled', 'true'); setTimeout(() => wrap.removeAttribute('aria-disabled'), 1500);
+    const token = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+    saves.set(token, frozen); for (const k of saves.keys()) { if (saves.size <= 8) break; saves.delete(k); }
+    DBG.log('tiktok.save', 'press', 'ok');
+    try { const sent = chrome.runtime.sendMessage({ action: 'TIKTOK_INLINE_SAVE', token, item: frozen.item }); if (sent && typeof sent.catch === 'function') sent.catch(() => saveState(wrap, true)); } catch (_) { saveState(wrap, true); }
+  }
+  // Only the worker (no tab) may ask, once per token; a token this instance did not issue gets no answer here.
+  try {
+    chrome.runtime.onMessage.addListener((m, sender, respond) => {
+      if (!m || m.action !== 'TIKTOK_INLINE_PROOF' || !sender || sender.tab || sender.id !== chrome.runtime.id || !saves.has(m.token)) return;
+      const f = saves.get(m.token); saves.delete(m.token);
+      const v = f.ref.deref(), c = f.card.deref(), wrapper = v && v.closest('[id^="xgwrapper-"]'), m2 = ITEM.exec(wrapper ? wrapper.id : '');
+      const held = Boolean(Date.now() - f.at < 30000 && f.href === location.href && v && c && v.isConnected && c.contains(v) && m2 && m2[1] === f.item &&
+        String(v.currentSrc || '') === f.stream && c.querySelectorAll('[id^="xgwrapper-"] video').length === 1);
+      respond(held ? { ok: true, media: { item: f.item, stream: f.stream } } : { ok: false, reason: 'STALE_ITEM' });
+      return true;
+    });
+  } catch (_) {}
+  function makeSaveButton() {
+    const wrap = document.createElement('div');
+    wrap.className = 'image-saver-tt-save-wrap';
+    wrap.setAttribute('role', 'button');
+    wrap.setAttribute('tabindex', '0');
+    isLabel(wrap, 'title', 'inline.saveThisAria', 'MediaLatch: Save this media');
+    isLabel(wrap, 'aria-label', 'inline.saveThisAria', 'MediaLatch: Save this media');
+    const btn = document.createElement('div');
+    btn.className = 'image-saver-tt-copy-btn';
+    btn.innerHTML = SVG_SAVE_ICON;
+    wrap.appendChild(btn);
+    const press = (e) => {
+      if (!e || !e.isTrusted || (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault(); e.stopPropagation(); if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      requestSave(wrap);
+    };
+    wrap.addEventListener('click', press);
+    wrap.addEventListener('keydown', press);
+    return wrap;
+  }
+  // One Download right after the card's Copy, only while the card holds exactly one player; any other we placed in the card goes.
+  function ensureSaveButton(card, rail, copyWrap) {
+    try {
+      const all = Array.from(card.querySelectorAll('.image-saver-tt-save-wrap'));
+      if (card.querySelectorAll('[id^="xgwrapper-"] video').length !== 1) { all.forEach((w) => w.remove()); return; }
+      let kept = null;
+      for (const w of all) { if (!kept && w.parentElement === rail) kept = w; else w.remove(); }
+      if (!kept) kept = makeSaveButton();
+      if (kept.previousElementSibling !== copyWrap) rail.insertBefore(kept, copyWrap.nextSibling);
+    } catch (_) {}
+  }
+
   /**
    * Injects a separate visible video URL copy button into a TikTok video action bar.
    * Modeled on the X post-link copy button. Does NOT replace, intercept, or repurpose
@@ -465,30 +589,22 @@
    * Places the button immediately BEFORE the author-avatar action item in the section action rail.
    * Prevents duplicate injection via DOM check, and allows re-injection if the action bar was replaced.
    */
-  function injectCopyButtonToTikTokVideo(videoContainer, knownShareBtn = null) {
-    if (!videoContainer || typeof videoContainer.querySelector !== 'function') return false;
+  function injectCopyButtonToTikTokVideo(container, knownShareBtn = null) {
+    if (!container || typeof container.querySelector !== 'function') return false;
+    // the video's own card and its rail; an unknown layout (no card, no rail, a portal) gets no control
+    const videoContainer = resolveOwningTikTokCard(container);
+    if (!isOwnCard(videoContainer)) return false;
+    const actionBar = railOf(videoContainer);
+    if (!actionBar) return false;
 
-    // Locate action bar / action rail container
-    let actionBar = videoContainer.querySelector('section[class*="SectionActionBarContainer"], section[class*="ActionBar"], section');
-    if (!actionBar) {
-      actionBar = videoContainer.querySelector('[data-e2e="browse-action-item"]')?.parentElement ||
-                  videoContainer.querySelector('[data-e2e="feed-action-item"]')?.parentElement ||
-                  videoContainer.querySelector('[data-e2e*="action-item"]')?.parentElement ||
-                  videoContainer.querySelector('div[class*="ActionItemContainer"]') ||
-                  videoContainer.querySelector('div[class*="ActionBar"]') ||
-                  videoContainer.querySelector('div[class*="DivContentContainer"]') ||
-                  videoContainer.querySelector('div[class*="RightContainer"]');
+    // One Copy per card: the one in the rail stays; one we placed anywhere else in the card (an earlier version, a rerender) is removed.
+    let existingBtn = null;
+    for (const w of Array.from(videoContainer.querySelectorAll('.image-saver-tt-copy-wrap'))) {
+      if (!existingBtn && w.parentElement === actionBar) existingBtn = w;
+      else w.remove();
     }
-
-    // If no separate rail found, fallback to container itself
-    if (!actionBar) {
-      actionBar = videoContainer;
-    }
-
-    // Duplicate check: verify if button is already connected inside this action bar or container
-    const existingBtn = actionBar.querySelector('.image-saver-tt-copy-wrap') ||
-                        videoContainer.querySelector('.image-saver-tt-copy-wrap');
-    if (existingBtn && existingBtn.isConnected !== false) {
+    if (existingBtn) {
+      ensureSaveButton(videoContainer, actionBar, existingBtn);
       return false;
     }
 
@@ -654,6 +770,7 @@
     } else {
       actionBar.appendChild(wrap);
     }
+    ensureSaveButton(videoContainer, actionBar, wrap);
 
     if (videoContainer.dataset) {
       videoContainer.dataset.imageSaverBtn = 'true';
@@ -678,6 +795,10 @@
 
     let count = 0;
     const processedContainers = new Set();
+    for (const own of Array.from(root.querySelectorAll('.image-saver-tt-copy-wrap, .image-saver-tt-save-wrap'))) {
+      const card = resolveOwningTikTokCard(own), rail = isOwnCard(card) ? railOf(card) : null;
+      if (inPortal(own) || !rail || own.parentElement !== rail) own.remove();
+    }
 
     // 1. Scan recognized video card containers across home feed, browse/detail, and profile pages
     const containerSelectors = [
@@ -721,6 +842,7 @@
     // 3. Scan by native Share controls ([data-e2e="share-icon"], etc.) for other layouts
     const shareElements = root.querySelectorAll('[data-e2e="browse-share"], [data-e2e="feed-share"], [data-e2e="share-icon"], [data-e2e="video-share"], [data-e2e*="share"], [aria-label*="Share" i], [aria-label*="Поделиться" i]');
     shareElements.forEach(shareEl => {
+      if (inPortal(shareEl)) return; // TikTok's own right-click menu has a Share item: not a video's rail
       const container = shareEl.closest ? (shareEl.closest('article, [data-e2e="feed-item"], [data-e2e="browse-video"], [data-e2e="video-detail-container"], div[class*="Container"], main, section') || shareEl.parentElement) : shareEl.parentElement;
       if (container && !processedContainers.has(container)) {
         processedContainers.add(container);

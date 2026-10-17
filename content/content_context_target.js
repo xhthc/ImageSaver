@@ -207,13 +207,15 @@
       ? target.closest('dialog, [role="dialog"], [aria-modal="true"], [class*="Modal" i], tiktok-cookie-banner') : null;
     return surface && !surface.contains(media.el) ? null : media;
   };
-  // TikTok cancels the contextmenu event on its player, so the browser menu (and "MediaLatch: Save media") never opens there. A real
-  // right-click inside a TikTok player wrapper is kept from the page's own handlers; nothing is prevented, Chrome shows its own menu.
+  // TikTok cancels contextmenu on its players and opens its own menu (observed 2026-10-17: the press lands on DivMediaCardOverlay, outside the
+  // xgwrapper; the cancelling listener sits above the card; plain and Shift presses alike). A plain right-click keeps TikTok's menu (the rail
+  // Download is the primary save); a real Shift+right-click on a player card (section[data-e2e=feed-video] or the wrapper, one player inside)
+  // is kept from the page's handlers, so Chrome shows its own menu with "MediaLatch: Save media". Nothing is prevented.
   const keepBrowserMenu = (event, target) => {
     try {
-      if (event.type !== 'contextmenu' || !/^(?:www\.)?tiktok\.com$/.test(location.hostname) || !target || typeof target.closest !== 'function') return;
-      const wrap = target.closest('[id^="xgwrapper-"]');
-      if (wrap && wrap.querySelector('video')) event.stopImmediatePropagation();
+      if (event.type !== 'contextmenu' || !event.shiftKey || !/^(?:www\.)?tiktok\.com$/.test(location.hostname) || !target || typeof target.closest !== 'function') return;
+      const card = target.closest('[id^="xgwrapper-"], section[data-e2e="feed-video"]');
+      if (card && card.querySelectorAll('video').length === 1) event.stopImmediatePropagation();
     } catch (e) {}
   };
   const parentOf = (el) => el.parentElement || (typeof el.getRootNode === 'function' && el.getRootNode().host) || null;

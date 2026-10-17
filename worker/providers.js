@@ -1009,7 +1009,8 @@ async function resolveMediaTargetImpl(options = {}) {
             documentId: options.gestureDocumentId || options.ownerDocumentId || '',
             site: social,
             gestureAt: options.gesturePlayer === true ? options.gestureAt : null,
-            stream: videoUrl && videoUrl.startsWith('blob:') ? videoUrl : ''
+            stream: videoUrl && videoUrl.startsWith('blob:') ? videoUrl : '',
+            inlineItem: options.socialInline && typeof options.socialInline.item === 'string' ? options.socialInline.item : ''
           });
         } else if (isReddit) {
           frameRes = await resolveRedditFrameBlobMedia({

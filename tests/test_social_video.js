@@ -85,10 +85,10 @@ function page({ url, html, settings = {}, inline = false, docId = 'doc-1' }) {
   s.managedDownload = async (options) => { const r = await s.fetch(options.url, { method: 'GET' }); if (!r.ok) throw Error('HTTP_ERROR'); p.exported.push(options); return s.chrome.downloads.download(options); };
   const fail = s.fbFail; s.fbFail = async (op, info) => { if (info && info.code) p.failures.push(info.code); return fail(op, info); }; // the badge reporter repeats a failure without a code
   // a right-click at (x, y): the pressed element receives the trusted right press and the contextmenu event
-  p.rightClick = (x, y) => {
+  p.rightClick = (x, y, shiftKey = false) => {
     const t = d.elementFromPoint(x, y);
-    const down = new w.MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2, clientX: x, clientY: y }); down.testTrusted = true; t.dispatchEvent(down);
-    const menu = new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: x, clientY: y }); menu.testTrusted = true; t.dispatchEvent(menu);
+    const down = new w.MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2, clientX: x, clientY: y, shiftKey }); down.testTrusted = true; t.dispatchEvent(down);
+    const menu = new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: x, clientY: y, shiftKey }); menu.testTrusted = true; t.dispatchEvent(menu);
     return menu;
   };
   // the menu item click as Chrome reports it (a layer: page context without srcUrl; a <video>: its blob srcUrl)
@@ -218,16 +218,18 @@ const until = async (fn) => { for (let i = 0; i < 300 && !fn(); i++) await sleep
     });
   }
   // ---- TikTok ----
-  await test('TikTok: a real right-click on the player keeps the browser menu (the site cancels it); outside the player, untrusted events and other sites are untouched', async () => {
+  // TIKTOK-CONTROLS-01: a plain right-click keeps TikTok's own menu (the rail Download is the primary save); Shift+right-click keeps the browser menu
+  await test('TikTok: a real Shift+right-click on the player keeps the browser menu (the site cancels it); a plain one stays TikTok\x27s; outside the player, untrusted events and other sites are untouched', async () => {
     const p = ttPage();
-    assert.equal(p.rightClick(300, 400).defaultPrevented, false, 'the page handler on the player did not cancel the browser menu');
-    const untrusted = new p.w.MouseEvent('contextmenu', { bubbles: true, cancelable: true }); p.d.getElementById('media').dispatchEvent(untrusted);
+    assert.equal(p.rightClick(300, 400).defaultPrevented, true, 'plain right-click: TikTok\x27s own handler runs (its menu)');
+    assert.equal(p.rightClick(300, 400, true).defaultPrevented, false, 'Shift: the page handler on the player did not cancel the browser menu');
+    const untrusted = new p.w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, shiftKey: true }); p.d.getElementById('media').dispatchEvent(untrusted);
     assert.equal(untrusted.defaultPrevented, true, 'a synthetic event is not ours to protect');
     const outside = p.d.createElement('div'); p.d.body.append(outside); outside.addEventListener('contextmenu', (e) => e.preventDefault());
-    const e2 = new p.w.MouseEvent('contextmenu', { bubbles: true, cancelable: true }); e2.testTrusted = true; outside.dispatchEvent(e2);
+    const e2 = new p.w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, shiftKey: true }); e2.testTrusted = true; outside.dispatchEvent(e2);
     assert.equal(e2.defaultPrevented, true, 'outside a TikTok player the page keeps its own handling'); p.close();
     const q = igPage(); const v = q.d.getElementById('media'); v.addEventListener('contextmenu', (e) => e.preventDefault());
-    const e3 = new q.w.MouseEvent('contextmenu', { bubbles: true, cancelable: true }); e3.testTrusted = true; v.dispatchEvent(e3);
+    const e3 = new q.w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, shiftKey: true }); e3.testTrusted = true; v.dispatchEvent(e3);
     assert.equal(e3.defaultPrevented, true, 'Instagram handlers are not changed'); q.close();
   });
   await test('TikTok: the menu on the <video> (blob srcUrl) saves that item\'s playAddr exactly; the neighbour player is never asked or fetched', async () => {

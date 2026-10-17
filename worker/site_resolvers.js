@@ -1882,17 +1882,21 @@ function readSocialPlayerItem(site, stream) {
 }
 
 // The selected TikTok/Instagram player's own progressive file, or a refusal. `documentId` pins both reads to the admitting document.
-async function resolveSocialPlayerMedia({ tabId, frameId = 0, documentId = '', site, gestureAt = null, stream = '' }) {
+// `inlineItem` (TIKTOK-CONTROLS-01): a rail Download press whose own document proved the player just before (one-shot token): its stream names the
+// player and the right-click capture is not read; the page props must name that same item.
+async function resolveSocialPlayerMedia({ tabId, frameId = 0, documentId = '', site, gestureAt = null, stream = '', inlineItem = '' }) {
   const refuse = (reason) => ({ success: false, error: 'UNRESOLVED_BLOB_MEDIA', reason, diagnostics: { rejectionReasons: [reason], provider: site } });
   if (!tabId || !SOCIAL_VIDEO_SITES[site] || !chrome.scripting?.executeScript) return refuse('NO_DIRECT_MEDIA_FOUND');
   const target = documentId ? { tabId, documentIds: [documentId] } : { tabId, frameIds: [Number.isInteger(frameId) ? frameId : 0] };
   let picked = null, item = null;
   try {
-    picked = (await chrome.scripting.executeScript({ target, injectImmediately: true, func: selectSocialPlayer, args: [{ gestureAt: Number.isFinite(gestureAt) ? gestureAt : null, stream: String(stream || '').startsWith('blob:') ? stream : '' }] }))?.[0]?.result;
+    if (inlineItem && !(site === 'tiktok' && documentId && String(stream || '').startsWith('blob:'))) return refuse('FRAME_CHANGED');
+    picked = inlineItem ? { stream } : (await chrome.scripting.executeScript({ target, injectImmediately: true, func: selectSocialPlayer, args: [{ gestureAt: Number.isFinite(gestureAt) ? gestureAt : null, stream: String(stream || '').startsWith('blob:') ? stream : '' }] }))?.[0]?.result;
     if (!picked || typeof picked.stream !== 'string') return refuse('FRAME_CHANGED');
     item = (await chrome.scripting.executeScript({ target, world: 'MAIN', injectImmediately: true, func: readSocialPlayerItem, args: [site, picked.stream] }))?.[0]?.result;
   } catch (_) { return refuse('FRAME_CHANGED'); }
   if (!item || typeof item !== 'object') return refuse('NO_DIRECT_MEDIA_FOUND');
+  if (inlineItem && !item.reason && String(item.itemId) !== inlineItem) return refuse('FRAME_CHANGED');
   // separate DASH tracks would need muxing that this pipeline does not do: an unsupported source, never a silent or guessed file
   if (item.reason === 'SEPARATE_TRACKS') return { ...refuse('UNSUPPORTED_STREAM'), diagnostics: { rejectionReasons: ['SEPARATE_TRACKS'], provider: site, streamType: 'dash' } };
   if (item.reason) return refuse(item.reason === 'PLAYER_CHANGED' ? 'FRAME_CHANGED' : item.reason === 'NOT_VIDEO' ? 'NOT_VIDEO' : 'NO_DIRECT_MEDIA_FOUND');

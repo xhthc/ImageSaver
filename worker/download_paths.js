@@ -232,7 +232,7 @@ async function selectedMediaAuthor(info, tab, src) {
   const page = info.pageUrl || tab?.url || '';
   const site=fbSiteOf(page,'');
   if (PAGE_ACCOUNT_SITES.includes(site)) {
-    if(viaInline(info, 'generic', 'vk', 'redgifs'))return FeedbackLib.safeAuthor(site,info.selectedAuthor);
+    if(viaInline(info, 'generic', 'vk', 'redgifs', 'tiktok'))return FeedbackLib.safeAuthor(site,info.selectedAuthor);
     if(info.authorProof && tab?.id)try {
       const answer=await chrome.tabs.sendMessage(tab.id,{action:'SELECTED_POST_AUTHOR',proof:info.authorProof},{frameId:Number.isInteger(info.frameId)?info.frameId:0,...(info.authorDocumentId?{documentId:info.authorDocumentId}:{})});
       return FeedbackLib.safeAuthor(site,answer?.author);
