@@ -162,7 +162,7 @@ function makeWorld({ url = 'https://www.redgifs.com/niches/ecchi-anime', docId =
   const chrome = {
     runtime: {
       id: 'testid',
-      onMessage: { addListener: (fn) => world.messageListeners.push(fn) },
+      onMessage: { addListener: (fn) => world.messageListeners.push(fn), removeListener: (fn) => { const i = world.messageListeners.indexOf(fn); if (i >= 0) world.messageListeners.splice(i, 1); } },
       sendMessage: (msg) => {
         world.sent.push(msg);
         return bg ? bg.fromContent(world, msg) : Promise.resolve();
@@ -544,13 +544,13 @@ test('keyboard and dynamic pages: a recycled player loses its stop, a new one ga
   const a = world.addCard('ClipAlpha');
   const b = world.addCard('ClipBravo');
   world.scan();
-  const before = Object.fromEntries(Object.entries(world.listeners).map(([k, v]) => [k, v.length]));
+  const before = Object.fromEntries(Object.entries(world.listeners).map(([k, v]) => [k, v.length])), messagesBefore = world.messageListeners.length;
   world.run();
   world.run(); // reinjection into the same world
   world.scan();
   assert.deepEqual(Object.fromEntries(Object.entries(world.listeners).map(([k, v]) => [k, v.length])), before, 'no second set of listeners');
   assert.equal(world.hosts().length, 2, 'still one control per player');
-  assert.equal(world.messageListeners.length, 1, 'one message listener');
+  assert.equal(world.messageListeners.length, messagesBefore, 'reinjection adds no message listener (each script keeps its one listener)');
   b.gif.remove(); // the feed recycles its card
   world.scan();
   assert.equal(world.hosts().length, 1);

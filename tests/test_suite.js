@@ -743,12 +743,17 @@ async function runTests() {
     'DNR rule: подстановка заголовка Referer: https://www.pixiv.net/'
   );
 
-  // 18. DNR rule: фильтр ||pximg.net и resourceTypes
+  // 18. DNR rule: only this extension's own requests to the exact CDN domain (REFACTOR-CHROME-API-01: no unbounded urlFilter, no page traffic)
   assert(
-    pixivRule?.condition?.urlFilter === '||pximg.net' &&
-    ['image', 'media', 'other', 'xmlhttprequest'].every(t => pixivRule.condition.resourceTypes.includes(t)),
-    'DNR rule: фильтр ||pximg.net и resourceTypes'
+    !('urlFilter' in pixivRule.condition) && JSON.stringify(pixivRule.condition.requestDomains) === '["pximg.net"]' &&
+    JSON.stringify(pixivRule.condition.initiatorDomains) === JSON.stringify([mockChrome.runtime.id]) &&
+    JSON.stringify(pixivRule.condition.resourceTypes) === '["xmlhttprequest","other"]',
+    'DNR rule: requestDomains pximg.net, initiator = this extension, extension fetch/download types only'
   );
+  for (const rule of dynamicRules.filter(r => [1001, 1002, 1003].includes(r.id))) {
+    assert(!rule.condition.urlFilter && rule.condition.initiatorDomains?.length === 1 && !rule.condition.resourceTypes.some(t => ['main_frame', 'sub_frame', 'image', 'media'].includes(t)),
+      'DNR rule ' + rule.id + ': never changes navigation, page images or media of normal browsing');
+  }
 
   // 19. Reddit: preview (.jpg) -> i.redd.it без параметров сжатия
   const redditPreviewRes = await sandbox.resolveOriginalImageUrl({
@@ -2039,7 +2044,7 @@ async function runTests() {
     const hasCookie = animeRule?.action?.requestHeaders?.some(h => h.header.toLowerCase() === 'cookie' && h.value === 'kira=1');
     assert(
       Boolean(animeRule) &&
-      animeRule?.condition?.urlFilter === '||oimages.anime-pictures.net' &&
+      JSON.stringify(animeRule?.condition?.requestDomains) === '["oimages.anime-pictures.net"]' &&
       hasReferer &&
       hasCookie,
       'DNR rule: динамическое правило ID 1002 для oimages.anime-pictures.net с referer и cookie kira=1'
@@ -3440,8 +3445,8 @@ async function runTests() {
       'DNR rule: динамическое правило ID 1003 для gelbooru.com зарегистрировано'
     );
     assert(
-      gelbooruRule?.condition?.urlFilter === '||gelbooru.com',
-      'DNR rule: urlFilter настроен на ||gelbooru.com'
+      JSON.stringify(gelbooruRule?.condition?.requestDomains) === '["gelbooru.com"]' && JSON.stringify(gelbooruRule?.condition?.initiatorDomains) === JSON.stringify([mockChrome.runtime.id]),
+      'DNR rule: requestDomains gelbooru.com (and its subdomains), initiator = this extension'
     );
     const refererHeader = gelbooruRule?.action?.requestHeaders?.find(h => h.header === 'referer');
     assert(
@@ -4504,7 +4509,7 @@ async function runTests() {
 
     const updated1001 = dynamicRules.find(r => r.id === 1001);
     const isStaleReplaced = Boolean(updated1001) &&
-      updated1001.condition.urlFilter === '||pximg.net' &&
+      JSON.stringify(updated1001.condition.requestDomains) === '["pximg.net"]' &&
       updated1001.action.requestHeaders.some(h => h.value === 'https://www.pixiv.net/');
 
     const totalCountCorrect = dynamicRules.length === 4;
@@ -5097,7 +5102,7 @@ async function runTests() {
     const hasDnr1002Referer = dnr1002?.action?.requestHeaders?.some(h => h.header === 'referer' && h.value === 'https://anime-pictures.net/');
     const hasDnr1002Cookie = dnr1002?.action?.requestHeaders?.some(h => h.header === 'cookie' && h.value === 'kira=1');
     assert(
-      dnr1002 && hasDnr1002Referer && hasDnr1002Cookie && dnr1002.condition.urlFilter === '||oimages.anime-pictures.net',
+      dnr1002 && hasDnr1002Referer && hasDnr1002Cookie && JSON.stringify(dnr1002.condition.requestDomains) === '["oimages.anime-pictures.net"]',
       'DNR rule 1002 содержит Referer и Cookie kira=1'
     );
 
@@ -5105,7 +5110,7 @@ async function runTests() {
     const dnr1003 = sandbox.MANAGED_DNR_RULES.find(r => r.id === 1003);
     const hasDnr1003Referer = dnr1003?.action?.requestHeaders?.some(h => h.header === 'referer' && h.value === 'https://gelbooru.com/');
     assert(
-      dnr1003 && hasDnr1003Referer && dnr1003.condition.urlFilter === '||gelbooru.com',
+      dnr1003 && hasDnr1003Referer && JSON.stringify(dnr1003.condition.requestDomains) === '["gelbooru.com"]',
       'DNR rule 1003 содержит Referer Gelbooru'
     );
 
@@ -26462,7 +26467,7 @@ async function runTests() {
             assert(forged.ok === false && forged.reason === 'NO_TOKEN', '252.B23f: неизвестный токен пакета отклонён');
             assert(w.ask({ action: 'X_INLINE_BATCH', token }, { id: 'other', tab: { id: 1 } }) === undefined && w.ask({ action: 'X_INLINE_OWNER_ITEM', token, index: 1 }, { id: 'mock-id', tab: { id: 1 } }) === undefined, '252.B23g: отвечает только фону расширения (не страница, не вкладка, не чужое расширение)');
             w.fire('winL', 'pagehide');
-            assert(w.ask({ action: 'X_INLINE_BATCH', token }).reason === 'NO_TOKEN' && item(1).reason === 'NO_TOKEN', '252.B23h: уход со страницы (pagehide) снимает зарегистрированные пакеты: токен больше не принимается');
+            assert([w.ask({ action: 'X_INLINE_BATCH', token }), item(1)].every((r) => !r || (r.ok === false && r.reason === 'NO_TOKEN')), '252.B23h: уход со страницы (pagehide) снимает зарегистрированные пакеты: токен больше не принимается');
             w.toBackground = realToBackground;
           }
 

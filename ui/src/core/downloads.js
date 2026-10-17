@@ -4,7 +4,7 @@ import '../../../lib/sites.js';
 const SITES = /** @type {readonly {id:string,domains?:readonly string[]}[]} */ (Reflect.get(globalThis,'MediaLatchSites').SITES);
 /** @param {{chrome: import('../../../lib/download_contracts').DownloadsChrome}} dependencies */
 export function createDownloads({ chrome }) {
-    const store = createStore(/** @type {import('../../../lib/download_contracts').DownloadsViewState} */ ({ jobs: [], batches: [], paused: false, status: 'loading', error: '', busy: false, pendingBatch: '', removingIds: [], dismissedIds: [] }));
+    const store = createStore(/** @type {import('../../../lib/download_contracts').DownloadsViewState} */ ({ jobs: [], batches: [], paused: false, status: 'loading', error: '', errorJob: '', busy: false, pendingBatch: '', removingIds: [], dismissedIds: [] }));
     let disposed = false;
     /** @type {Promise<void> | null} */
     let current = null;
@@ -56,7 +56,7 @@ export function createDownloads({ chrome }) {
             return;
         const selectedJobs = store.getState().jobs.slice();
         const ids = command === 'clearFinished' ? store.getState().jobs.filter(j => ['complete', 'failed', 'cancelled'].includes(j.state)).map(j => j.id) : [id];
-        store.setState({ busy: true, error: '', ...(command === 'cancelBatch' ? { pendingBatch: String(id) } : {}), ...(command === 'clearFinished' ? { removingIds: store.getState().jobs.filter(j => ids.includes(j.id)).flatMap(j => [j.id, j.op].filter(Boolean)), jobs: store.getState().jobs.filter(j => !ids.includes(j.id)) } : {}) });
+        store.setState({ busy: true, error: '', errorJob: '', ...(command === 'cancelBatch' ? { pendingBatch: String(id) } : {}), ...(command === 'clearFinished' ? { removingIds: store.getState().jobs.filter(j => ids.includes(j.id)).flatMap(j => [j.id, j.op].filter(Boolean)), jobs: store.getState().jobs.filter(j => !ids.includes(j.id)) } : {}) });
         try {
             for (const selected of ids) {
                 const r = await chrome.runtime.sendMessage({ action: 'DOWNLOADS_COMMAND', command: command === 'clearFinished' ? 'remove' : command, id: selected });
@@ -75,7 +75,7 @@ export function createDownloads({ chrome }) {
         }
         catch (_) {
             if (!disposed)
-                store.setState({ error: command === 'cancelBatch' ? 'downloads.batchCancelFailed' : 'downloads.commandFailed' });
+                store.setState(command === 'showInFolder' ? { error: 'downloads.revealFailed', errorJob: String(id) } : { error: command === 'cancelBatch' ? 'downloads.batchCancelFailed' : 'downloads.commandFailed' });
             // a refused click may already have stored the intent (a later write failed): show the committed state, so the action stays accurate and can be repeated
             if (command === 'cancelBatch')
                 await load();
@@ -93,6 +93,20 @@ export function createDownloads({ chrome }) {
     return { store, load, command, dispose() { disposed = true; chrome.runtime.onMessage?.removeListener(changed); } };
 }
 
+/** The row actions a job has, in display order; the popup and the full manager render the same list.
+ * Show in folder exists only for a finished browser download this manager tracks by its numeric DownloadItem id (a chosen-folder export has a
+ * receipt instead, a preparation has no file): a dead icon is never shown.
+ * @param {import('../../../lib/download_contracts').DownloadJob & {managed?: boolean, ready?: boolean}} job
+ * @returns {('showInFolder'|'cancel'|'retry')[]} */
+export function jobActions(job) {
+    const managed = job.managed !== false;
+    /** @type {('showInFolder'|'cancel'|'retry')[]} */
+    const out = [];
+    if (managed && job.state === 'complete' && Number.isSafeInteger(job.downloadId) && Number(job.downloadId) >= 0) out.push('showInFolder');
+    if (managed && !['complete', 'failed', 'cancelled'].includes(job.state)) out.push('cancel');
+    if (managed && job.state === 'failed' && job.error !== 'EXPORT_UNCERTAIN') out.push('retry');
+    return out;
+}
 /** Existing service IDs and domain aliases share one Downloads group. No media URL or filename is used.
  * @param {unknown} value */
 export function downloadSite(value) {

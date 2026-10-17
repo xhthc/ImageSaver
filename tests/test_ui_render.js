@@ -74,6 +74,7 @@ function makeChrome(state) {
         if (msg.action === 'DOWNLOADS_LIST' && state.downloadGates?.length && (await state.downloadGates.shift()) === 'fail') throw new Error('MESSAGING_DOWN');
         if (state.failMessages) throw new Error('MESSAGING_DOWN');
         if(msg.action === 'DOWNLOADS_LIST' || msg.action === 'DOWNLOADS_COMMAND') {
+          if(msg.command==='showInFolder'){(state.reveals=state.reveals||[]).push(msg.id);return state.failReveal?{success:false,error:'FILE_REMOVED'}:{success:true};}
           if(msg.command==='remove'){if(state.failRemoval)return {success:false};const op=state.jobs?.find(j=>j.id===msg.id)?.op || msg.id;if(state.jobs)state.jobs=state.jobs.filter(j=>j.id!==msg.id);state.session=state.session.filter(r=>r.id!==op);}
           if(msg.command==='cancelBatch'){(state.batchCommands=state.batchCommands||[]).push({id:msg.id});if(state.batchGate)await state.batchGate;if(state.failBatch){if(state.failStores)state.batches=(state.batches||[]).map(b=>b.id===msg.id?{...b,cancelRequested:true,cancelling:true}:b);return {success:false,error:'STORAGE_FAILED'};}state.batches=(state.batches||[]).map(b=>b.id===msg.id?{...b,cancelRequested:true,cancelling:true}:b);}
           return {success:true,jobs:state.jobs || state.session.map(r=>({id:r.id,op:r.id,managed:false,filename:r.filename || 'media',state:r.state==='saving'?'receiving':r.state==='interrupted'?'failed':r.state,received:1024,total:r.state==='saving'?null:2048,speed:0,error:'',ready:false})).reverse(),paused:false,...(state.batches?{batches:state.batches}:{})};
@@ -462,7 +463,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     await p.type(input, '  My/Pics  ');
     await p.click(p.q('#saveButton'));
     const saved = p.calls.localSets[p.calls.localSets.length - 1];
-    assert(p.calls.localSets.length === 1 && saved.subfolder === 'My/Pics' && saved.folderOrganizationMode === 'by_site_and_type' && saved.saveDirectoryId === '' && saved.xAuthorFolders === false && saved.redditAuthorFolders === false && saved.pixivAuthorFolders === false && !('askEveryTime' in saved) && Object.keys(saved).length === 10, 'R7g: explicit Save writes the ten Saving/Embed keys, sanitized');
+    assert(p.calls.localSets.length === 1 && saved.subfolder === 'My/Pics' && saved.folderOrganizationMode === 'by_site_and_type' && saved.saveDirectoryId === '' && ['x', 'reddit', 'pixiv', 'vk', 'redgifs', 'instagram', 'tiktok'].every((id) => saved[id + 'AuthorFolders'] === false) && !('askEveryTime' in saved) && Object.keys(saved).length === 14, 'R7g: explicit Save writes the fourteen Saving/Embed keys (seven author services), sanitized');
     assert(state.local.notifySuccess === false && state.local.historyEnabled === true && state.local.unrelatedKey === 'keep-me', 'R7h: other preferences are untouched');
     assert(/Настройки успешно сохранены/.test(p.q('#statusMessage').textContent) && p.q('#statusMessage').getAttribute('aria-live') === 'polite' && p.q('#statusMessage').getAttribute('data-type') === 'success', 'R7i: the result is announced in a polite live region');
     await p.type(input, 'x'.repeat(300));
@@ -843,7 +844,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(['themeSelect', 'languageSelect'].every((id) => { const l = full.q(`label[for="${id}"]`); return l && l.classList.contains('pointer-events-none') && full.q('#' + id).getAttribute('role') === 'combobox'; }) && !full.q('[data-slot="embed"] label.pointer-events-none'), 'R13b2: header labels stay associated with their selects but are not pointer targets, so hovering a label cannot highlight its select; other labels are unchanged');
     const quick = await page('quick', state);
     assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Настройки' && quick.doc.documentElement.lang === 'ru', 'R13c: the compact popup opens in the same language');
-    assert(full.q('label[for="authorFoldersTrigger"]').textContent === 'Папки авторов' && full.q('#authorFoldersHint').textContent.includes('x.com') && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13c-labels: Russian author-folder and link-preview settings display x.com');
+    assert(full.q('label[for="authorFoldersTrigger"]').textContent === 'Папки авторов' && /аккаунт публикации/.test(full.q('#authorFoldersHint').textContent) && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13c-labels: Russian author-folder hint names the posting account; link previews display x.com');
 
     const trackMotion = (p) => {
       const animations = [], listeners = new Set();
@@ -865,7 +866,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
     assert(tabNames(full) === 'Downloads|Statistics|Saving|Notifications|Embed|Updates|Debug' && full.doc.documentElement.lang === 'en' && full.doc.title === 'MediaLatch: downloads and settings', 'R13e: ru -> en switches the open page at once (tabs, lang, title)');
     assert(full.q('#subfolderInput').value === 'Unsaved/Edit' && full.q('#folderPreviewPath').textContent === 'Downloads/Unsaved/Edit/photo.jpg' && JSON.stringify(full.calls.localSets.slice(setsBefore)) === JSON.stringify([{ uiLanguage: 'en' }]), 'R13f: the unsaved folder edit is kept and only uiLanguage is written');
     assert(/Save settings/.test(full.q('#saveButton').textContent) && /“MediaLatch: Save media”/.test(full.text()) && full.q('label[for="languageSelect"]').textContent === 'Language', 'R13g: buttons, labels and the fixed menu title follow');
-    assert(full.q('label[for="authorFoldersTrigger"]').textContent === 'Author folders' && full.q('#authorFoldersHint').textContent.includes('x.com') && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13g-labels: English author-folder and link-preview labels display x.com');
+    assert(full.q('label[for="authorFoldersTrigger"]').textContent === 'Author folders' && /posting account, not the original artist/.test(full.q('#authorFoldersHint').textContent) && full.q('label[for="xShareHostSelect"]').textContent === 'x.com', 'R13g-labels: English author-folder hint names the posting account; link previews display x.com');
     await quick.settle(6);
     assert(quick.q('#openSettingsButton').getAttribute('aria-label') === 'Settings' && quick.doc.documentElement.lang === 'en' && /Saved/.test(quick.qa('[data-job]')[1].textContent), 'R13h: the open compact popup follows the change made on the full page (rows and accessible names)');
     assert(full.qa('[data-slot="result-item"]').some((row) => row.textContent.includes('x.com')), 'R13h-labels: the loaded manager result card displays x.com for a stored x record');
@@ -1331,7 +1332,7 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
       await p.key(trigger, 'Enter');
       assert(menu(p) && trigger.getAttribute('aria-expanded') === 'true', 'R25d: Enter opens the menu');
       const items = p.qa('[role="menuitemcheckbox"]');
-      assert(items.map((x) => x.textContent.trim()).join('|') === 'x.com|Reddit|Pixiv' && items.map((x) => x.getAttribute('aria-checked')).join() === 'true,false,false', 'R25e: three labelled checkbox items with their states');
+      assert(items.map((x) => x.textContent.trim()).join('|') === 'x.com|Reddit|Pixiv|VK|RedGIFs|Instagram|TikTok' && items.map((x) => x.getAttribute('aria-checked')).join() === 'true,false,false,false,false,false,false', 'R25e: seven labelled checkbox items with their states');
       await p.click(item(p, 'xAuthorFolders'));
       await p.click(item(p, 'redditAuthorFolders'));
       await p.click(item(p, 'pixivAuthorFolders'));
@@ -1517,6 +1518,29 @@ async function page(kind, state, { search = '', hash = '', clipboard } = {}) {
   {
     const p=await page('quick',{session:[],history:[],local:{uiLanguage:'en'},jobs:[{id:'retained-success',site:'pixiv',filename:'retained.png',batch:'expired-failure',batchIndex:1,createdAt:2,state:'complete',received:1,total:1}],batches:[{id:'expired-failure',site:'pixiv',createdAt:1,count:22,saved:21,failed:1,cancelled:0,skipped:0,remaining:0}]});
     assert(p.q('[data-site="pixiv"] [data-slot="site-toggle"]').getAttribute('aria-expanded')==='false' && p.q('[data-site="pixiv"] [data-slot="site-toggle"]').textContent.includes('1 failed'),'S14: collapsed site retains canonical batch error after its failed preparation card expires');await p.unmount();
+  }
+
+  // REFACTOR-CHROME-API-01: "Show in folder" on both surfaces. Only a finished browser download has the icon (a chosen-folder export and an
+  // unfinished row never show a dead one); the click names the job only; a refusal is shown on THAT card, survives a refresh, and close/reopen offers it again.
+  for(const lang of ['en','ru'])for(const kind of ['quick','full']) {
+    const label=lang==='en'?'Show in folder':'Показать в папке',failed=lang==='en'?/Could not show this file/:/Не удалось показать файл/;
+    const j=(id,over={})=>({id,site:'pixiv',createdAt:10,filename:id+' (1).png',state:'complete',received:100,total:100,speed:0,error:'',...over});
+    const state={session:[],history:[],local:{uiLanguage:lang},jobs:[j('native',{downloadId:41}),j('chosen-folder',{downloadId:'file:job-chosen-folder'}),j('running',{state:'receiving',downloadId:null,createdAt:9})]};
+    const open=async(p)=>{const t=p.q('[data-site="pixiv"] [data-slot="site-toggle"]');if(t.getAttribute('aria-expanded')!=='true')await p.click(t);const s=p.q('[data-site="pixiv"] [data-slot="singles-toggle"]');if(s && s.getAttribute('aria-expanded')!=='true')await p.click(s);};
+    const reveal=(p,id)=>p.q(`[data-job="${id}"] button[aria-label="${label}"]`);
+    const p=await page(kind,state,{hash:'#downloads'});await open(p);
+    assert(reveal(p,'native') && reveal(p,'native').getAttribute('title')===label && !reveal(p,'chosen-folder') && !reveal(p,'running'),`F1 ${kind}/${lang}: a labelled folder icon on the finished browser download only`);
+    await p.click(reveal(p,'native'));
+    assert(JSON.stringify(state.reveals)==='["native"]' && !p.q('[data-slot="reveal-error"]') && !p.q('[data-slot="downloads-error"]'),`F2 ${kind}/${lang}: the click sends that job id and nothing fails`);
+    state.failReveal=true;await p.click(reveal(p,'native'));
+    const err=p.q('[data-job="native"] [data-slot="reveal-error"]');
+    assert(err && err.getAttribute('role')==='alert' && failed.test(err.textContent) && !p.q('[data-slot="downloads-error"]') && p.qa('[data-job]').length===3,`F3 ${kind}/${lang}: a refusal is shown on that card, every card stays, no list-wide error`);
+    await p.U.act(async()=>{for(const cb of state.msgListeners||[])cb({action:'DOWNLOADS_CHANGED'});await sleep(5)});await p.settle(5);
+    assert(p.q('[data-job="native"] [data-slot="reveal-error"]'),`F4 ${kind}/${lang}: an automatic refresh does not erase the failure`);
+    await p.unmount();state.failReveal=false;const again=await page(kind,state,{hash:'#downloads'});await open(again);
+    assert(reveal(again,'native') && !again.q('[data-slot="reveal-error"]'),`F5 ${kind}/${lang}: close and reopen offers the action again`);
+    await again.click(reveal(again,'native'));assert(JSON.stringify(state.reveals)==='["native","native","native"]',`F6 ${kind}/${lang}: repeatable after reopening`);
+    await again.unmount();
   }
 
   // A large completed post cannot bury individual saves; both surfaces use compact separate disclosures.

@@ -111,6 +111,7 @@ function verifyContextOwner(claim) {
     if (claim && typeof claim.proof === 'string' && claim.proof && typeof globalThis.__imageSaverAdmitRedditAuthor === 'function') {
       globalThis.__imageSaverAdmitRedditAuthor(claim.proof, el, mediaEl);
     }
+    try { if (claim?.proof) globalThis.__medialatchInline?.admitAuthor(claim.proof,el,mediaEl,cap.postAuthor); } catch (_) {}
     return 'proven';
   } catch (e) {
     return 'refused';

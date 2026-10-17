@@ -1,11 +1,11 @@
 import {useCallback,useEffect,useId,useRef,useState} from "react"
-import {Ban, CheckCircle2, ChevronDown, Clock, Download, Inbox, Layers, Loader2, Pause, Play, RotateCcw, X, Trash2, XCircle} from "lucide-react"
+import {Ban, CheckCircle2, ChevronDown, Clock, Download, FolderOpen, Inbox, Layers, Loader2, Pause, Play, RotateCcw, X, Trash2, XCircle} from "lucide-react"
 import {ScrollArea} from "radix-ui"
 import {Button} from "@/components/ui/button"
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from "@/components/ui/collapsible"
 import {Alert, AlertDescription} from "@/components/ui/alert"
 import {SectionHeader} from "@/components/app/section"
-import {createDownloads,groupDownloads} from "@/core/downloads.js"
+import {createDownloads,groupDownloads,jobActions} from "@/core/downloads.js"
 import {useStore} from "@/hooks/use-store"
 import {useI18n} from "@/hooks/use-i18n"
 import {getEnv} from "@/lib/env"
@@ -164,6 +164,7 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
   }
   const batches=new Map<string,DownloadBatch>(s.batches.filter(b=>b.remaining>0 || jobs.some(j=>j.batch===b.id)).map(b=>[b.id,b]))
   const finished=s.jobs.some(j=>TERMINAL.includes(j.state))
+  const listError=s.error==='downloads.revealFailed'?'':s.error // a reveal failure belongs to its card
   const pauseLabel=t(s.paused?'downloads.resume':'downloads.pause')
   // A row action: an icon button whose accessible name is also its tooltip.
   const rowAction=(label:string,command:Parameters<typeof controller.command>[0],id:string,icon:React.ReactNode)=><Button variant="ghost" size="icon-sm" disabled={s.busy} aria-label={label} title={label} onClick={()=>void controller.command(command,id)}>{icon}</Button>
@@ -180,8 +181,7 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
     const record=found ? {...found,author:found.author || j.author} : null
     const author=env.FB.authorLabel(j.site,j.author)
     const actions=<div className="flex shrink-0 items-center gap-0.5">
-      {active && j.managed!==false?rowAction(t('downloads.cancel'),'cancel',j.id,<X/>):null}
-      {j.state==='failed' && j.managed!==false && j.error!=='EXPORT_UNCERTAIN'?rowAction(t(j.ready?'downloads.exportAgain':'downloads.retry'),'retry',j.id,<RotateCcw/>):null}
+      {jobActions(j).map(a=>a==='showInFolder'?rowAction(t('downloads.showInFolder'),a,j.id,<FolderOpen/>):a==='cancel'?rowAction(t('downloads.cancel'),a,j.id,<X/>):rowAction(t(j.ready?'downloads.exportAgain':'downloads.retry'),a,j.id,<RotateCcw/>))}
     </div>
     const detailsActions=full && !active?rowAction(t(j.managed===false?'downloads.removeRecord':'downloads.remove'),'remove',j.id,<Trash2/>):null
     // Only received bytes with a known total fill the bar; preparation, checking, the wait before saving and the export itself are
@@ -192,6 +192,7 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
       {record && active?<p className="text-xs text-muted-foreground" role="status">{t(`downloads.${j.state}`)}</p>:null}
       {j.received>0?<p className="text-xs leading-4 text-muted-foreground tabular-nums">{bytes(j.received)} / {j.total?bytes(j.total):t('downloads.unknown')}{j.state==='receiving' && j.speed>0?` · ${bytes(j.speed)}/s`:''}{seconds!==null && j.state==='receiving'?` · ${t('downloads.remaining',{seconds})}`:''}</p>:null}
       {j.error && j.error!=='CANCELLED'?<JobError code={j.error} ready={!!j.ready} full={full} failed={j.state==='failed'}/>:null}
+      {s.error==='downloads.revealFailed' && s.errorJob===j.id?<p className="text-xs leading-4 text-danger" role="alert" data-slot="reveal-error">{t('downloads.revealFailed')}</p>:null}
       {j.managed===false && active?<p className="text-xs text-muted-foreground">{t('downloads.preparingHint')}</p>:null}
     </div>
     if(record && feedback)return <ResultRow key={j.id} jobId={j.id} record={record} env={{FB:env.FB,...feedback.env}} unread={unreadIds.includes(record.id)} defaultOpen={focusId===record.id} actions={actions} detailsActions={detailsActions}><div className="pr-3 pb-3 pl-14 has-[>div:empty]:hidden">{progress}</div></ResultRow>
@@ -234,8 +235,8 @@ function Body({controller,feedback,records=[],unreadIds=[],focusId='',full=false
     {full
       ?<SectionHeader title={t('downloads.heading')} description={t('section.downloads')}>{queueControls}</SectionHeader>
       :<div className="flex items-center justify-between gap-2"><h2 className="text-[13px] font-semibold">{t('downloads.heading')}</h2><div className="flex items-center gap-0.5">{queueControls}</div></div>}
-    {s.error || retrying?<Alert variant={s.error?"destructive":"default"} data-slot="downloads-error"><AlertDescription className="flex flex-wrap items-center gap-2">
-      <span>{s.status!=='error' && retrying?t('downloads.loading'):t(s.error)}</span>
+    {listError || retrying?<Alert variant={listError?"destructive":"default"} data-slot="downloads-error"><AlertDescription className="flex flex-wrap items-center gap-2">
+      <span>{s.status!=='error' && retrying?t('downloads.loading'):t(listError)}</span>
       {s.status==='error' || retrying?<Button type="button" variant="outline" size="sm" aria-disabled={retrying} className="aria-disabled:opacity-50" onClick={retry}><RotateCcw/>{t('downloads.retryList')}</Button>:null}
     </AlertDescription></Alert>:null}
     {s.status==='loading'?<p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true"/>{t('downloads.loading')}</p>:null}

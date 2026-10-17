@@ -291,114 +291,30 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
 
 let isDnrSetupInProgress = false;
 
-const pixivRule = {
-  id: 1001,
+// Referer/Cookie headers that three CDNs require. Only requests this extension makes are changed (the offscreen document's and the worker's
+// own acquisition fetches; the extension origin is the initiator, its id the initiator domain): normal browsing, other extensions and
+// lookalike hosts keep their own headers. requestDomains match the domain and its subdomains, never a longer foreign name.
+const MANAGED_DNR_RULES = Object.freeze([
+  [1001, ['pximg.net'], [['referer', 'https://www.pixiv.net/']]],
+  [1002, ['oimages.anime-pictures.net'], [['referer', 'https://anime-pictures.net/'], ['cookie', 'kira=1']]],
+  [1003, ['gelbooru.com'], [['referer', 'https://gelbooru.com/']]]
+].map(([id, requestDomains, headers]) => Object.freeze({
+  id,
   priority: 1,
-  action: {
-    type: 'modifyHeaders',
-    requestHeaders: [
-      { header: 'referer', operation: 'set', value: 'https://www.pixiv.net/' }
-    ]
-  },
-  condition: {
-    urlFilter: '||pximg.net',
-    resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest', 'image', 'media', 'other']
-  }
-};
-
-const animePicturesRule = {
-  id: 1002,
-  priority: 1,
-  action: {
-    type: 'modifyHeaders',
-    requestHeaders: [
-      { header: 'referer', operation: 'set', value: 'https://anime-pictures.net/' },
-      { header: 'cookie', operation: 'set', value: 'kira=1' }
-    ]
-  },
-  condition: {
-    urlFilter: '||oimages.anime-pictures.net',
-    resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest', 'image', 'media', 'other']
-  }
-};
-
-const gelbooruRule = {
-  id: 1003,
-  priority: 1,
-  action: {
-    type: 'modifyHeaders',
-    requestHeaders: [
-      { header: 'referer', operation: 'set', value: 'https://gelbooru.com/' }
-    ]
-  },
-  condition: {
-    urlFilter: '||gelbooru.com',
-    resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest', 'image', 'media', 'other']
-  }
-};
-
-const MANAGED_DNR_RULES = Object.freeze([pixivRule, animePicturesRule, gelbooruRule]);
+  action: { type: 'modifyHeaders', requestHeaders: headers.map(([header, value]) => ({ header, operation: 'set', value })) },
+  condition: { requestDomains, initiatorDomains: [chrome.runtime.id], resourceTypes: ['xmlhttprequest', 'other'] }
+})));
 const MANAGED_DNR_RULE_IDS = Object.freeze(MANAGED_DNR_RULES.map((rule) => rule.id));
 
-/**
- * Configure declarativeNetRequest dynamic rules for Referer header injection
- * Required for services like Pixiv (i.pximg.net) that return 403 Forbidden without a referer.
- */
+// The managed rules replace whatever an earlier version registered under the same ids (dynamic rules persist across updates).
+// updateDynamicRules returns a promise in Manifest V3 (Chrome 91+); a refusal is logged and the next worker start tries again.
 async function setupDeclarativeNetRequestRules() {
-  if (isDnrSetupInProgress) {
-    return;
-  }
+  if (isDnrSetupInProgress) return;
   isDnrSetupInProgress = true;
-
   try {
-    const updatePayload = {
-      removeRuleIds: [...MANAGED_DNR_RULE_IDS],
-      addRules: [...MANAGED_DNR_RULES]
-    };
-
-    await new Promise((resolve, reject) => {
-      let settled = false;
-      let ret;
-      try {
-        ret = chrome.declarativeNetRequest.updateDynamicRules(updatePayload, () => {
-          if (settled) return;
-          settled = true;
-          const lastErr = chrome.runtime?.lastError;
-          if (lastErr) {
-            console.error('[MediaLatch] updateDynamicRules error:', lastErr.message);
-            reject(new Error(`updateDynamicRules failed: ${lastErr.message}`));
-          } else {
-            resolve();
-          }
-        });
-      } catch (syncErr) {
-        if (!settled) {
-          settled = true;
-          console.error('[MediaLatch] updateDynamicRules sync error:', syncErr);
-          reject(syncErr);
-        }
-        return;
-      }
-      if (ret && typeof ret.then === 'function') {
-        ret.then(
-          () => {
-            if (!settled) {
-              settled = true;
-              resolve();
-            }
-          },
-          (promiseErr) => {
-            if (!settled) {
-              settled = true;
-              console.error('[MediaLatch] updateDynamicRules promise reject:', promiseErr);
-              reject(promiseErr);
-            }
-          }
-        );
-      }
-    });
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [...MANAGED_DNR_RULE_IDS], addRules: [...MANAGED_DNR_RULES] });
   } catch (err) {
-    console.error('[MediaLatch] Ошибка в setupDeclarativeNetRequestRules():', err?.message || err);
+    console.error('[MediaLatch] updateDynamicRules failed:', err?.message || err);
   } finally {
     isDnrSetupInProgress = false;
   }
@@ -556,6 +472,15 @@ function isContentScriptSender(sender) {
   return Boolean(sender) && typeof sender.id === 'string' && sender.id === chrome.runtime?.id &&
     Number.isInteger(sender.tab?.id) && Number.isInteger(sender.frameId) &&
     /^https?:\/\//i.test(typeof sender.url === 'string' ? sender.url : '');
+}
+
+// The common admission of an inline message: this extension's content script in the active tab, on the route's own page, with a well-formed
+// one-shot token (nothing else in the message is read here). top: only the top frame. doc: a document id, so the proof is asked of exactly
+// that document. Each route states its own options; the page checks stay per site.
+function inlineSenderOk(message, sender, isPage, { top = false, doc = false } = {}) {
+  return isContentScriptSender(sender) && sender.tab.active === true && isPage(sender.url) &&
+    (!top || sender.frameId === 0) && (!doc || (typeof sender.documentId === 'string' && Boolean(sender.documentId))) &&
+    typeof message?.token === 'string' && INLINE_TOKEN.test(message.token);
 }
 
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
@@ -1246,6 +1171,22 @@ async function batchNoticeDeliver(id) {
     batchNoticeRemember(id, {key, record});
   }
 }
+// "Show in folder" of a Downloads card: the page names only its job; the browser's file is the numeric DownloadItem that THIS manager recorded for
+// that job when the browser confirmed it (job.downloadId). chrome.downloads.show(id) needs only the existing "downloads" permission; it reveals
+// that exact file (a renamed "photo (1).jpg" included) and returns nothing, so success here means "asked", not "a window opened".
+// MediaLatch's own guards: a complete job, a native browser download (a chosen-folder export has a receipt, not a DownloadItem: no reveal),
+// an item this extension created, still complete and not known to be removed (exists is refreshed by search() and can be stale).
+async function revealManagedDownload(jobId) {
+  const job = typeof jobId === 'string' ? (await downloadManager.list()).jobs.find((j) => j.id === jobId) : null;
+  const id = job && job.state === 'complete' && Number.isSafeInteger(job.downloadId) && job.downloadId >= 0 ? job.downloadId : null;
+  const item = id === null ? null : (await chrome.downloads.search({ id })).find((x) => x.id === id && x.byExtensionId === chrome.runtime.id);
+  const why = !job ? 'JOB_NOT_FOUND' : job.state !== 'complete' ? 'JOB_NOT_COMPLETE' : id === null ? 'NOT_A_BROWSER_DOWNLOAD'
+    : !item ? 'DOWNLOAD_NOT_IN_HISTORY' : item.state !== 'complete' ? 'DOWNLOAD_NOT_COMPLETE' : item.exists === false ? 'FILE_REMOVED' : '';
+  dbg('manager', 'reveal', why ? 'refused' : 'ok', why || undefined, null);
+  if (why) throw Error(why);
+  chrome.downloads.show(item.id);
+}
+
 async function downloadManagerSnapshot() {
   const snapshot=await downloadManager.list();
   const owned=new Set(snapshot.jobs.map(j=>j.op));
@@ -1265,6 +1206,7 @@ if(chrome.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListener(
   if(sender?.id!==chrome.runtime.id || !['popup/popup.html','popup/quick.html'].some(p=>sender.url?.split(/[?#]/)[0]===chrome.runtime.getURL(p)) || !downloadManager){respond({success:false,error:'FORBIDDEN'});return false;}
   (async()=>{
     if(m.action==='DOWNLOADS_COMMAND') {
+      if(m.command==='showInFolder') { await revealManagedDownload(m.id); return {success:true}; }
       if(m.command==='remove') {
         const job=(await downloadManager.list()).jobs.find(j=>j.id===m.id);
         if(!job) {
@@ -1648,16 +1590,9 @@ const offscreenController = globalThis.MediaLatchOffscreen.create({
   isManagerBusy: () => Boolean(downloadManagerBusy || downloadManagerRecovering)
 });
 const offscreenState = offscreenController.state;
-function ensureOffscreenDocument(...args) { return offscreenController.ensureOffscreenDocument(...args); }
-function acquireOffscreenTask(...args) { return offscreenController.acquireOffscreenTask(...args); }
-function transferOffscreenTask(...args) { return offscreenController.transferOffscreenTask(...args); }
-function hasActiveProtectedDownloads(...args) { return offscreenController.hasActiveProtectedDownloads(...args); }
-function closeOffscreenDocument(...args) { return offscreenController.closeOffscreenDocument(...args); }
-function releaseOffscreenTask(...args) { return offscreenController.releaseOffscreenTask(...args); }
-function trackDownloadProtectedBlob(...args) { return offscreenController.trackDownloadProtectedBlob(...args); }
-function untrackDownloadProtectedBlob(...args) { return offscreenController.untrackDownloadProtectedBlob(...args); }
-function lookupOwnedDownload(...args) { return offscreenController.lookupOwnedDownload(...args); }
-function reconcileActiveOffscreenDownloads(...args) { return offscreenController.reconcileActiveOffscreenDownloads(...args); }
+// The other worker modules (classic scripts sharing this global scope) call the offscreen lifetime by these global names.
+for (const name of ['ensureOffscreenDocument', 'acquireOffscreenTask', 'transferOffscreenTask', 'hasActiveProtectedDownloads', 'closeOffscreenDocument', 'releaseOffscreenTask',
+  'trackDownloadProtectedBlob', 'untrackDownloadProtectedBlob', 'lookupOwnedDownload', 'reconcileActiveOffscreenDownloads']) globalThis[name] = offscreenController[name];
 
 reconcileActiveOffscreenDownloads();
 
@@ -1666,6 +1601,12 @@ reconcileActiveOffscreenDownloads();
 // ============================================================================
 
 let contextOwnerProofs = 0;
+// Every inline click enters this one admission path with its info object tagged by the worker route that admitted it (set only by that route's
+// own handler; a page message cannot set it). The routes whose own document proved the selected media right before the call skip the
+// gesture-captured owner gate; X keeps its selected-player path.
+const inlineRoutes = new WeakMap();
+const viaInline = (info, ...routes) => routes.includes(inlineRoutes.get(info));
+const OWN_PROOF_ROUTES = ['generic', 'reddit', 'redgifs', 'pixiv', 'vk'];
 async function onContextMenuClicked(info, tab) {
   // DEBUG-MENU-01: one attempt id per save (an inline save brings the id of its click); journal only, never an authority
   if (!info.dbgCid) info.dbgCid = dbgNewCid();
@@ -1674,7 +1615,7 @@ async function onContextMenuClicked(info, tab) {
   dbg('menu', 'click', 'start', undefined, () => ({
     menu: info.menuItemId, hasSrc: Boolean(info.srcUrl), hasLink: Boolean(info.linkUrl), srcHost: info.srcUrl, linkHost: info.linkUrl,
     pageHost: info.pageUrl || (tab && tab.url), frame: info.frameId, kind: info.mediaType,
-    inline: xInlineInfos.has(info) || redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || pixivInlineInfos.has(info) || vkInlineInfos.has(info), batch: postMediaItemInfos.has(info)
+    inline: inlineRoutes.has(info), batch: postMediaItemInfos.has(info)
   }), { cid: info.dbgCid, tab: tab && tab.id });
   // A page/overlay click on X uses its existing selected-player path. Native sources and direct media links
   // retain the generic entry path (including X images); old IDs remain accepted for in-flight menu callbacks.
@@ -1698,9 +1639,10 @@ async function onContextMenuClicked(info, tab) {
     const ownerClaim = { src: rawImageUrl, link: claimsMediaLink ? rawLinkUrl : '', proof: ownerProof };
     // An inline Pixiv click (PIXIV-INLINE-01) was proven by its own document right before this call, bound to that document id.
     // An inline VK click (VK-INLINE-01) was proven by its own document right before this call (the one-shot token, the same frame and document).
-    const owner = redditInlineInfos.has(info) || redgifsInlineInfos.has(info) || postMediaItemInfos.has(info) || pixivInlineInfos.has(info) || vkInlineInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, ownerClaim);
-    if (pixivInlineInfos.has(info)) ownerClaim.documentId = info.pixivInline.documentId;
-    if (owner === 'proven' && !redditInlineInfos.has(info)) Object.assign(info, { authorProof: ownerProof, authorDocumentId: ownerClaim.documentId || '' });
+    const owner = viaInline(info, ...OWN_PROOF_ROUTES) || postMediaItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, ownerClaim);
+    if (viaInline(info, 'generic')) ownerClaim.documentId = info.genericDocumentId;
+    if (viaInline(info, 'pixiv')) ownerClaim.documentId = info.pixivInline.documentId;
+    if (owner === 'proven' && !viaInline(info, 'reddit')) Object.assign(info, { authorProof: ownerProof, authorDocumentId: ownerClaim.documentId || '' });
     dbg('menu', 'owner', owner === 'refused' || owner === 'preview' ? 'refused' : 'ok', owner === 'preview' ? 'SEEK_PREVIEW' : (owner === 'refused' ? 'STALE_OWNER' : undefined), { owner }, { cid: info.dbgCid, tab: tab && tab.id });
     if (owner === 'refused' || owner === 'preview') {
       console.warn(owner === 'preview'
@@ -1772,7 +1714,7 @@ async function onContextMenuClicked(info, tab) {
     let gestureDocumentId = '';
     let gestureAt = null;
     // An own-site inline Save (REDGIFS-INLINE-01): the sending document proves the player itself, bound by a one-shot token and its document id
-    const inlineRedGifs = redgifsInlineInfos.has(info) ? info.redgifsInline : null;
+    const inlineRedGifs = viaInline(info, 'redgifs') ? info.redgifsInline : null;
     let inlineToken = '';
     if (inlineRedGifs) {
       gesturePlayer = true;
@@ -1814,7 +1756,7 @@ async function onContextMenuClicked(info, tab) {
     // 2. Prevent duplicate in-flight resolution/download pipelines for the same normalized source media
     // an inline Save is keyed by the document and the very player it came from: another player's save is a request of its own, a repeat of the same player is a duplicate
     // a Pixiv inline Save this and Save all of the same artwork are requests of their own (a repeat of the same one is the duplicate)
-    const dedupeKey = pixivInlineInfos.has(info) ? `pixiv-inline:${info.pixivInline.mode}:${tab.id}:${rawImageUrl}` : rawImageUrl || rawLinkUrl || (inlineRedGifs
+    const dedupeKey = viaInline(info, 'pixiv') ? `pixiv-inline:${info.pixivInline.mode}:${tab.id}:${rawImageUrl}` : rawImageUrl || rawLinkUrl || (inlineRedGifs
       ? `gesture-player:${tab.id}:${info.frameId ?? 0}:${inlineRedGifs.documentId}:${inlineRedGifs.player}`
       : `gesture-player:${tab.id}:${info.frameId ?? 0}`);
     if (inFlightRequests.has(dedupeKey)) {
@@ -1838,18 +1780,16 @@ async function onContextMenuClicked(info, tab) {
       const settings = await chrome.storage.local.get({
         subfolder: 'SavedImages',
         folderOrganizationMode: 'single',
-        xAuthorFolders: false,
-        redditAuthorFolders: false,
-        pixivAuthorFolders: false
+        ...Object.fromEntries(MediaLatchSites.AUTHOR_SERVICES.map(([id]) => [id + 'AuthorFolders', false]))
       });
 
       const author = await selectedMediaAuthor(info,tab,rawImageUrl);
       await fbSetAuthor(op, author);
       if (author?.site === 'x' && settings.xAuthorFolders === true) settings.xAuthor = author.id;
-      if (author?.site === 'reddit' && settings.redditAuthorFolders === true || author?.site === 'pixiv' && settings.pixivAuthorFolders === true) settings.author = authorFolder(author.site, author.name, author.id);
+      if (author && author.site !== 'x' && settings[author.site+'AuthorFolders'] === true) settings.author = authorFolder(author.site, author.name, author.id);
 
       // An HLS-only post video proven by the selected Reddit player's document (inline): its frozen master address goes straight to the assembly
-      if (redditInlineInfos.has(info) && info.redditInlineMedia && info.redditInlineMedia.redditHls === true) {
+      if (viaInline(info, 'reddit') && info.redditInlineMedia && info.redditInlineMedia.redditHls === true) {
         await executeRedditHlsDownload(info.redditInlineMedia.url, settings, { pageUrl: info.pageUrl || tab?.url || '', feedbackOp: op });
         return;
       }
@@ -1954,12 +1894,12 @@ async function onContextMenuClicked(info, tab) {
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
             frameId: info.frameId,
-            domMeta: vkInlineInfos.has(info) ? {} : undefined,
+            domMeta: viaInline(info, 'vk', 'generic') ? {} : undefined,
             gesturePlayer,
             gestureDocumentId,
             gestureAt,
             inlineToken,
-            redGifsEmbed: redditInlineInfos.has(info) && info.redditInlineRedGifs ? info.redditInlineRedGifs : undefined
+            redGifsEmbed: viaInline(info, 'reddit') && info.redditInlineRedGifs ? info.redditInlineRedGifs : undefined
           });
           if (mediaResolution?.redditHls) {
             // the same assembly from the context menu: the selected player's declared master, read by its own frame and validated again
@@ -1975,18 +1915,18 @@ async function onContextMenuClicked(info, tab) {
             linkUrl: rawLinkUrl,
             tabId: tab?.id,
             frameId: info.frameId,
-            allowPostMedia: true,
+            allowPostMedia: !viaInline(info, 'generic'),
             // VK admission froze this selected source; later URL-based DOM lookup could select a recycled node.
-            domMeta: vkInlineInfos.has(info) ? {} : undefined,
+            domMeta: viaInline(info, 'vk', 'generic') ? {} : undefined,
             // the explicit inline scope of a proven Pixiv control; only this trusted route sets it
-            pixivInline: pixivInlineInfos.has(info) ? { mode: info.pixivInline.mode, count: info.pixivInline.count } : undefined
+            pixivInline: viaInline(info, 'pixiv') ? { mode: info.pixivInline.mode, count: info.pixivInline.count } : undefined
           });
           targetMediaUrl = mediaPlan?.primaryUrl;
         }
       }
 
       // the inline mode decides the shape of the answer: Save this is one exact page, Save all the whole declared list; the other shape is a mismatch, never the other scope
-      if(pixivInlineInfos.has(info) && !mediaPlan?.error && (info.pixivInline.mode==='all')!==Boolean(mediaPlan?.pixivPostMedia))mediaPlan={error:'POST_MEDIA_MISMATCH'};
+      if(viaInline(info, 'pixiv') && !mediaPlan?.error && (info.pixivInline.mode==='all')!==Boolean(mediaPlan?.pixivPostMedia))mediaPlan={error:'POST_MEDIA_MISMATCH'};
       if(mediaPlan?.pixivPostMedia){
         // admitted at entry for this exact preview; resolvePixivPostMedia bound the artwork id to that proven source and validated the complete list.
         // The preview may scroll away or be recycled during /pages: only a replaced (documentId) or navigated admitting document cancels the batch.
@@ -2169,7 +2109,7 @@ async function onContextMenuClicked(info, tab) {
 
     try {
       let mediaResult = null;
-      if (xInlineInfos.has(info)) {
+      if (viaInline(info, 'x')) {
         // The inline button's descriptor: built by this document's content script after it proved the owner again for this
         // very click (see handleXInlineSave); no context-menu cursor state is read. Everything below is the shared X pipeline.
         mediaResult = info.xInlineMedia;
@@ -2197,7 +2137,7 @@ async function onContextMenuClicked(info, tab) {
         mediaResult.isHlsOnly !== true && isXVideoPosterUrl(mediaResult.poster) && Boolean(mediaResult.tweetId || mediaResult.postUrl);
       dbg('x', 'descriptor', mediaResult && (rawMediaUrl || unplayedOwnedXPlayer) ? 'ok' : 'refused', mediaResult && (rawMediaUrl || unplayedOwnedXPlayer) ? undefined : (mediaResult ? 'NO_ADDRESS' : 'NO_DESCRIPTOR'), () => (mediaResult ? {
         type: mediaResult.type, host: rawMediaUrl, blob: mediaResult.isBlobPlayer === true, hls: mediaResult.isHlsOnly === true, isQuote: mediaResult.isQuoteTweet === true,
-        postId: mediaResult.tweetId || undefined, mediaId: mediaResult.mediaIdHint || undefined, index: mediaResult.mediaIndex, inline: xInlineInfos.has(info)
+        postId: mediaResult.tweetId || undefined, mediaId: mediaResult.mediaIdHint || undefined, index: mediaResult.mediaIndex, inline: viaInline(info, 'x')
       } : null), { cid: info.dbgCid, op, tab: tab.id });
       if (!mediaResult || (!rawMediaUrl && !unplayedOwnedXPlayer)) {
         console.warn('[MediaLatch] Медиа под курсором на странице X не найдено');
@@ -2573,7 +2513,6 @@ async function runInlineBatch(b) {
 // again and to build the descriptor with the context-menu builder, re-validates what comes back, and then runs the existing
 // save-x-media-item pipeline above, so both entries share resolution, verification, GIF semantics, folders, the download
 // lifecycle and feedback. A removed, replaced, re-sourced, moved or recycled owner is refused before any provider request.
-const xInlineInfos = new WeakSet();
 const xInlineBusy = new Set();
 
 function sanitizeXInlineMedia(raw) {
@@ -2610,10 +2549,7 @@ function sanitizeXInlineMedia(raw) {
 }
 
 // The extension's own content script, an X page, the active tab, a well-formed one-shot token. Nothing else in the message is read.
-function xInlineSenderOk(message, sender) {
-  return isContentScriptSender(sender) && isXPageUrl(sender.url) && sender.tab.active === true &&
-    typeof message.token === 'string' && INLINE_TOKEN.test(message.token);
-}
+const xInlineSenderOk = (message, sender) => inlineSenderOk(message, sender, isXPageUrl);
 
 // One proven descriptor through the shared save-x-media-item pipeline, unless the same item is already running.
 async function xInlineRun(tab, sender, media, cid, slot) {
@@ -2623,7 +2559,7 @@ async function xInlineRun(tab, sender, media, cid, slot) {
   try {
     dbg('x.inline', 'run', 'start', undefined, () => ({ type: media.type, blob: media.isBlobPlayer, hls: media.isHlsOnly, isQuote: media.isQuoteTweet, postId: media.tweetId || undefined, mediaId: media.mediaIdHint || undefined, index: media.mediaIndex }), { cid, tab: tab.id, frame: sender.frameId });
     const info = { menuItemId: 'save-x-media-item', pageUrl: sender.url, frameId: sender.frameId, xInlineMedia: media, dbgCid: cid, batchSlot: slot };
-    xInlineInfos.add(info);
+    inlineRoutes.set(info, 'x');
     await onContextMenuClicked(info, tab);
     return true;
   } finally {
@@ -2666,13 +2602,9 @@ async function handleXInlineSaveAll(message, sender) {
 // token was minted for), re-validates every field that comes back, and runs the existing save-image-item pipeline with an explicit inline mode: the resolver (the artwork's declared
 // list, exact signed URLs), batches, folders, pacing, notices, statistics and cancellation are the context menu's. The inline entry skips only the gesture-captured owner gate:
 // the fresh proof replaces it, and a stale context-menu capture never decides an inline click.
-const pixivInlineInfos = new WeakSet();
 const pixivInlineBusy = new Set();
 
-function pixivInlineSenderOk(message, sender) {
-  return isContentScriptSender(sender) && sender.frameId === 0 && isPixivPageUrl(sender.url) && sender.tab.active === true &&
-    typeof message.token === 'string' && INLINE_TOKEN.test(message.token);
-}
+const pixivInlineSenderOk = (message, sender) => inlineSenderOk(message, sender, isPixivPageUrl, { top: true });
 
 // Only the fields this route needs, the asset checked again here; anything else in the answer is ignored.
 function sanitizePixivInline(raw, mode) {
@@ -2694,7 +2626,7 @@ async function pixivInlineRun(tab, sender, media, cid, mode) {
   try {
     const info = { menuItemId: 'save-image-item', srcUrl: media.src, linkUrl: media.link, pageUrl: sender.url, frameId: sender.frameId, mediaType: 'image', dbgCid: cid,
       pixivInline: { mode, count: media.count, documentId: typeof sender.documentId === 'string' ? sender.documentId : '' } };
-    pixivInlineInfos.add(info);
+    inlineRoutes.set(info, 'pixiv');
     await onContextMenuClicked(info, tab);
   } finally {
     pixivInlineBusy.delete(key);
@@ -2713,7 +2645,6 @@ function handlePixivInlineSave(message, sender, mode) {
 // batch binding of an item) and runs the existing save-image-item pipeline of onContextMenuClicked, so resolution, verification, folders, batches, the download lifecycle and feedback are
 // the context menu's. The inline entry skips only the gesture-captured owner gate: the fresh proof replaces it. The address travels exactly as the page declared it (query and signature
 // included); nothing here rewrites it, and a page cannot make this route fetch a host outside the VK families.
-const vkInlineInfos = new WeakSet();
 const vkInlineBusy = new Set();
 const VK_PHOTO_HOST = /(?:^|\.)(?:vkuserphoto\.ru|userapi\.com)$/;
 const VK_VIDEO_HOST = /(?:^|\.)(?:vkvideo\.ru|userapi\.com|vkuser\.net|okcdn\.ru|mycdn\.me|cdn-vk\.ru|vk\.com|vk\.ru)$/; // the media hosts the page's own CSP names; a direct file only
@@ -2731,11 +2662,7 @@ function isVkPageUrl(url) {
   }
 }
 
-function vkInlineSenderOk(message, sender) {
-  return isContentScriptSender(sender) && sender.frameId === 0 && isVkPageUrl(sender.url) && sender.tab.active === true &&
-    typeof sender.documentId === 'string' && Boolean(sender.documentId) &&
-    typeof message.token === 'string' && INLINE_TOKEN.test(message.token);
-}
+const vkInlineSenderOk = (message, sender) => inlineSenderOk(message, sender, isVkPageUrl, { top: true, doc: true });
 
 // What the document proved, reduced to the fields this route needs. `expect` (batch items) binds the item to the batch the document opened: same post, same count, the same structure
 // signature, the asked index. Anything else in the answer is ignored.
@@ -2755,7 +2682,7 @@ function sanitizeVkInline(raw, expect) {
     const index = Number.isInteger(raw.index) ? raw.index : -1, count = Number.isInteger(raw.count) ? raw.count : -1, sig = typeof raw.sig === 'string' && /^[a-f0-9]{8}$/.test(raw.sig) ? raw.sig : '';
     if (!id || !ownerId || ownerId !== expect.ownerId || count !== expect.count || index !== expect.index || sig !== expect.sig) return null;
   }
-  return { kind: raw.kind, url, id };
+  return { kind: raw.kind, url, id, author:FeedbackLib.safeAuthor('vk',raw.author) };
 }
 
 // The failure code a refused answer is recorded with: an attachment whose source the page does not declare as a direct file is an unsupported source, anything else no media
@@ -2815,8 +2742,8 @@ async function vkInlineRun(tab, sender, media, cid, slot) {
       media = { ...media, kind: 'video', url: source.url };
     }
     dbg('vk.inline', 'run', 'start', undefined, () => ({ kind: media.kind, host: media.url }), { cid, tab: tab.id, frame: sender.frameId });
-    const info = { menuItemId: 'save-image-item', srcUrl: media.url, pageUrl: sender.url, frameId: sender.frameId, mediaType: media.kind === 'video' ? 'video' : 'image', dbgCid: cid, batchSlot: slot };
-    vkInlineInfos.add(info);
+    const info = { menuItemId: 'save-image-item', srcUrl: media.url, pageUrl: sender.url, frameId: sender.frameId, mediaType: media.kind === 'video' ? 'video' : 'image', dbgCid: cid, batchSlot: slot, selectedAuthor:media.author };
+    inlineRoutes.set(info, 'vk');
     await onContextMenuClicked(info, tab);
     return true;
   } finally {
@@ -2861,8 +2788,6 @@ async function handleVkInlineSaveAll(message, sender) {
 // Folder routing, the download lifecycle and feedback are shared with the menu. The only thing the inline entry skips is the gesture-captured
 // owner gate and the cursor query: the fresh proof replaces them, and a stale context-menu capture must never decide an inline click.
 // Contract: docs/changes/2026-10-04-ux11-rd-backend.md.
-const redditInlineInfos = new WeakSet();
-const redgifsInlineInfos = new WeakSet();
 const REDGIFS_INLINE_MAX_ACTIVE = 4;
 // An inline embed save whose proven frame document no longer answers looks the frame up again at most this many times, after a short pause each
 const REDGIFS_EMBED_RETRIES = 2;
@@ -2986,10 +2911,7 @@ function redditInlineWhy(answer) {
 }
 
 // The extension's own content script, a Reddit page, the active tab, a well-formed one-shot token. Nothing else in the message is read.
-function redditInlineSenderOk(message, sender) {
-  return isContentScriptSender(sender) && isRedditPageUrl(sender.url) && sender.tab.active === true &&
-    typeof message.token === 'string' && INLINE_TOKEN.test(message.token);
-}
+const redditInlineSenderOk = (message, sender) => inlineSenderOk(message, sender, isRedditPageUrl);
 
 // One proven descriptor through the shared save-image-item pipeline, unless the same asset is already running.
 async function redditInlineRun(tab, sender, media, cid, slot) {
@@ -3013,7 +2935,7 @@ async function redditInlineRun(tab, sender, media, cid, slot) {
       info.frameId = frame.frameId;
       info.redditInlineRedGifs = { clipKey: embed, documentId: frame.documentId };
     }
-    redditInlineInfos.add(info);
+    inlineRoutes.set(info, 'reddit');
     await onContextMenuClicked(info, tab);
     return true;
   } finally {
@@ -3054,18 +2976,9 @@ async function handleRedditInlineSaveAll(message, sender) {
 // extension's own content script in the TOP document of www.redgifs.com (never an embed or another site), the active tab, with a document id; the
 // token travels back to that frame and document (RESOLVE_FRAME_MEDIA), which resolves the exact player it issued it for, so the context-menu capture
 // is never read. The rest is the shared menu pipeline (resolution, verification, folders, download, feedback).
-function redgifsInlineSenderOk(message, sender) {
-  if (!isContentScriptSender(sender) || sender.tab.active !== true || sender.frameId !== 0) return false;
-  if (typeof sender.documentId !== 'string' || !sender.documentId) return false;
-  if (typeof message.token !== 'string' || !INLINE_TOKEN.test(message.token)) return false;
-  if (typeof message.player !== 'string' || !/^[a-f0-9]{16}$/.test(message.player)) return false;
-  try {
-    const u = new URL(sender.url);
-    return u.protocol === 'https:' && u.hostname === 'www.redgifs.com' && !/^\/ifr\//i.test(u.pathname);
-  } catch (_) {
-    return false;
-  }
-}
+// the provider's own watch pages (never its /ifr/ embed player), and the player key the click named
+const isRedgifsWatchUrl = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && u.hostname === 'www.redgifs.com' && !/^\/ifr\//i.test(u.pathname); } catch (_) { return false; } };
+const redgifsInlineSenderOk = (message, sender) => inlineSenderOk(message, sender, isRedgifsWatchUrl, { top: true, doc: true }) && typeof message.player === 'string' && /^[a-f0-9]{16}$/.test(message.player);
 
 async function handleRedgifsInlineSave(message, sender) {
   const cid = dbgCidOf(message);
@@ -3091,7 +3004,9 @@ async function handleRedgifsInlineSave(message, sender) {
   }
   redgifsInlineActive++;
   try {
-    redgifsInlineInfos.add(info);
+    const attribution=await inlineAsk(sender.tab,sender,{action:'REDGIFS_INLINE_AUTHOR',token:message.token});
+    info.selectedAuthor=FeedbackLib.safeAuthor('redgifs',attribution?.author);
+    inlineRoutes.set(info, 'redgifs');
     await onContextMenuClicked(info, sender.tab);
   } finally {
     redgifsInlineActive--;
@@ -3099,7 +3014,27 @@ async function handleRedgifsInlineSave(message, sender) {
 }
 
 // One router for the inline actions of the content script (content/content_inline.js): the route, and the label its failure is logged with.
+// A generic inline click is admitted only by its own document-bound, one-shot proof.
+// any other http(s) page: a site with its own inline surface never reaches the generic route (the same host list as the content script)
+const isGenericPageUrl = (url) => { try { const u = new URL(url); return /^https?:$/.test(u.protocol) && !u.username && !u.password && !MediaLatchSites.hasOwnInline(u.hostname); } catch (_) { return false; } };
+const genericInlineSenderOk = (message, sender) => inlineSenderOk(message, sender, isGenericPageUrl, { top: true, doc: true });
+function sanitizeGenericInline(raw, sender) {
+  if (!raw || !['image','video'].includes(raw.kind) || typeof raw.url !== 'string' || raw.url.length > 4096 || /[\u0000-\u0020]/.test(raw.url)) return null;
+  try { const u = new URL(raw.url); if (!/^https?:$/.test(u.protocol) || u.username || u.password || /\.(?:m3u8|mpd)$/i.test(u.pathname)) return null; } catch (_) { return null; }
+  const site = fbSiteOf(sender.url, '');
+  return {kind:raw.kind,url:raw.url,author:FeedbackLib.safeAuthor(site,raw.author)};
+}
+function handleGenericInlineSave(message, sender) {
+  return runInlineSingle({scope:'generic.inline',phase:'save',senderOk:genericInlineSenderOk,ask:{action:'GENERIC_INLINE_OWNER',token:message.token},
+    sanitize:raw=>sanitizeGenericInline(raw,sender),why:answer=>inlineWhy(answer),warn:()=>['[MediaLatch] Inline save refused: the selected asset changed'],
+    async run(tab,sn,media,cid) {
+      const info={menuItemId:'save-image-item',srcUrl:media.url,pageUrl:sn.url,frameId:sn.frameId,mediaType:media.kind,dbgCid:cid,selectedAuthor:media.author,genericDocumentId:sn.documentId};
+      inlineRoutes.set(info, 'generic');await onContextMenuClicked(info,tab);
+    }
+  },message,sender);
+}
 const INLINE_ROUTES = {
+  GENERIC_INLINE_SAVE: ['Inline Save', handleGenericInlineSave],
   X_INLINE_SAVE: ['Inline X Save', handleXInlineSave],
   X_INLINE_SAVE_ALL: ['Inline X Save all', handleXInlineSaveAll],
   PIXIV_INLINE_SAVE: ['Inline Pixiv Save', (m, s) => handlePixivInlineSave(m, s, 'one')],

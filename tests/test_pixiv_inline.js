@@ -139,7 +139,7 @@ async function test(name, fn) {
   console.log('\n--- PIXIV-INLINE-01: registration ---');
   await test('manifest: Pixiv is served by the one inline content script (top frame, no new permission); the manifest-driven package and syntax lists include it', async () => {
     const m = JSON.parse(code('manifest.json')), entries = m.content_scripts.filter((c) => c.js.includes('content/content_inline.js'));
-    assert.equal(entries.length, 1); assert(entries[0].matches.includes('https://www.pixiv.net/*')); assert.deepEqual(entries[0].js, ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_inline.js']); assert(!entries[0].all_frames, 'the top frame only');
+    assert.equal(entries.length, 1); assert(entries[0].matches.includes('https://www.pixiv.net/*')); assert.deepEqual(entries[0].js, ['lib/debug_journal.js', 'lib/i18n.js', 'lib/sites.js', 'content/content_inline.js']); assert(!entries[0].all_frames, 'the top frame only');
     assert.deepEqual(m.permissions, ['contextMenus', 'downloads', 'storage', 'scripting', 'declarativeNetRequest', 'offscreen']); assert.deepEqual(m.host_permissions, ['http://*/*', 'https://*/*']);
     // tools/package.mjs ships every content/content_*.js a manifest entry references (and refuses a missing one); tools/verify.mjs syntax-checks every content script of the manifest
     const pkg = code('tools/package.mjs'), ver = code('tools/verify.mjs');

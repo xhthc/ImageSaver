@@ -105,11 +105,14 @@
         "https://reddit.com/*",
         "https://www.redgifs.com/*",
         "https://vk.ru/*",
-        "https://vk.com/*"
+        "https://vk.com/*",
+        "http://*/*",
+        "https://*/*"
       ],
       "js": [
         "lib/debug_journal.js",
         "lib/i18n.js",
+        "lib/sites.js",
         "content/content_inline.js"
       ],
       "run_at": "document_start"

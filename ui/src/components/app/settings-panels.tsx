@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Panel, SectionHeader, SettingRow } from "@/components/app/section"
-import { createSettings } from "@/core/settings.js"
+import { AUTHOR_SERVICES, createSettings } from "@/core/settings.js"
 import { createUpdates, isNewer, RELEASES_URL } from "@/core/updates.js"
 import { useI18n } from "@/hooks/use-i18n"
 import { getEnv } from "@/lib/env"
@@ -149,11 +149,6 @@ export function SavingPanel({ settings }: { settings: SettingsController }) {
 }
 
 // Author folders (PIXIV-SAVING-POLISH-01): one service menu in the Embed control style; each choice is a Saving draft written by Save.
-const AUTHOR_SERVICES = [
-  ["xAuthorFolders", "x.com"],
-  ["redditAuthorFolders", "Reddit"],
-  ["pixivAuthorFolders", "Pixiv"],
-] as const
 
 function AuthorFolders({ settings, s }: { settings: SettingsController; s: any }) {
   const { t } = useI18n()

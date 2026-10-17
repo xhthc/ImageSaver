@@ -314,6 +314,7 @@
       }
     }
     const hint = hintFor(target, x, y, media);
+    let postAuthor=null;try{postAuthor=globalThis.__medialatchInline?.authorSnapshot(media?.ref?.deref() || target) || null;}catch(_){}
     return {
       ref,
       at: Date.now(),
@@ -322,6 +323,7 @@
       media,
       selectable: hint.selectable,
       linkHref: hint.linkHref,
+      postAuthor,
       evidence: hint.media
     };
   };

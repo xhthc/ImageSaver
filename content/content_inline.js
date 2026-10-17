@@ -29,6 +29,15 @@
   const proofs = [];
   const controls = [];
   const on = (target, type, fn, opts) => { target.addEventListener(type, fn, opts); listeners.push([target, type, fn, opts]); };
+  // ONE runtime message listener per document answers the worker's proof questions of every control here; each handler answers only its own
+  // actions (undefined = not mine). It exists only once a handler does, and teardown removes it.
+  let proofListener = null;
+  function addProof(fn) {
+    proofs.push(fn);
+    if (proofListener || typeof chrome === 'undefined' || !chrome.runtime?.onMessage) return;
+    proofListener = (message, sender, sendResponse) => { for (const handle of proofs) { const r = handle(message, sender, sendResponse); if (r !== undefined) return r; } };
+    chrome.runtime.onMessage.addListener(proofListener);
+  }
   const here = () => (typeof location !== 'undefined' && location.href) || '';
 
   // '' when the browser has no random source: nothing is minted without one
@@ -465,8 +474,138 @@
       }, { capture: true, passive: true });
       on(window, 'blur', (e) => { if (e.target === window) hide(); }, true);
     }
-    if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) { chrome.runtime.onMessage.addListener(onProof); proofs.push(onProof); }
+    addProof(onProof);
     controls.push(ctl);
+    return ctl;
+  }
+
+  // Account metadata is local to the selected card; it never grants access to a source. A post's account is given only to that post's own media:
+  // never to media inside its header (the avatar), media inside a link to an account page, media inside a comment, reply, quote or nested card
+  // (with or without a profile link), or media whose nearest block naming an account does not also hold the post's own attribution; and only
+  // with positive evidence that the media is the post's attachment (see below). Unknown or ambiguous stays null: the ordinary folder layout.
+  const AUTHOR_SITE_OF_HOST = { 'instagram.com': 'instagram', 'tiktok.com': 'tiktok', 'vk.ru': 'vk', 'vk.com': 'vk', 'redgifs.com': 'redgifs' };
+  const ACCOUNT_LINK = {
+    instagram: (p) => { const m = /^\/([A-Za-z0-9._]{1,30})\/?$/.exec(p); return m && !/^(?:accounts|explore|direct|reels|stories|about|legal|p)$/i.test(m[1]) ? { site: 'instagram', id: m[1].toLowerCase(), name: m[1] } : null; },
+    tiktok: (p) => { const m = /^\/@([A-Za-z0-9._]{1,24})\/?$/.exec(p); return m ? { site: 'tiktok', id: m[1].toLowerCase(), name: m[1] } : null; },
+    vk: (p, a) => {
+      const m = /^\/([A-Za-z][A-Za-z0-9_.]{1,31})\/?$/.exec(p);
+      if (!m || /^(?:wall|photo|video|clip|album|im|feed|away|login|join|search|market)(?:\d|$)/i.test(m[1])) return null;
+      const numbered = /^(id|club|public)([1-9]\d{0,11})$/.exec(m[1]);
+      return { site: 'vk', id: numbered ? (numbered[1] === 'id' ? '' : '-') + numbered[2] : m[1].toLowerCase(), name: (a.textContent || '').trim().slice(0, 64) };
+    },
+    redgifs: (p) => { const m = /^\/users\/([A-Za-z0-9_-]{1,32})\/?$/.exec(p); return m ? { site: 'redgifs', id: m[1].toLowerCase(), name: m[1] } : null; }
+  };
+  const POST_LINK = { instagram: /^\/(?:p|reel|reels)\/([A-Za-z0-9_-]{1,64})\/?$/, tiktok: /^\/@([A-Za-z0-9._]{1,24})\/(?:video|photo)\/(\d{5,30})\/?$/ };
+  const HEADER = 'header, [data-testid="post-header"], .PostHeader, .post_header';
+  // someone else's words inside the post: a comment, a reply, a quote or a nested card, with or without a profile link
+  const FOREIGN = '[role="comment"], [data-e2e*="comment"], [data-e2e*="reply"], blockquote, q, article, [role="article"]';
+  function postAuthorOf(el, explicitRoot) {
+    try {
+      if (!el || !['IMG', 'VIDEO'].includes(el.tagName)) return null;
+      const host = location.hostname.toLowerCase().replace(/^www\./, ''), site = AUTHOR_SITE_OF_HOST[host];
+      const root = site && (explicitRoot || el.closest('article, [data-e2e="recommend-list-item-container"], [data-e2e="browse-video"], .GifPreview, .TapTracker'));
+      if (!root || root === el || !root.contains(el)) return null;
+      const links = Array.from(root.querySelectorAll('a[href]'));
+      if (links.length > 80) return null;
+      const path = (a) => { try { const u = new URL(a.getAttribute('href'), location.href); return u.protocol === 'https:' && !u.username && !u.password && !u.port && u.hostname.toLowerCase().replace(/^www\./, '') === host ? u.pathname : ''; } catch (_) { return ''; } };
+      const account = (a) => ACCOUNT_LINK[site](path(a), a);
+      const unique = (values) => { const ids = new Map(values.filter(Boolean).map((v) => [v.id, v])); return ids.size === 1 ? [...ids.values()][0] : null; };
+      // the post's account and the element that proves it
+      let author = null, source = null;
+      if (site === 'tiktok') {
+        const posts = links.map((l) => ({ l, m: POST_LINK.tiktok.exec(path(l)) })).filter((x) => x.m);
+        if (new Set(posts.map((x) => x.m[1].toLowerCase() + '/' + x.m[2])).size !== 1) return null;
+        author = { site, id: posts[0].m[1].toLowerCase(), name: posts[0].m[1] }; source = posts[0].l;
+      } else if (site === 'instagram') {
+        if (root.tagName !== 'ARTICLE' || new Set(links.map((l) => POST_LINK.instagram.exec(path(l))?.[1]).filter(Boolean)).size !== 1) return null;
+        source = root.querySelector('header');
+        author = source && source.closest('article') === root ? unique(Array.from(source.querySelectorAll('a[href]')).map(account)) : null;
+      } else if (site === 'vk') {
+        source = root.querySelector('[data-testid="post-header"], .PostHeader, .post_header, h5');
+        author = source ? unique(Array.from(source.querySelectorAll('a[href]')).map(account)) : null;
+      } else {
+        const owners = links.filter(account);
+        author = unique(owners.map(account)); source = owners[0];
+      }
+      if (!author || !source) return null;
+      // positive evidence that the media is the post's own: a TikTok/RedGIFs post is its one video; an Instagram attachment sits in a branch
+      // that names nobody (no text) below the block it shares with the post header. VK keeps its own selected-post checks (authorRoot).
+      if (site === 'tiktok' || site === 'redgifs') { const videos = root.querySelectorAll('video'); if (videos.length !== 1 || videos[0] !== el) return null; }
+      let branch = el, joined = false;
+      for (let p = el.parentElement; p && p !== root; p = p.parentElement) {
+        if (p.matches(HEADER) || p.matches(FOREIGN) || (p.tagName === 'A' && account(p))) return null;
+        if (joined) continue;
+        if (p.contains(source)) { joined = true; continue; }
+        if (Array.from(p.querySelectorAll('a[href]')).some(account)) return null; // a block naming an account without the post's attribution
+        branch = p;
+      }
+      return site === 'instagram' && branch.textContent.trim() ? null : author;
+    } catch (_) {}
+    return null;
+  }
+
+  // Individual, declared HTTP(S) assets on other sites. Specialized routes keep their own surface.
+  function genericHandler() {
+    const G = {...K, MIN_W:160, MIN_H:96, Z:2147483000};
+    const source = el => {
+      let raw = el.currentSrc || el.src || '';
+      if (!raw && el.tagName==='VIDEO' && !el.getAttribute('src')) for(const item of Array.from(el.querySelectorAll('source')).slice(0,16)) {
+        if(item.parentElement!==el)continue;
+        const type=item.getAttribute('type'),media=item.getAttribute('media');
+        if(type && el.canPlayType(type)==='')continue;
+        if(media && typeof window.matchMedia==='function' && !window.matchMedia(media).matches)continue;
+        raw=item.src || item.getAttribute('src') || '';if(raw)break;
+      }
+      try { const u = new URL(raw); return /^https?:$/.test(u.protocol) && !u.username && !u.password && !/\.(?:m3u8|mpd)$/i.test(u.pathname) ? raw : ''; } catch (_) { return ''; }
+    };
+    function snapshot(el) {
+      try {
+        if (!el || !['IMG','VIDEO'].includes(el.tagName) || el.isConnected === false || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('role') === 'presentation') return null;
+        if (el.tagName === 'IMG' && (!el.complete || !el.naturalWidth)) return null;
+        const src = source(el); if (!src) return null;
+        const r = el.getBoundingClientRect(); if (r.width < G.MIN_W || r.height < G.MIN_H) return null;
+        const chain = []; for (let p = el.parentElement, n = 0; p && n < 24; p = p.parentElement, n++) chain.push(new WeakRef(p));
+        return {elRef:new WeakRef(el),kind:el.tagName === 'VIDEO'?'video':'image',src,href:here(),chain,author:postAuthorOf(el)};
+      } catch (_) { return null; }
+    }
+    const same = (a,b) => Boolean(a && b && a.elRef.deref() === b.elRef.deref() && a.kind === b.kind && a.src === b.src && a.href === b.href && sameChain(a,b) && JSON.stringify(a.author) === JSON.stringify(b.author));
+    const holds = snap => same(snap, snapshot(snap.elRef.deref()));
+    function place(el) {
+      try {
+        const r = el.getBoundingClientRect(), left = r.left + G.INSET, top = r.top + G.INSET;
+        let L = Math.max(0,r.left), T = Math.max(0,r.top), R = Math.min(window.innerWidth,r.right), B = Math.min(window.innerHeight,r.bottom);
+        for (let p = el.parentElement, n = 0; p && n < 24; p = p.parentElement,n++) if (clipsOf(window.getComputedStyle(p))) { const b = p.getBoundingClientRect(); L=Math.max(L,b.left);T=Math.max(T,b.top);R=Math.min(R,b.right);B=Math.min(B,b.bottom); }
+        if (left < L || top < T || left+G.SIZE > R || top+G.SIZE > B) return null;
+        for (const [x,y] of [[left+3,top+3],[left+G.SIZE-3,top+3],[left+3,top+G.SIZE-3],[left+G.SIZE-3,top+G.SIZE-3]]) {
+          const hit = document.elementFromPoint(x,y);
+          if (!hit || !(ctl.own(hit) || hit === el || el.contains(hit))) return null;
+        }
+        return {left:Math.round(left),top:Math.round(top),w:G.SIZE,h:G.SIZE,vis:{left:L,top:T,right:R,bottom:B},sig:[left,top,R,B].map(Math.round).join(',')};
+      } catch (_) { return null; }
+    }
+    const atPlace = snap => {
+      const el = snap.elRef.deref(), expected = el && place(el), box = ctl.st.host?.getBoundingClientRect();
+      return Boolean(expected && box && Math.abs(expected.left-box.left)<=G.TOL && Math.abs(expected.top-box.top)<=G.TOL);
+    };
+    const ctl = createControl(c => ({
+      name:'generic',K:G,fixed:true,align:'flex-start',hideOn:['popstate'],rearmOn:[],followOn:['scroll','resize'],
+      candidate(stack) { for (const el of stack.slice(0,G.MAX_STACK)) { if (c.own(el)) continue; if (['IMG','VIDEO'].includes(el.tagName)) return {el,kind:el.tagName==='VIDEO'?'video':'image'}; } return null; },
+      snapshot,holds,plan(el) { const lay=place(el);return lay?{n:0,compact:false,lay}:null; },
+      watch(observer,el,snap) { observer.observe(el,{attributes:true,attributeFilter:['src','srcset','class','style','role','aria-hidden'],childList:true,subtree:true}); for(const ref of snap.chain){const p=ref.deref();if(p)observer.observe(p,{childList:true,attributes:true,attributeFilter:['style','class']});} },
+      focusTarget(el) { if (!['IMG','VIDEO'].includes(el.tagName) && el.tagName==='A') { const media=el.querySelectorAll('img,video');el=media.length===1?media[0]:null; } return el && ['IMG','VIDEO'].includes(el.tagName)?{el,kind:el.tagName==='VIDEO'?'video':'image'}:null; },
+      showDetail:(_,snap)=>({kind:snap.kind}),
+      prepare(_,shown,cid) {
+        const fresh=shown && snapshot(shown.elRef.deref());
+        if (!same(shown,fresh) || !atPlace(shown)) return {gate:'STALE_OWNER'};
+        return {key:fresh.src,store:'pending',entry:{snap:fresh,href:here(),cid},action:'GENERIC_INLINE_SAVE',start:()=>({kind:fresh.kind})};
+      },
+      proof:{GENERIC_INLINE_OWNER:{phase:'proof',detail:()=>({}),run(m){
+        const entry=c.pending.get(m.token);c.pending.delete(m.token);
+        if(!entry || Date.now()-entry.at>G.TOKEN_TTL)return {ok:false,reason:'NO_TOKEN'};
+        if(entry.href!==here() || !holds(entry.snap) || !atPlace(entry.snap))return {ok:false,reason:'STALE_OWNER'};
+        return {ok:true,media:{kind:entry.snap.kind,url:entry.snap.src,author:entry.snap.author}};
+      }}}
+    }));
     return ctl;
   }
 
@@ -931,7 +1070,7 @@
         else if (kind === 'tile') { if (!route || route.kind === 'photo' || (el.tagName !== 'IMG' && el.tagName !== 'VIDEO')) return null; } // only a list asks for a tile
         else return null;
         const found = ownerOf(el), root = found && !otherPost(el, found.root, found.key) && !inComment(el, found.root, found.key) ? found.root : null;
-        const snap = { elRef: new WeakRef(el), anchorRef: anchor ? new WeakRef(anchor) : null, kind, src: String(el.currentSrc || el.src || ''), route: route ? route.id : '', key: root ? found.key : '', ownerRef: root ? new WeakRef(root) : NO_OWNER, href: location.href, count: 0 };
+        const snap = { elRef: new WeakRef(el), anchorRef: anchor ? new WeakRef(anchor) : null, kind, src: String(el.currentSrc || el.src || ''), route: route ? route.id : '', key: root ? found.key : '', ownerRef: root ? new WeakRef(root) : NO_OWNER, href: location.href, count: 0, author:root?postAuthorOf(el,root):null };
         if (counted && !root) listNote(el, 'NO_ROOT', 0);
         if (counted && root && kind !== 'tile') {
           const items = listOf(root, snap.key);
@@ -943,7 +1082,7 @@
     }
     function same(a, b) {
       return Boolean(a && b) && a.elRef.deref() === b.elRef.deref() && (a.anchorRef ? a.anchorRef.deref() : null) === (b.anchorRef ? b.anchorRef.deref() : null) && a.kind === b.kind && a.src === b.src &&
-        a.route === b.route && a.key === b.key && a.ownerRef.deref() === b.ownerRef.deref() && a.href === b.href;
+        a.route === b.route && a.key === b.key && a.ownerRef.deref() === b.ownerRef.deref() && a.href === b.href && JSON.stringify(a.author) === JSON.stringify(b.author);
     }
     function holds(snap) {
       try {
@@ -1104,10 +1243,10 @@
       if (snap.kind === 'tile') {
         const page = urlOf(snap.anchorRef?.deref()?.getAttribute('href') || '');
         if (!snap.route.startsWith('video') || !page || page.pathname.replace(/\/$/, '') !== '/' + snap.route) return { ok: false, reason: 'UNSUPPORTED_SOURCE' };
-        const media = { kind: 'video-page', url: page.href, id: snap.route };
+        const media = { kind: 'video-page', url: page.href, id: snap.route, author:snap.author };
         return { ok: true, media: bind ? { ...media, ...bind } : media };
       }
-      const media = { kind: snap.kind, url: snap.src, id: snap.route };
+      const media = { kind: snap.kind, url: snap.src, id: snap.route, author:snap.author };
       return { ok: true, media: bind ? { ...media, ...bind } : media };
     }
     // The background asks this document to prove the snapshot a second time, for the very action the token was minted for. One shot, whatever the answer.
@@ -1225,6 +1364,7 @@
         VK_INLINE_OWNER_ITEM: { phase: 'item.proof', run: (m) => c.batchItem(m.token, m.index), detail: (m, a) => ({ index: Number.isInteger(m.index) ? m.index : undefined, kind: a && a.media && a.media.kind }) }
       }
     }));
+    ctl.authorRoot = el => { const found=ownerOf(el);return found && !otherPost(el,found.root,found.key) && !inComment(el,found.root,found.key)?found.root:null; };
     return ctl;
   }
 
@@ -2378,7 +2518,7 @@
       if (!token) { DBG.log('redgifs.inline', 'click', 'failed', 'NO_RANDOM', null, { cid }); return; }
       DBG.log('redgifs.inline', 'click', 'start', undefined, null, { cid });
       item.busyAt = now;
-      stash(inl.pending, token, { video: s.video, owner: s.owner, evidence: s.evidence, href: s.href, at: now, cid }, RG.TOKEN_TTL, RG.MAX_PENDING);
+      stash(inl.pending, token, { video: s.video, owner: s.owner, evidence: s.evidence, href: s.href, at: now, cid, account: accountSnapshot(s.video) }, RG.TOKEN_TTL, RG.MAX_PENDING);
       dispatch('redgifs.inline', { action: 'REDGIFS_INLINE_SAVE', token, player: item.id }, token, inl.pending, item, [item.btn]);
     }
 
@@ -2425,6 +2565,37 @@
 
   // ---- start only the handler of the page's own host (every handler is for the top frame) ----
   const api = { labels: isLabels, teardown() {} };
+  // Freeze account metadata at the actual gesture, then hand it out only for that admission.
+  const accountAdmissions = new Map();
+  function accountSnapshot(el) {
+    try {
+      const root = api.vk ? api.vk.authorRoot(el) : el?.closest('article, [data-e2e="recommend-list-item-container"], [data-e2e="browse-video"], .GifPreview, .TapTracker');
+      const author = root && postAuthorOf(el,root);
+      return author ? {elRef:new WeakRef(el),rootRef:new WeakRef(root),href:here(),src:String(el.currentSrc || el.src || ''),author} : null;
+    } catch (_) { return null; }
+  }
+  function accountHeld(snap) {
+    const fresh = snap && accountSnapshot(snap.elRef.deref());
+    return Boolean(fresh && snap.href===fresh.href && snap.src===fresh.src && snap.rootRef.deref()===fresh.rootRef.deref() && JSON.stringify(snap.author)===JSON.stringify(fresh.author));
+  }
+  api.authorSnapshot = accountSnapshot;
+  api.admitAuthor = (proof,el,media,snapshot) => {
+    if (typeof proof !== 'string' || proof.length>80 || !snapshot || snapshot.elRef.deref()!==(media || el) || !accountHeld(snapshot)) return;
+    stash(accountAdmissions,proof,{at:Date.now(),author:snapshot.author,href:here()},30000,8);
+  };
+  const accountProof = (message,sender,respond) => {
+    if (!['SELECTED_POST_AUTHOR','REDGIFS_INLINE_AUTHOR'].includes(message?.action)) return;
+    if (!sender || sender.tab || sender.id!==chrome.runtime.id) return;
+    let author = null;
+    if (message.action==='SELECTED_POST_AUTHOR') {
+      const entry=accountAdmissions.get(message.proof);
+      if(entry && Date.now()-entry.at<30000 && entry.href===here())author=entry.author;
+    } else {
+      const entry=api.redgifs?.state.pending.get(message.token);
+      if(entry && Date.now()-entry.at<K.TOKEN_TTL && SITE.redgifs.holds(entry) && accountHeld(entry.account))author=entry.account.author;
+    }
+    respond({author});return true;
+  };
   function start() {
     if (typeof document === 'undefined' || typeof window === 'undefined') return;
     let host = '';
@@ -2434,7 +2605,10 @@
     if (SITE.redgifs && SITE.redgifs.allowed()) api.redgifs = redgifsHandler(SITE.redgifs);
     if (host === 'www.pixiv.net') api.pixiv = pixivHandler();
     if (host === 'vk.ru' || host === 'vk.com') api.vk = vkHandler();
+    // every other http(s) top document gets the generic control; a site with its own surface never does (one shared host list, lib/sites.js)
+    if (!controls.length && globalThis.MediaLatchSites && !MediaLatchSites.hasOwnInline(host) && window.top === window && typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) api.generic = genericHandler();
     if (!controls.length || typeof window.addEventListener !== 'function') return;
+    addProof(accountProof);
     on(window, 'pagehide', (e) => { if (e && e.persisted === true) controls.forEach((c) => c.suspend()); else api.teardown(); }, true);
     on(window, 'pageshow', (e) => { if (e && e.persisted === true) controls.forEach((c) => { c.suspend(); c.st.href = here(); c.resume?.(); }); }, true);
   }
@@ -2443,9 +2617,9 @@
     for (const c of controls) c.teardown();
     for (const [target, type, fn, opts] of listeners) { try { target.removeEventListener(type, fn, opts); } catch (_) {} }
     listeners.length = 0;
-    if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage && typeof chrome.runtime.onMessage.removeListener === 'function') for (const fn of proofs) chrome.runtime.onMessage.removeListener(fn);
-    proofs.length = 0;
-    controls.length = 0;
+    if (proofListener && typeof chrome !== 'undefined' && typeof chrome.runtime?.onMessage?.removeListener === 'function') chrome.runtime.onMessage.removeListener(proofListener);
+    proofs.length = 0; proofListener = null;
+    controls.length = 0; accountAdmissions.clear();
     if (globalThis.__medialatchInline === api) delete globalThis.__medialatchInline;
   };
   globalThis.__medialatchInline = api;

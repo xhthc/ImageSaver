@@ -289,7 +289,7 @@ async function test(name, fn) {
   await test('manifest: VK is served by the one inline content script (top frame, no new permission)', async () => {
     const m = JSON.parse(code('manifest.json')), entries = m.content_scripts.filter((c) => c.js.includes('content/content_inline.js'));
     assert.equal(entries.length, 1); assert(entries[0].matches.includes('https://vk.ru/*') && entries[0].matches.includes('https://vk.com/*')); assert(!entries[0].all_frames, 'the top frame only');
-    assert.deepEqual(entries[0].js, ['lib/debug_journal.js', 'lib/i18n.js', 'content/content_inline.js']);
+    assert.deepEqual(entries[0].js, ['lib/debug_journal.js', 'lib/i18n.js', 'lib/sites.js', 'content/content_inline.js']);
     assert.deepEqual(m.permissions, ['contextMenus', 'downloads', 'storage', 'scripting', 'declarativeNetRequest', 'offscreen']); assert.deepEqual(m.host_permissions, ['http://*/*', 'https://*/*']);
     assert(code('tools/verify.mjs').includes("'test_vk_inline.js'"), 'the suite runs in tools/verify.mjs');
   });
@@ -297,12 +297,12 @@ async function test(name, fn) {
   await test('registries: vk is appended after every existing site, a VK batch has labels in both languages and no author is invented', async () => {
     const root = { structuredClone, console }; vm.createContext(root);
     for (const f of ['lib/feedback.js', 'lib/sites.js', 'lib/i18n.js']) vm.runInContext(code(f), root);
-    const SITES = root.MediaLatchSites.SITES, ids = SITES.map((s) => s.id), vk = SITES[SITES.length - 1];
-    assert.equal(vk.id, 'vk'); assert.equal(ids.filter((id) => id === 'vk').length, 1); assert.equal(ids[ids.length - 2], 'wikimedia', 'nothing was reordered');
+    const SITES = root.MediaLatchSites.SITES, ids = SITES.map((s) => s.id), vk = SITES.find(s=>s.id==='vk');
+    assert.equal(vk.id, 'vk'); assert.equal(ids.filter((id) => id === 'vk').length, 1); assert.equal(ids[ids.indexOf('vk')-1], 'wikimedia', 'nothing was reordered');
     assert.deepEqual([...vk.domains], ['vk.com', 'vk.ru', 'vkvideo.ru', 'vkuserphoto.ru', 'userapi.com']);
     for (const lang of ['en', 'ru']) for (const key of ['statistics.site.vk', 'downloads.batch.site.vk']) assert(root.ImageSaverI18n.t(lang, key) && root.ImageSaverI18n.t(lang, key) !== key, lang + ' ' + key);
     const FB = root.ImageSaverFeedback;
-    assert.equal(FB.safeAuthor('vk', { site: 'vk', id: '218466214', name: 'Wall owner' }), null, 'the wall owner is not an author');
+    assert.equal(FB.safeAuthor('vk', { site: 'vk', id: '218466214', name: 'Posting account' }).id, '218466214', 'shape validation accepts explicit metadata; wall IDs alone never supply it');
     assert.deepEqual(JSON.parse(JSON.stringify(FB.safeAuthor('pixiv', { site: 'pixiv', id: '12', name: 'n' }))), { site: 'pixiv', id: '12', name: 'n' }, 'existing author labels are untouched');
     assert.equal(FB.authorLabel('x', { site: 'x', id: 'abc', name: 'abc' }), '@abc');
   });

@@ -147,9 +147,17 @@ async function selectedXAuthor(info,tab,src){
  * Reddit: the selected post's username (lowercase, like X). Pixiv: "<display name> (<user id>)"; a long name is shortened so the
  * stable id always survives, and an empty name leaves the id alone. One portable segment, limited like a site segment.
  */
+// accounts proven by the selected page itself (generic, VK and RedGIFs inline proofs, or the context-menu capture of that page)
+const PAGE_ACCOUNT_SITES = ['vk', 'redgifs', 'instagram', 'tiktok'];
 function authorFolder(site, name, id) {
   if (site === 'reddit') {
     return typeof name === 'string' && /^[A-Za-z0-9_-]{3,20}$/.test(name) ? { site, folder: FolderPath.normalizeSegment(name.toLowerCase()) } : null;
+  }
+  if (PAGE_ACCOUNT_SITES.includes(site)) {
+    const author=FeedbackLib.safeAuthor(site,{site,id,name});if(!author)return null;
+    const tail=' ('+author.id+')';
+    const display=site==='vk' && author.name ? FolderPath.normalizeSegment(author.name).slice(0,Math.max(0,FolderPath.LIMITS.siteLength-tail.length)).replace(/[\uD800-\uDBFF]$/,'').trim() : '';
+    return {site,folder:FolderPath.normalizeSegment(display?display+tail:author.id)};
   }
   if (site === 'pixiv' && typeof id === 'string' && /^\d{1,12}$/.test(id)) {
     const tail = ` (${id})`;
@@ -222,6 +230,15 @@ async function selectedAuthorFolder(settings, info, tab, src) {
 // Independent of folder preferences: use only the owner already proved for this selected media.
 async function selectedMediaAuthor(info, tab, src) {
   const page = info.pageUrl || tab?.url || '';
+  const site=fbSiteOf(page,'');
+  if (PAGE_ACCOUNT_SITES.includes(site)) {
+    if(viaInline(info, 'generic', 'vk', 'redgifs'))return FeedbackLib.safeAuthor(site,info.selectedAuthor);
+    if(info.authorProof && tab?.id)try {
+      const answer=await chrome.tabs.sendMessage(tab.id,{action:'SELECTED_POST_AUTHOR',proof:info.authorProof},{frameId:Number.isInteger(info.frameId)?info.frameId:0,...(info.authorDocumentId?{documentId:info.authorDocumentId}:{})});
+      return FeedbackLib.safeAuthor(site,answer?.author);
+    } catch (_) {}
+    return null;
+  }
   if (isXPageUrl(page)) {
     const id = await selectedXAuthor(info, tab, src);
     return id ? {site: 'x', id, name: id} : null;
@@ -265,7 +282,7 @@ function resolveDownloadPath({
   const owner = determineOwningWebsite({ pageUrl, resolvedUrl, group });
   // the X folder keeps its exact rule; a Reddit/Pixiv author folder applies only to a file owned by that same site
   const author = /^[a-zA-Z0-9_]{1,15}$/.test(xAuthor) && owner === 'x' ? FolderPath.normalizeSegment(xAuthor.toLowerCase())
-    : (authorChoice && (authorChoice.site === 'reddit' || authorChoice.site === 'pixiv') && authorChoice.site === owner && typeof authorChoice.folder === 'string'
+    : (authorChoice && authorChoice.site !== 'x' && MediaLatchSites.AUTHOR_SERVICES.some(([id]) => id === authorChoice.site) && authorChoice.site === owner && typeof authorChoice.folder === 'string'
       ? FolderPath.normalizeSegment(authorChoice.folder).substring(0, FolderPath.LIMITS.siteLength) : '');
 
   if (folderOrganizationMode !== 'by_site_and_type') {

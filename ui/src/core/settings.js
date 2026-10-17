@@ -20,13 +20,16 @@ export const ALLOWED_HOSTS = Object.freeze({
   youtubeShareHost: Object.freeze(['youtube.com', 'yfxtube.com', 'koutube.com']),
 });
 
+import '../../../lib/sites.js';
+/** The author-folder choices of the Saving menu: [settings key, brand name], one per service of lib/sites.js. */
+export const AUTHOR_SERVICES = Object.freeze(/** @type {readonly (readonly [string, string])[]} */ (Reflect.get(globalThis, 'MediaLatchSites').AUTHOR_SERVICES).map(([id, name]) => Object.freeze([id + 'AuthorFolders', name])));
+const authorChoices = (/** @type {any} */ src) => Object.fromEntries(AUTHOR_SERVICES.map(([key]) => [key, src[key] === true]));
+
 export const DEFAULTS = Object.freeze({
   subfolder: 'SavedImages',
   folderOrganizationMode: 'single',
   saveDirectoryId: '',
-  xAuthorFolders: false,
-  redditAuthorFolders: false,
-  pixivAuthorFolders: false,
+  ...authorChoices({}),
   xShareHost: 'fixupx.com',
   igShareHost: 'oginstagram.com',
   ttShareHost: 'tnktok.com',
@@ -90,10 +93,22 @@ export function createSettings(deps) {
     const rootPart = cleanFolder ? `${cleanFolder}/` : '';
     const downloads = s.saveDirectoryId?s.directoryName || tr.t('saving.selectedFolder'):tr.t('saving.downloads');
     // the example follows the first selected author service (x.com, Reddit, Pixiv); with none, the plain x.com layout
-    const site = s.xAuthorFolders ? 'x' : s.redditAuthorFolders ? 'reddit' : s.pixivAuthorFolders ? 'pixiv' : 'x';
-    const author = s.xAuthorFolders || s.redditAuthorFolders ? 'username/' : s.pixivAuthorFolders ? `${tr.t('saving.pixivAuthorExample')}/` : '';
+    const site = AUTHOR_SERVICES.find(([key]) => s[key] === true)?.[0].replace(/AuthorFolders$/, '') || 'x';
+    const author = s[site+'AuthorFolders'] ? (site==='pixiv'?`${tr.t('saving.pixivAuthorExample')}/`:'username/') : '';
     return { text: s.folderOrganizationMode === 'by_site_and_type' ? `${downloads}/${rootPart}${site}/${author}pic/photo.jpg` : `${downloads}/${rootPart}${author}photo.jpg`, error: false };
   }
+
+  /** The stored form of the draft fields, from storage (load) or from the form (save): one normalization for both. */
+  const clean = (/** @type {any} */ src, /** @type {string} */ subfolder) => ({
+    subfolder,
+    folderOrganizationMode: src.folderOrganizationMode === 'by_site_and_type' ? 'by_site_and_type' : 'single',
+    saveDirectoryId: /^directory-[a-zA-Z0-9-]{1,80}$/.test(src.saveDirectoryId) ? src.saveDirectoryId : '',
+    ...authorChoices(src),
+    xShareHost: cleanHost('xShareHost', src.xShareHost),
+    igShareHost: cleanHost('igShareHost', src.igShareHost),
+    ttShareHost: cleanHost('ttShareHost', src.ttShareHost),
+    youtubeShareHost: cleanHost('youtubeShareHost', src.youtubeShareHost),
+  });
 
   /** Reads the stored settings. Never runs over a loaded draft with unsaved changes (the retry is offered only before loading). */
   async function load() {
@@ -101,17 +116,8 @@ export function createSettings(deps) {
     store.setState({ loaded: false, status: { message: '', type: '' } });
     try {
       const data = await chromeApi.storage.local.get(DEFAULTS);
-      const directoryId=/^directory-[a-zA-Z0-9-]{1,80}$/.test(data.saveDirectoryId)?data.saveDirectoryId:'';
+      const values = clean(data, typeof data.subfolder === 'string' ? data.subfolder : DEFAULTS.subfolder), directoryId = values.saveDirectoryId;
       const handle=directoryId && directory?await directory.get(directoryId):null;
-      const values = {
-        subfolder: typeof data.subfolder === 'string' ? data.subfolder : DEFAULTS.subfolder,
-        folderOrganizationMode: data.folderOrganizationMode === 'by_site_and_type' ? 'by_site_and_type' : 'single',
-        saveDirectoryId:directoryId,xAuthorFolders:data.xAuthorFolders===true,redditAuthorFolders:data.redditAuthorFolders===true,pixivAuthorFolders:data.pixivAuthorFolders===true,
-        xShareHost: cleanHost('xShareHost', data.xShareHost),
-        igShareHost: cleanHost('igShareHost', data.igShareHost),
-        ttShareHost: cleanHost('ttShareHost', data.ttShareHost),
-        youtubeShareHost: cleanHost('youtubeShareHost', data.youtubeShareHost),
-      };
       const directoryError=directoryId && (!handle || await handle.queryPermission({mode:'readwrite'})!=='granted')?'saving.directoryAccess':'';
       stored = values; pendingHandle = null;
       store.setState({ ...values, directoryName:handle?.name || '', directoryError, loaded: true, dirty: false, status: { message: '', type: '' } });
@@ -144,15 +150,7 @@ export function createSettings(deps) {
       uiLog('settings', 'save', 'refused', folderError === 'too_deep' ? 'FOLDER_TOO_DEEP' : 'FOLDER_TOO_LONG');
       return false;
     }
-    const values = {
-      subfolder: cleanFolder,
-      folderOrganizationMode: s.folderOrganizationMode === 'by_site_and_type' ? 'by_site_and_type' : 'single',
-      saveDirectoryId:/^directory-[a-zA-Z0-9-]{1,80}$/.test(s.saveDirectoryId)?s.saveDirectoryId:'',xAuthorFolders:s.xAuthorFolders===true,redditAuthorFolders:s.redditAuthorFolders===true,pixivAuthorFolders:s.pixivAuthorFolders===true,
-      xShareHost: cleanHost('xShareHost', s.xShareHost),
-      igShareHost: cleanHost('igShareHost', s.igShareHost),
-      ttShareHost: cleanHost('ttShareHost', s.ttShareHost),
-      youtubeShareHost: cleanHost('youtubeShareHost', s.youtubeShareHost),
-    };
+    const values = clean(s, cleanFolder);
     if (statusTimer) clearT(statusTimer);
     statusTimer = null;
     edit({ ...values, saving: true, status: { message: '', type: '' } }); // the fields show the sanitized values

@@ -4,7 +4,7 @@ export type DownloadState =
   | 'complete' | 'failed' | 'cancelled';
 
 /** Proven account of the owning post; display metadata, never permission to fetch or a claim of artistic authorship. */
-export interface DownloadAuthor { site: 'x' | 'reddit' | 'pixiv'; id: string; name: string }
+export interface DownloadAuthor { site: 'x' | 'reddit' | 'pixiv' | 'vk' | 'redgifs' | 'instagram' | 'tiktok'; id: string; name: string }
 
 export interface DownloadJob {
   id: string;
@@ -50,7 +50,7 @@ export interface DownloadBatch {
 }
 
 export interface DownloadSnapshot { jobs: DownloadJob[]; paused: boolean; batches?: DownloadBatch[] }
-export type DownloadCommand = 'pause' | 'cancel' | 'retry' | 'remove' | 'cancelBatch';
+export type DownloadCommand = 'pause' | 'cancel' | 'retry' | 'remove' | 'cancelBatch' | 'showInFolder';
 export type DownloadRequest =
   | { action: 'DOWNLOADS_LIST' }
   | { action: 'DOWNLOADS_COMMAND'; command: DownloadCommand; id?: string };
@@ -71,10 +71,12 @@ export interface DownloadsChrome {
 export interface DownloadsViewState extends DownloadSnapshot {
   batches: DownloadBatch[];
   status: 'loading' | 'ready' | 'error';
-  error: '' | 'downloads.unavailable' | 'downloads.commandFailed' | 'downloads.batchCancelFailed';
+  error: '' | 'downloads.unavailable' | 'downloads.commandFailed' | 'downloads.batchCancelFailed' | 'downloads.revealFailed';
   busy: boolean;
   /** The batch whose "Cancel remaining" is waiting for the worker. */
   pendingBatch: string;
+  /** The job whose "Show in folder" failed: its card shows the failure until the next command. */
+  errorJob: string;
   removingIds: string[];
   dismissedIds: string[];
 }

@@ -24,7 +24,7 @@ MediaLatch (formerly Image Saver) saves accessible original images, videos and G
 | What you want to do | What MediaLatch offers |
 |---|---|
 | Save selected media | Context-menu actions and inline controls on supported sites |
-| Keep files organized | One folder, site/type folders or optional X, Reddit and Pixiv author folders |
+| Keep files organized | One folder, site/type folders or optional posting-account folders (X, Reddit, Pixiv, VK, RedGIFs, Instagram, TikTok) |
 | Follow each download | Per-file progress, post-batch totals, cancellation, retries and clear errors |
 | Make it yours | Violet, Blue, Dark and Light themes; English and Russian |
 | Keep records on this device | Opt-in local statistics and Debug; no analytics or automatic report upload |
@@ -105,14 +105,15 @@ The current preview covers the workflows below. Availability depends on the page
 - Original discovery through site adapters, image links, `srcset`, media attributes and unambiguous CSS backgrounds or overlays.
 - Native images/GIFs and accessible MP4/WebM videos. Exact declared URLs, including signatures, are preserved.
 - Genuine looping GIFs from confirmed X and Reddit MP4 animations. Animations longer than 30 seconds or exceeding conversion size limits remain source MP4; other conversion failures are reported.
-- Shared inline save controls on X, Reddit, Pixiv and RedGIFs. Pixiv offers Save this for the selected original page and Save all for a proven multi-page artwork, including supported feed cards.
+- Shared inline save controls on X, Reddit, Pixiv, RedGIFs and VK. Pixiv offers Save this for the selected original page and Save all for a proven multi-page artwork, including supported feed cards. Other http(s) sites get a generic Save this control for an individual, directly declared image or video file (not blob/MSE, HLS, DASH or DRM players).
 - Experimental VK photo saving on vk.ru/vk.com: Save this and Save all for proven complete carousels/collages. Controls keep a constant offset from the media’s own upper-left corner and scroll with it.
 - All distinct declared original media from a Pawchive feed preview, including the original cover. Selecting an individual attachment saves that attachment.
 
 ### Manage files
 
-- Choose a writable base folder and an optional subfolder. Save everything into one folder or organize by site/type. One Author folders menu enables any combination of x.com, Reddit and Pixiv: usernames on X/Reddit, author name plus user ID on Pixiv. Save results and redacted error reports stay in the manager.
-- Show the proven X/Reddit/Pixiv post author in page notices, popup and full Downloads, including post batches and retries. Unknown authors and older records omit the label; VK authors are not inferred.
+- Choose a writable base folder and an optional subfolder. Save everything into one folder or organize by site/type. One Author folders menu enables any combination of x.com, Reddit, Pixiv, VK, RedGIFs, Instagram and TikTok. The folder names the posting account of the selected post (author name plus user ID on Pixiv), not the original artist; an unknown or ambiguous account uses the normal layout. Save results and redacted error reports stay in the manager.
+- Show the proven posting account in page notices, popup and full Downloads, including post batches and retries. An account is shown only when the media is evidently the post's own attachment: comments, replies, quotes, header avatars and profile-linked media do not get the post's account; unknown accounts and older records omit the label.
+- Show in folder (popup and full Downloads) reveals the exact saved file of a finished browser download, including a renamed "photo (1).jpg". Files written to a chosen folder have no browser download record, so they have no such icon.
 - Compact popup with wheel/keyboard scrolling, a translucent custom scrollbar and one clear action for finished records; individual removal and details stay in the full manager.
 - Download manager with received/total bytes, speed and approximate remaining time when measurable. Complete files are staged locally before browser export; failed export can retry from retained bytes without another source download.
 
@@ -209,7 +210,7 @@ Statuses distinguish implemented features from future work. They describe direct
 | Local statistics | Compact per-site views with shared Booru totals and preserved historical counts | Included; global opt-in and clear, user-reported migration/count checks passed in Helium |
 | Complete-file staging | Disk-backed acquisition/validation before export and local retry; broaden native restart, quota and media checks | Included in preview; ordinary Helium checks passed, stress checks pending |
 | Batch archives | Selected-post/page batches and packs of saved images/GIFs/videos by author, ZIP first; 7z only if justified | Planned |
-| Destination and naming | Writable base-directory selection, flat/site/type layouts and x.com/Reddit/Pixiv author folders | Included; reported flat and author-folder checks passed in Helium; broader permission-recovery checks remain |
+| Destination and naming | Writable base-directory selection, flat/site/type layouts and posting-account folders for seven services | Included; reported flat and author-folder checks passed in Helium; broader permission-recovery checks remain |
 | Kemono | Declared same-post originals and scoped feed behavior | Deferred until the site is usable |
 | Optional publishing | Separate VK/Telegram composers, preview and explicit send, then scheduling and duplicate-safe reconciliation | Later; authorization, credentials and a durable scheduler need their own design |
 | Browsers and distribution | Broader Chromium checks, Firefox port, Chrome Web Store and store-managed updates | Firefox/broader coverage planned; Chrome listing previously approved, currently unpublished; republication separate |
