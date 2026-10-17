@@ -1075,6 +1075,7 @@ async function resolveMediaTargetImpl(options = {}) {
         });
         return {
           targetUrl: frameRes.targetUrl,
+          ...(social ? { socialAuthor: frameRes.author } : {}),
           type: 'video',
           contentType: detectedMime,
           descriptor: mediaDesc,

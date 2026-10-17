@@ -1849,7 +1849,7 @@ function readSocialPlayerItem(site, stream) {
         for (const c of [p.item, p.props && p.props.item, p.value && p.value.item]) {
           if (!c || typeof c !== 'object' || String(c.id) !== m[1] || !c.video || typeof c.video !== 'object') continue;
           if (c.imagePost) return { itemId: m[1], reason: 'NOT_VIDEO' };
-          return { itemId: m[1], url: typeof c.video.playAddr === 'string' ? c.video.playAddr : '' };
+          return { itemId: m[1], url: typeof c.video.playAddr === 'string' ? c.video.playAddr : '', username: typeof c.author === 'string' ? c.author : typeof c.author?.uniqueId === 'string' ? c.author.uniqueId : '' };
         }
       }
       return { itemId: m[1], reason: 'NO_ITEM' };
@@ -1874,7 +1874,7 @@ function readSocialPlayerItem(site, stream) {
       try { walk(JSON.parse(text), 0); } catch (_) { continue; }
       if (!item) continue;
       const best = item.video_versions.filter((x) => x && typeof x.url === 'string').sort((a, b) => (Number(b.width) || 0) - (Number(a.width) || 0))[0];
-      return { itemId: id, code: typeof item.code === 'string' ? item.code : '', url: best ? best.url : '', hasAudio: item.has_audio === true ? true : item.has_audio === false ? false : null };
+      return { itemId: id, code: typeof item.code === 'string' ? item.code : '', url: best ? best.url : '', username: typeof item.user?.username === 'string' ? item.user.username : '', hasAudio: item.has_audio === true ? true : item.has_audio === false ? false : null };
     }
     // the player streams separate video and audio tracks of an item for which the page declares no progressive file (a later feed item)
     return { itemId: id, reason: manifest ? 'SEPARATE_TRACKS' : 'NO_ITEM' };
@@ -1903,5 +1903,5 @@ async function resolveSocialPlayerMedia({ tabId, frameId = 0, documentId = '', s
   if (item.reason) return refuse(item.reason === 'PLAYER_CHANGED' ? 'FRAME_CHANGED' : item.reason === 'NOT_VIDEO' ? 'NOT_VIDEO' : 'NO_DIRECT_MEDIA_FOUND');
   const url = validateSocialVideoUrl(site, item.url);
   if (!url) return { ...refuse('NO_VALID_CANDIDATE'), validationError: 'FOREIGN_HOST' };
-  return { success: true, targetUrl: url, provider: site, itemId: String(item.itemId || ''), audio: item.hasAudio === false ? 'absent' : item.hasAudio === true ? 'present' : 'unknown', diagnostics: { provider: site } };
+  return { success: true, targetUrl: url, provider: site, itemId: String(item.itemId || ''), author: FeedbackLib.safeAuthor(site, { site, id: item.username }), audio: item.hasAudio === false ? 'absent' : item.hasAudio === true ? 'present' : 'unknown', diagnostics: { provider: site } };
 }

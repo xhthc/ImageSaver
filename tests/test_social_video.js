@@ -39,6 +39,7 @@ function page({ url, html, settings = {}, inline = false, docId = 'doc-1' }) {
   const env = createTestEnv(), s = env.bgSandbox, dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true }), w = dom.window, d = w.document;
   const rects = new WeakMap(), listeners = [];
   const p = { w, d, s, rects, exported: [], fetched: [], failures: [], scripts: [], status: 206, docId };
+  p.records = () => vm.runInContext('feedbackTracker.list()', env.bgContext);
   for (const v of d.querySelectorAll('video')) Object.defineProperty(v, 'currentSrc', { configurable: true, get() { return this.getAttribute('data-stream') || ''; } });
   const box = (id, b) => { const el = d.getElementById(id) || d.querySelector(id); if (el) rects.set(el, b); };
   const A = { left: 100, top: 80, width: 446, height: 795 }, B = { left: 100, top: 906, width: 446, height: 795 };
@@ -128,12 +129,12 @@ const until = async (fn) => { for (let i = 0; i < 300 && !fn(); i++) await sleep
     assert(!p.scripts.some((c) => c.name === 'resolveFrameLocalMediaImpl'), 'the RedGIFs frame resolver is not involved');
     p.close();
   });
-  await test('Instagram: proven author folders off, chosen on, or no proven account: the ordinary folder layout (no guessed author)', async () => {
+  await test('Instagram: browser-menu video saves use the selected item username for author folders', async () => {
     const p = igPage({ settings: { folderOrganizationMode: 'by_site_and_type', instagramAuthorFolders: true } });
     p.rightClick(300, 400); await p.save(); await until(() => p.exported.length);
     assert.equal(p.exported.length, 1);
-    assert(/^SavedImages\/instagram\/video\/[^/]+$/.test(p.exported[0].filename), p.exported[0].filename);
-    assert(!/errejotapodcast/.test(p.exported[0].filename), 'the account in the page data is not used as a folder without the existing proof');
+    assert(/^SavedImages\/instagram\/errejotapodcast\/video\/[^/]+$/.test(p.exported[0].filename), p.exported[0].filename);
+
     p.close();
   });
   await test('Instagram: after scrolling the feed, a right-click on the next Reel saves that Reel (URL of the page names another item)', async () => {
@@ -260,13 +261,19 @@ const until = async (fn) => { for (let i = 0; i < 300 && !fn(); i++) await sleep
       assert.deepEqual(p.exported, [], JSON.stringify(opts)); assert.deepEqual(p.fetched, [], JSON.stringify(opts)); p.close();
     }
   });
-  await test('TikTok: a proven posting account (its own permalink in the item card) gives the author folder; without it the ordinary layout', async () => {
+  await test('TikTok: browser-menu author folders use the matching player item even without a DOM permalink', async () => {
     let p = ttPage({ permalink: true, inline: true, settings: { folderOrganizationMode: 'by_site_and_type', tiktokAuthorFolders: true } });
     p.rightClick(300, 400); await p.save({ srcUrl: 'blob:https://www.tiktok.com/aaaa-selected', mediaType: 'video' }); await until(() => p.exported.length);
     assert(/^SavedImages\/tiktok\/seyro67\/video\/[^/]+$/.test(p.exported[0].filename), p.exported[0].filename); p.close();
     p = ttPage({ inline: true, settings: { folderOrganizationMode: 'by_site_and_type', tiktokAuthorFolders: true } });
     p.rightClick(300, 400); await p.save({ srcUrl: 'blob:https://www.tiktok.com/aaaa-selected', mediaType: 'video' }); await until(() => p.exported.length);
-    assert(/^SavedImages\/tiktok\/video\/[^/]+$/.test(p.exported[0].filename), p.exported[0].filename); p.close();
+    assert(/^SavedImages\/tiktok\/seyro67\/video\/[^/]+$/.test(p.exported[0].filename), p.exported[0].filename); p.close();
+  });
+  await test('TikTok: item attribution overrides an independently proven DOM permalink; unknown metadata leaves no stale label or folder', async () => {
+    for (const [author, segment] of [[{uniqueId:'Source.Creator',nickname:'Display only'},'source.creator/'],[null,'']]) {
+      const p=ttPage({permalink:true,inline:true,item:{id:'7695998843653082388',author,video:{playAddr:TT_URL}},settings:{folderOrganizationMode:'by_site_and_type',tiktokAuthorFolders:true}});
+      try {p.rightClick(300,400);await p.save({srcUrl:'blob:https://www.tiktok.com/aaaa-selected',mediaType:'video'});await until(()=>p.exported.length);assert(p.exported[0].filename.startsWith('SavedImages/tiktok/'+segment+'video/'),p.exported[0].filename);const records=await p.records();assert.equal(records[0].author?.id,segment?'source.creator':undefined);}finally{p.close();}
+    }
   });
   // ---- unchanged contracts ----
   await test('The same layered player on another site still selects nothing (no new generic admission), and RedGIFs validation is not widened', async () => {

@@ -1788,7 +1788,9 @@ async function onContextMenuClicked(info, tab) {
         ...Object.fromEntries(MediaLatchSites.AUTHOR_SERVICES.map(([id]) => [id + 'AuthorFolders', false]))
       });
 
-      const author = await selectedMediaAuthor(info,tab,rawImageUrl);
+      // Social blob players bind the account with their own item below, never with a separate DOM/profile read.
+      const socialPlayer = socialVideoSiteOf(info.frameUrl || info.pageUrl || tab?.url) && (gesturePlayer || rawImageUrl.startsWith('blob:'));
+      const author = socialPlayer ? null : await selectedMediaAuthor(info,tab,rawImageUrl);
       await fbSetAuthor(op, author);
       if (author?.site === 'x' && settings.xAuthorFolders === true) settings.xAuthor = author.id;
       if (author && author.site !== 'x' && settings[author.site+'AuthorFolders'] === true) settings.author = authorFolder(author.site, author.name, author.id);
@@ -1912,6 +1914,11 @@ async function onContextMenuClicked(info, tab) {
             // the same assembly from the context menu: the selected player's declared master, read by its own frame and validated again
             await executeRedditHlsDownload(mediaResolution.redditHls.url, settings, { pageUrl: info.pageUrl || tab?.url || '', feedbackOp: op });
             return;
+          }
+          const socialAuthor = FeedbackLib.safeAuthor(socialVideoSiteOf(info.frameUrl || info.pageUrl || tab?.url), mediaResolution?.socialAuthor);
+          if (socialAuthor) {
+            await fbSetAuthor(op, socialAuthor);
+            if (settings[socialAuthor.site + 'AuthorFolders'] === true) settings.author = authorFolder(socialAuthor.site, socialAuthor.name, socialAuthor.id);
           }
           targetMediaUrl = mediaResolution?.targetUrl;
           mediaPlan = mediaResolution?.mediaPlan;

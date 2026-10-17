@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased — TikTok controls and Instagram Reel controls
+## Unreleased — TikTok/Reels controls and author folders
+
+- TikTok and Instagram Reels: optional author folders now use the posting username from the exact item that supplies the selected video file, for inline and browser-menu saves. Both existing folder layouts and saved folder preferences apply; an unknown or invalid username keeps the ordinary layout. Download cards retain the proven account.
 
 - Instagram Reels (Reels feed and opened Reel): Copy link above Download in the upper-right corner of the selected Reel's video, shown on hover over that video, hidden on exit, reachable by keyboard and always visible without hover; they replace the earlier Reel Copy above Like (ordinary posts unchanged). Download saves the Reel in view through the existing selected-video resolver and manager only when the player's own item matches the Reel's proven shortcode; covered, neighbouring, recycled or separate-track-only Reels are refused visibly, and a double press makes one job.
 

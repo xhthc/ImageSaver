@@ -6,7 +6,7 @@
 // input, network and export are simulated; the production content scripts (content_copy_kit.js, content_instagram.js, content_context_target.js)
 // and worker (background.js + worker modules) run unchanged. CSS :hover itself is not evaluated by jsdom (native fixture covers it).
 // No live-site, real-file or audio claim.
-const fs = require('fs'), path = require('path'), assert = require('assert/strict'), { createRequire } = require('module');
+const fs = require('fs'), path = require('path'), vm = require('vm'), assert = require('assert/strict'), { createRequire } = require('module');
 const ROOT = path.resolve(__dirname, '..'), { JSDOM } = createRequire(path.join(ROOT, 'ui/package.json'))('jsdom');
 const { createTestEnv } = require('./test_context_target_avatar');
 const code = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8'), sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -36,7 +36,7 @@ const reelCard = (n, stream, { boxStyle = 'position: relative', extraVideo = fal
 const feedHtml = ({ items = [item(PK_A, CODE_A, URL_A), item(PK_B, CODE_B, URL_B)], cardOpts = [{}, {}], dialog = false } = {}) =>
   `${json(items)}<main><div id="feed">${dialog ? '<div role="dialog" id="viewer">' : ''}${reelCard(0, 'blob:https://www.instagram.com/aaaa-stream', cardOpts[0])}${dialog ? '</div>' : ''}${reelCard(1, 'blob:https://www.instagram.com/bbbb-stream', cardOpts[1])}</div></main>`;
 
-function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true } = {}) {
+function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true, settings = {} } = {}) {
   const env = createTestEnv(), s = env.bgSandbox, dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true }), w = dom.window, d = w.document;
   Object.defineProperty(w, 'innerHeight', { configurable: true, value: 900 });
   const rects = new WeakMap(), content = [], p = { w, d, s, rects, sent: [], exported: [], fetched: [], failures: [], scripts: [], copied: [], docId, content, offset: 0 };
@@ -81,6 +81,8 @@ function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true } 
     storage: { local: { get: (k, cb) => { const r = { ...(k && typeof k === 'object' ? k : {}) }; if (cb) cb(r); return Promise.resolve(r); } }, onChanged: { addListener() {} } }, i18n: { getUILanguage: () => 'en' }
   };
   s.TextDecoder = TextDecoder; s.Buffer = Buffer;
+  s.chrome.storage.local.get = async (k) => ({ ...(k && typeof k === 'object' ? k : {}), ...settings });
+  p.options = []; p.records = () => vm.runInContext('feedbackTracker.list()', env.bgContext);
   s.chrome.tabs.get = async (id) => ({ id, url: w.location.href });
   s.chrome.scripting.executeScript = async (call) => {
     p.scripts.push({ name: call.func && call.func.name, world: call.world || 'ISOLATED', target: call.target });
@@ -93,7 +95,7 @@ function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true } 
     return new Promise((resolve) => { let answered = false; for (const fn of [...content]) fn(msg, { id: s.chrome.runtime.id }, (v) => { answered = true; resolve(v); }); if (!answered) resolve(undefined); });
   };
   s.fetch = async (raw, o = {}) => { p.fetched.push(raw); if ([URL_A, URL_B].includes(raw)) return new Response(o.method === 'HEAD' ? null : MP4, { status: 200, headers: { 'content-type': 'video/mp4', 'content-length': String(MP4.length) } }); return new Response('missing', { status: 404 }); };
-  s.managedDownload = async (options) => { await sleep(p.slow || 0); const r = await s.fetch(options.url, { method: 'GET' }); if (!r.ok) throw Error('HTTP_ERROR'); p.exported.push(options.url); return s.chrome.downloads.download(options); };
+  s.managedDownload = async (options) => { await sleep(p.slow || 0); const r = await s.fetch(options.url, { method: 'GET' }); if (!r.ok) throw Error('HTTP_ERROR'); p.options.push(options); p.exported.push(options.url); return s.chrome.downloads.download(options); };
   const fail = s.fbFail; s.fbFail = async (op, info) => { if (info && info.code) p.failures.push(info.code); return fail(op, info); };
   w.eval(code('lib/debug_journal.js')); w.eval(code('lib/i18n.js'));
   p.inject = () => { w.eval(code('content/content_copy_kit.js')); w.eval(code('content/content_instagram.js')); };
@@ -190,6 +192,22 @@ const until = async (fn, ms = 3000) => { for (let i = 0; i < ms / 10 && !fn(); i
     assert.deepEqual(p.copied, [`https://oginstagram.com/reel/${CODE_A}/`]); await sleep(20); assert(p.copy(0).classList.contains('is-success'));
     p.press(p.copy(1)); await sleep(60); assert.equal(p.copied.length, 1, 'the neighbouring Reel is not the page URL\'s Reel'); assert(p.copy(1).classList.contains('is-error'));
     p.close();
+  });
+  await test('author folders: selected Reel metadata username, preference off and both layouts, never the neighbouring/visible profile', async () => {
+    for (const [mode, enabled, expected] of [['by_site_and_type', true, 'instagram/actual.creator/video/'], ['single', true, 'actual.creator/'], ['by_site_and_type', false, 'instagram/video/']]) {
+      const p = page({ settings: { folderOrganizationMode: mode, instagramAuthorFolders: enabled }, html: feedHtml({ items: [item(PK_A, CODE_A, URL_A, { user: { username: 'Actual.Creator' } }), item(PK_B, CODE_B, URL_B, { user: { username: 'neighbour.creator' } })] }) });
+      try { await p.scan(); p.press(p.save(0)); await until(() => p.exported.length); assert.deepEqual(p.exported, [URL_A]); assert(p.options[0].filename.startsWith('SavedImages/' + expected), p.options[0].filename); const records=await p.records(); assert.equal(records[0].author?.id, 'actual.creator'); } finally { p.close(); }
+    }
+  });
+  await test('author folders: missing/invalid Reel username does not borrow a profile, commenter or neighbouring item', async () => {
+    for (const user of [null, {}, { username: '../escape' }, { username: '...' }, { username: 123 }]) {
+      const p=page({ settings:{ folderOrganizationMode:'by_site_and_type',instagramAuthorFolders:true },html:feedHtml({items:[item(PK_A,CODE_A,URL_A,{user}),item(PK_B,CODE_B,URL_B,{user:{username:'neighbour.creator'}})]}) });
+      try { await p.scan(); p.press(p.save(0)); await until(()=>p.exported.length); assert(p.options[0].filename.startsWith('SavedImages/instagram/video/'),p.options[0].filename); const records=await p.records();assert.equal(records[0].author,undefined); } finally {p.close();}
+    }
+  });
+  await test('author folders: scrolling to the next Reel uses its own username and signed file', async () => {
+    const p=page({ settings:{ folderOrganizationMode:'by_site_and_type',instagramAuthorFolders:true },html:feedHtml({items:[item(PK_A,CODE_A,URL_A,{user:{username:'first.creator'}}),item(PK_B,CODE_B,URL_B,{user:{username:'next.creator'}})]}) });
+    try { await p.scan();p.press(p.save(0));await until(()=>p.exported.length);p.scroll(1,CODE_B);await p.scan();p.press(p.save(1));await until(()=>p.exported.length===2);assert.deepEqual(p.exported,[URL_A,URL_B]);assert(p.options[0].filename.startsWith('SavedImages/instagram/first.creator/video/'));assert(p.options[1].filename.startsWith('SavedImages/instagram/next.creator/video/')); }finally{p.close();}
   });
   // ---- Download ----
   await test('Download on the Reel in view saves that Reel\'s own exact signed file through the real worker path; the right-click capture is not read', async () => {

@@ -5,7 +5,7 @@
 // and TikTok's own menu as a body portal [data-e2e=context-menu]. Layout, fibers, trusted input, network and export are simulated; the production
 // content scripts (content_copy_kit.js, content_tiktok.js, content_context_target.js) and worker (background.js + worker modules) run unchanged.
 // No live-site, real-file or audio claim.
-const fs = require('fs'), path = require('path'), assert = require('assert/strict'), { createRequire } = require('module');
+const fs = require('fs'), path = require('path'), vm = require('vm'), assert = require('assert/strict'), { createRequire } = require('module');
 const ROOT = path.resolve(__dirname, '..'), { JSDOM } = createRequire(path.join(ROOT, 'ui/package.json'))('jsdom');
 const { createTestEnv } = require('./test_context_target_avatar');
 const code = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8'), sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -45,7 +45,7 @@ const MENU = `<div><div id=":r27:" data-e2e="context-menu" role="dialog"><div cl
   <div data-e2e="right-click-menu-popover_download-video">Download video</div><div data-e2e="right-click-menu-popover_share" aria-label="Share">Share</div>
   <div data-e2e="right-click-menu-popover_copy-link">Copy link</div></div></div></div>`;
 
-function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true } = {}) {
+function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true, settings = {}, authors = ['dxtmrgpz', 'dxtmrgpz'] } = {}) {
   const env = createTestEnv(), s = env.bgSandbox, dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true }), w = dom.window, d = w.document;
   Object.defineProperty(w, 'innerHeight', { configurable: true, value: 1800 }); // both cards on screen
   const rects = new WeakMap(), content = [], p = { w, d, s, rects, sent: [], exported: [], fetched: [], failures: [], scripts: [], docId, content };
@@ -94,7 +94,7 @@ function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true } 
   // the page world's React fibers (observed shape): the player wrapper's component props name its item
   for (const [id, url] of [[A, URL_A], [B, URL_B]]) {
     const host = d.querySelector(`#xgwrapper-0-${id}`)?.parentElement; if (!host) continue;
-    let f = null; for (const props of [...[{ item: { id, author: 'dxtmrgpz', video: { playAddr: url } } }, ...Array.from({ length: 24 }, () => ({ className: 'layer' }))]].reverse()) f = { memoizedProps: props, return: f };
+    let f = null; for (const props of [...[{ item: { id, author: authors[id === A ? 0 : 1], video: { playAddr: url } } }, ...Array.from({ length: 24 }, () => ({ className: 'layer' }))]].reverse()) f = { memoizedProps: props, return: f };
     host['__reactFiber$test'] = f; // walking .return from the host reaches the item 24 levels up
   }
   w.chrome = {
@@ -104,6 +104,8 @@ function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true } 
   };
   // the worker: REAL admission, resolution, probe; the network and the export are stand-ins
   s.TextDecoder = TextDecoder; s.Buffer = Buffer;
+  s.chrome.storage.local.get = async (k) => ({ ...(k && typeof k === 'object' ? k : {}), ...settings });
+  p.options = []; p.records = () => vm.runInContext('feedbackTracker.list()', env.bgContext);
   s.chrome.tabs.get = async (id) => ({ id, url: w.location.href });
   s.chrome.scripting.executeScript = async (call) => {
     p.scripts.push({ name: call.func && call.func.name, world: call.world || 'ISOLATED', target: call.target });
@@ -116,7 +118,7 @@ function page({ url = PAGE, html = feedHtml(), docId = 'doc-1', worker = true } 
     return new Promise((resolve) => { let answered = false; for (const fn of [...content]) fn(msg, { id: s.chrome.runtime.id }, (v) => { answered = true; resolve(v); }); if (!answered) resolve(undefined); });
   };
   s.fetch = async (raw, o = {}) => { p.fetched.push(raw); if ([URL_A, URL_B].includes(raw)) return new Response(o.method === 'HEAD' ? null : MP4, { status: 200, headers: { 'content-type': 'video/mp4', 'content-length': String(MP4.length) } }); return new Response('missing', { status: 404 }); };
-  s.managedDownload = async (options) => { await sleep(p.slow || 0); const r = await s.fetch(options.url, { method: 'GET' }); if (!r.ok) throw Error('HTTP_ERROR'); p.exported.push(options.url); return s.chrome.downloads.download(options); };
+  s.managedDownload = async (options) => { await sleep(p.slow || 0); const r = await s.fetch(options.url, { method: 'GET' }); if (!r.ok) throw Error('HTTP_ERROR'); p.options.push(options); p.exported.push(options.url); return s.chrome.downloads.download(options); };
   const fail = s.fbFail; s.fbFail = async (op, info) => { if (info && info.code) p.failures.push(info.code); return fail(op, info); };
   w.eval(code('lib/debug_journal.js')); w.eval(code('lib/i18n.js'));
   p.inject = () => { w.eval(code('content/content_copy_kit.js')); w.eval(code('content/content_tiktok.js')); };
@@ -322,6 +324,18 @@ const rightClick = (p, el, shift) => {
         assert.equal(button.getAttribute('title'), 'The action could not be completed.');
         assert.deepEqual(p.exported, []);
       } finally { p.close(); }
+    }
+  });
+  await test('author folders: TikTok item username string/object, preference off and both layouts stay with the selected video', async () => {
+    for (const [mode, enabled, author, expected] of [['by_site_and_type',true,{uniqueId:'Selected.Creator',nickname:'Wrong Display'},'tiktok/selected.creator/video/'],['single',true,'Selected.Creator','selected.creator/'],['by_site_and_type',false,'Selected.Creator','tiktok/video/']]) {
+      const p=page({settings:{folderOrganizationMode:mode,tiktokAuthorFolders:enabled},authors:['neighbour.creator',author]});
+      try {await p.scan();p.press(p.save(1));await until(()=>p.exported.length);assert.deepEqual(p.exported,[URL_B]);assert(p.options[0].filename.startsWith('SavedImages/'+expected),p.options[0].filename);const records=await p.records();assert.equal(records[0].author?.id,'selected.creator');}finally{p.close();}
+    }
+  });
+  await test('author folders: absent/malformed TikTok author never becomes the avatar, nickname or neighbouring author', async () => {
+    for (const author of [null,{}, {nickname:'NotAUsername'}, '../escape', '...', {uniqueId:42}]) {
+      const p=page({settings:{folderOrganizationMode:'by_site_and_type',tiktokAuthorFolders:true},authors:['neighbour.creator',author]});
+      try {await p.scan();p.press(p.save(1));await until(()=>p.exported.length);assert.deepEqual(p.exported,[URL_B]);assert(p.options[0].filename.startsWith('SavedImages/tiktok/video/'),p.options[0].filename);const records=await p.records();assert.equal(records[0].author,undefined);}finally{p.close();}
     }
   });
   // ---- Download: the trusted press freezes the card's own player; the worker resolves exactly that item ----
