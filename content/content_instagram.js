@@ -5,6 +5,7 @@
  */
 
 (function () {
+  if (globalThis.__mediaLatchInstagramInitialized) return;
   // DEBUG-MENU-01: the shared journal client (lib/debug_journal.js); a no-op when it is absent. Outcomes only: never the copied link.
   const DBG = (globalThis.ImageSaverDebug && globalThis.ImageSaverDebug.client('content')) || { log() {} };
   DBG.log('instagram', 'init', 'info');
@@ -74,6 +75,56 @@
   height: 24px;
   pointer-events: none;
 }
+/* INSTAGRAM-REELS-CONTROLS-01: Copy above Download in the selected Reel's video, upper-right (TikTok's 40 px dark controls) */
+.image-saver-ig-reel-copy, .image-saver-ig-reel-save {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background-color: rgba(20, 20, 20, 0.72);
+  color: #fff;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  pointer-events: auto;
+  z-index: 10;
+  transition: background-color 0.2s, opacity 0.15s, transform 0.15s;
+}
+.image-saver-ig-reel-copy:hover, .image-saver-ig-reel-save:hover {
+  background-color: rgba(20, 20, 20, 0.88);
+}
+.image-saver-ig-reel-copy:active, .image-saver-ig-reel-save:active {
+  transform: scale(0.92);
+}
+.image-saver-ig-reel-copy:focus-visible, .image-saver-ig-reel-save:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+.image-saver-ig-reel-copy.is-success {
+  color: #22c55e;
+}
+.image-saver-ig-reel-copy.is-error, .image-saver-ig-reel-save.is-error {
+  color: #ef4444;
+  animation: imageSaverIgShake 0.3s ease-in-out;
+}
+.image-saver-ig-reel-save[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: progress;
+}
+@media (hover: hover) {
+  .image-saver-ig-hover-area:not(:hover):not(:has(:focus-visible)) .image-saver-ig-reel-copy,
+  .image-saver-ig-hover-area:not(:hover):not(:has(:focus-visible)) .image-saver-ig-reel-save {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .image-saver-ig-reel-copy, .image-saver-ig-reel-save { animation: none; transition: none; }
+}
 .image-saver-ig-icon {
   width: 22px;
   height: 22px;
@@ -88,6 +139,10 @@
   const SVG_CHECK_ICON = `<svg class="image-saver-ig-icon" viewBox="2 2 20 20" width="20" height="20" fill="currentColor">
     <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
   </svg>`;
+
+  // the download glyph of the shared inline controls; a non-color failure glyph
+  const SVG_SAVE_ICON = '<svg class="image-saver-ig-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>';
+  const SVG_ERROR_ICON = '<svg class="image-saver-ig-icon" viewBox="0 0 20 20" width="20" height="20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>';
 
   const ALLOWED_IG_SHARE_HOSTS = ['instagram.com', 'oginstagram.com', 'kirkstagram.com', 'kkclip.com'];
   const DEFAULT_IG_SHARE_HOST = 'oginstagram.com';
@@ -757,7 +812,8 @@
     if (!postEl || typeof postEl.querySelectorAll !== 'function') return null;
 
     // Search for Like / heart control button, role="button", or SVG inside postEl
-    const candidates = Array.from(postEl.querySelectorAll('button, div[role="button"], span[role="button"], svg'));
+    // our own Reel controls ("Save this media") are never a native action
+    const candidates = Array.from(postEl.querySelectorAll('button, div[role="button"], span[role="button"], svg')).filter((el) => !(el.closest && el.closest('.image-saver-ig-reel-copy, .image-saver-ig-reel-save')));
 
     let likeBtn = null;
     for (const el of candidates) {
@@ -992,6 +1048,7 @@
     }
 
     const { actionRail, likeItem } = railInfo;
+    if (inReelWithPair(actionRail)) return false; // the Reel's Copy is the in-video one
 
     // Duplicate check: verify if button is already connected inside this action rail
     const existingBtn = actionRail.querySelector('.image-saver-ig-copy-wrap');
@@ -1155,9 +1212,143 @@
   }
 
 
+  // INSTAGRAM-REELS-CONTROLS-01. Observed live (2026-10-17, /reels/ feed and opened /reel/): a Reel card holds its media box (the common ancestor of
+  // the <video> and its full-size role=group player layer, position:relative, the author link inside) and, outside it, the native rail with More
+  // at the bottom; nothing sits in the video's upper-right. On Reel pages only, one Copy above one Download go into that box's upper-right; the
+  // box is the hover area; the old rail Copy of that card is removed. A box with two players, an unpositioned box or no layer gets nothing.
+  const REEL_COPY = 'image-saver-ig-reel-copy', REEL_SAVE = 'image-saver-ig-reel-save', HOVER_AREA = 'image-saver-ig-hover-area';
+  const isReelPage = () => { try { return location.protocol === 'https:' && /^(?:www\.)?instagram\.com$/.test(location.hostname) && /^\/reels?\//.test(location.pathname); } catch (_) { return false; } };
+  function reelOf(video) {
+    try {
+      let card = video.parentElement, rail = null;
+      for (let i = 0; card && i < 20 && !rail; i++) {
+        if (card === document.body || card.tagName === 'MAIN') return null;
+        rail = findActionRailAndLikeItem(card);
+        if (!rail) card = card.parentElement;
+      }
+      if (!card || !rail || card.querySelectorAll('video').length !== 1 || countDistinctLikeControls(card) > 1) return null;
+      const vr = video.getBoundingClientRect();
+      if (!(vr.width > 0 && vr.height > 0)) return null;
+      const layer = Array.from(card.querySelectorAll('[role="group"]')).find((g) => { const r = g.getBoundingClientRect(); return !g.contains(video) && Math.abs(r.width - vr.width) < 2 && Math.abs(r.height - vr.height) < 2; });
+      let box = layer ? video.parentElement : null;
+      while (box && !box.contains(layer)) box = box.parentElement;
+      if (!box || box === card || !card.contains(box) || box.contains(rail.actionRail) || getComputedStyle(box).position === 'static') return null;
+      return { card, box, video };
+    } catch (_) { return null; }
+  }
+  // the Reel card around a rail that already shows the in-video pair (the first ancestor holding one; a multi-Reel ancestor ends the walk)
+  function inReelWithPair(el) {
+    for (let a = el && el.parentElement, i = 0; a && i < 20; a = a.parentElement, i++) {
+      const pairs = a.querySelectorAll ? a.querySelectorAll('.' + REEL_COPY).length : 0;
+      if (pairs === 1) return true;
+      if (pairs > 1 || countDistinctLikeControls(a) > 1) return false;
+    }
+    return false;
+  }
+  function reelState(wrap, state) {
+    const save = wrap.classList.contains(REEL_SAVE), btn = wrap.firstElementChild;
+    wrap.classList.toggle('is-error', state === 'error'); wrap.classList.toggle('is-success', state === 'success');
+    btn.innerHTML = state === 'error' ? SVG_ERROR_ICON : state === 'success' ? SVG_CHECK_ICON : save ? SVG_SAVE_ICON : SVG_LINK_ICON;
+    const [key, fallback] = state === 'error' ? (save ? ['downloads.commandFailed', 'The action could not be completed.'] : ['inline.videoUnavailable', 'MediaLatch: Video link unavailable'])
+      : state === 'success' ? ['inline.copied', '✓ Link copied!'] : save ? ['inline.saveThisAria', 'MediaLatch: Save this media'] : ['inline.copyVideo', 'MediaLatch: Copy video link'];
+    isLabel(wrap, 'title', key, fallback);
+    if (save || state !== 'success') isLabel(wrap, 'aria-label', save || state === 'error' ? key : 'inline.copyVideoAria', save || state === 'error' ? fallback : 'Copy video link');
+    if (state) setTimeout(() => reelState(wrap, ''), state === 'success' ? 1800 : 2000);
+  }
+  // the Reel this control sits in, when its box still is that Reel's media box
+  const reelOfControl = (wrap) => { const box = wrap.parentElement, v = box && box.querySelector('video'), reel = v && reelOf(v); return reel && reel.box === box ? reel : null; };
+  async function copyReel(wrap) {
+    const reel = reelOfControl(wrap), raw = reel ? extractInstagramUrl(reel.card) : null, share = raw ? formatInstagramShareUrl(raw, igShare.get()) : null;
+    if (!share) { DBG.log('instagram.copy', 'reel', 'failed', 'NO_SHARE_URL'); reelState(wrap, 'error'); return; }
+    const { copied } = await globalThis.MediaLatchCopyKit.copyText(share);
+    DBG.log('instagram.copy', 'reel', copied ? 'ok' : 'failed', copied ? undefined : 'CLIPBOARD_FAILED');
+    reelState(wrap, copied ? 'success' : 'error');
+  }
+  // Download: a trusted press freezes the Reel's one player (stream address of this page), the shortcode its card is proven to show (the same
+  // ownership rules as Copy) and the page; only a one-shot token and the shortcode go to the worker, which asks this document to prove the frozen
+  // player again (INSTAGRAM_INLINE_PROOF) and requires the player's own props to name that shortcode (worker/site_resolvers.js).
+  const reelSaves = new Map();
+  function freezeReel(wrap) {
+    try {
+      const reel = reelOfControl(wrap);
+      if (!reel) return null;
+      const raw = extractInstagramUrl(reel.card), info = raw ? parseShortcodeFromPath(new URL(raw).pathname) : null, v = reel.video, stream = String(v.currentSrc || '');
+      if (!info || !stream.startsWith('blob:' + location.origin + '/')) return null;
+      const r = v.getBoundingClientRect(), x0 = Math.max(r.left, 0), y0 = Math.max(r.top, 0), x1 = Math.min(r.right, window.innerWidth), y1 = Math.min(r.bottom, window.innerHeight);
+      if (x1 <= x0 || y1 <= y0) return null;
+      // the centre of its visible part must show this Reel on top: a covering dialog (sign-up, login portal) refuses; a viewing dialog holding the Reel does not
+      const top = document.elementFromPoint((x0 + x1) / 2, (y0 + y1) / 2);
+      if (!top || !reel.card.contains(top)) return null;
+      const cover = top.closest('dialog, [role="dialog"], [aria-modal="true"], [class*="Modal" i], [role="menu"]');
+      if (cover && !cover.contains(v)) return null;
+      return { ref: new WeakRef(v), card: new WeakRef(reel.card), item: info.shortcode, stream, href: location.href, at: Date.now() };
+    } catch (_) { return null; }
+  }
+  function saveReel(wrap) {
+    if (wrap.getAttribute('aria-disabled') === 'true') return; // a second press of the same request
+    const frozen = freezeReel(wrap);
+    if (!frozen) { DBG.log('instagram.save', 'press', 'refused', 'NO_PLAYER'); reelState(wrap, 'error'); return; }
+    wrap.setAttribute('aria-disabled', 'true'); setTimeout(() => wrap.removeAttribute('aria-disabled'), 1500);
+    const token = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+    reelSaves.set(token, frozen); for (const k of reelSaves.keys()) { if (reelSaves.size <= 8) break; reelSaves.delete(k); }
+    DBG.log('instagram.save', 'press', 'ok');
+    try { const sent = chrome.runtime.sendMessage({ action: 'INSTAGRAM_INLINE_SAVE', token, item: frozen.item }); if (sent && typeof sent.catch === 'function') sent.catch(() => reelState(wrap, 'error')); } catch (_) { reelState(wrap, 'error'); }
+  }
+  // Only the worker (no tab) may ask, once per token; a token this instance did not issue gets no answer here.
+  try {
+    chrome.runtime.onMessage.addListener((m, sender, respond) => {
+      if (!m || m.action !== 'INSTAGRAM_INLINE_PROOF' || !sender || sender.tab || sender.id !== chrome.runtime.id || !reelSaves.has(m.token)) return;
+      const f = reelSaves.get(m.token); reelSaves.delete(m.token);
+      const v = f.ref.deref(), c = f.card.deref();
+      const held = Boolean(Date.now() - f.at < 30000 && f.href === location.href && v && c && v.isConnected && c.contains(v) && String(v.currentSrc || '') === f.stream && c.querySelectorAll('video').length === 1);
+      respond(held ? { ok: true, media: { item: f.item, stream: f.stream } } : { ok: false, reason: 'STALE_ITEM' });
+      return true;
+    });
+  } catch (_) {}
+  function makeReelControl(cls) {
+    const wrap = document.createElement('div');
+    wrap.className = cls;
+    wrap.setAttribute('role', 'button');
+    wrap.setAttribute('tabindex', '0');
+    const btn = document.createElement('div');
+    btn.className = 'image-saver-ig-copy-btn';
+    wrap.appendChild(btn);
+    reelState(wrap, '');
+    const press = (e) => {
+      if (!e || !e.isTrusted || (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault(); e.stopPropagation(); if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      if (cls === REEL_SAVE) saveReel(wrap); else copyReel(wrap);
+    };
+    wrap.addEventListener('click', press, { capture: true });
+    wrap.addEventListener('keydown', press);
+    // the player layer below toggles the sound on a press: keep presses on our controls to ourselves
+    for (const type of ['pointerdown', 'mousedown']) wrap.addEventListener(type, (e) => e.stopPropagation(), { capture: true });
+    return wrap;
+  }
+  function placeReelControls() {
+    if (typeof document === 'undefined') return;
+    const keep = new Set(), areas = new Set();
+    if (isReelPage()) {
+      for (const video of document.querySelectorAll('video')) {
+        const reel = reelOf(video);
+        if (!reel) continue;
+        const { box, card } = reel;
+        const pick = (cls) => { let kept = null; for (const el of box.querySelectorAll('.' + cls)) { if (!kept && el.parentElement === box) kept = el; else el.remove(); } return kept || box.appendChild(makeReelControl(cls)); };
+        const copy = pick(REEL_COPY), save = pick(REEL_SAVE);
+        if (copy.nextElementSibling !== save) box.insertBefore(save, copy.nextSibling);
+        for (const [el, top] of [[copy, '12px'], [save, '58px']]) { if (el.style.top !== top) el.style.top = top; if (el.style.right !== '12px') el.style.right = '12px'; }
+        box.classList.add(HOVER_AREA); areas.add(box); keep.add(copy); keep.add(save);
+        for (const old of card.querySelectorAll('.image-saver-ig-copy-wrap')) old.remove();
+      }
+    }
+    for (const el of document.querySelectorAll('.' + REEL_COPY + ', .' + REEL_SAVE)) if (!keep.has(el)) el.remove();
+    for (const a of document.querySelectorAll('.' + HOVER_AREA)) if (!areas.has(a)) a.classList.remove(HOVER_AREA);
+  }
+
   function scanAndInjectInstagramCopyButtons(root = (typeof document !== 'undefined' ? document : null)) {
     if (!root || typeof root.querySelectorAll !== 'function') return 0;
     ensureIgButtonStyles();
+    placeReelControls();
 
     // 0. Refresh layout classes of existing connected buttons in root (e.g. on responsive resize or SPA layout updates)
     try {
@@ -1240,7 +1431,20 @@
 
   const requestThrottledScan = globalThis.MediaLatchCopyKit.scheduler((root) => scanAndInjectInstagramCopyButtons(root));
 
-  const initInstagramCopyButtonObserver = globalThis.MediaLatchCopyKit.observer({ prepare: ensureIgButtonStyles, scan: scanAndInjectInstagramCopyButtons, request: requestThrottledScan, ownClass: 'image-saver-ig-copy-wrap' });
+  let instagramCopyObserver = null;
+  function initInstagramCopyButtonObserver() {
+    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return null;
+    ensureIgButtonStyles();
+    scanAndInjectInstagramCopyButtons();
+    instagramCopyObserver?.disconnect();
+    // Removing a native Reel layer or rail also invalidates its pair, even when no node was added.
+    instagramCopyObserver = new MutationObserver((records) => {
+      if (records.some((r) => r.addedNodes.length || r.removedNodes.length)) requestThrottledScan();
+    });
+    const target = document.body || document.documentElement;
+    if (target) instagramCopyObserver.observe(target, { childList: true, subtree: true });
+    return instagramCopyObserver;
+  }
 
   if (typeof window !== 'undefined') {
     // Intercept scroll events in capture phase so inner overflow containers (e.g. scrollable Reel feeds) trigger re-scans
@@ -1280,4 +1484,5 @@
     globalThis.__ALLOWED_IG_SHARE_HOSTS = ALLOWED_IG_SHARE_HOSTS;
     globalThis.__DEFAULT_IG_SHARE_HOST = DEFAULT_IG_SHARE_HOST;
   }
+  globalThis.__mediaLatchInstagramInitialized = true;
 })();

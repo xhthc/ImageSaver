@@ -1874,7 +1874,7 @@ function readSocialPlayerItem(site, stream) {
       try { walk(JSON.parse(text), 0); } catch (_) { continue; }
       if (!item) continue;
       const best = item.video_versions.filter((x) => x && typeof x.url === 'string').sort((a, b) => (Number(b.width) || 0) - (Number(a.width) || 0))[0];
-      return { itemId: id, url: best ? best.url : '', hasAudio: item.has_audio === true ? true : item.has_audio === false ? false : null };
+      return { itemId: id, code: typeof item.code === 'string' ? item.code : '', url: best ? best.url : '', hasAudio: item.has_audio === true ? true : item.has_audio === false ? false : null };
     }
     // the player streams separate video and audio tracks of an item for which the page declares no progressive file (a later feed item)
     return { itemId: id, reason: manifest ? 'SEPARATE_TRACKS' : 'NO_ITEM' };
@@ -1890,13 +1890,14 @@ async function resolveSocialPlayerMedia({ tabId, frameId = 0, documentId = '', s
   const target = documentId ? { tabId, documentIds: [documentId] } : { tabId, frameIds: [Number.isInteger(frameId) ? frameId : 0] };
   let picked = null, item = null;
   try {
-    if (inlineItem && !(site === 'tiktok' && documentId && String(stream || '').startsWith('blob:'))) return refuse('FRAME_CHANGED');
+    if (inlineItem && !(documentId && String(stream || '').startsWith('blob:'))) return refuse('FRAME_CHANGED');
     picked = inlineItem ? { stream } : (await chrome.scripting.executeScript({ target, injectImmediately: true, func: selectSocialPlayer, args: [{ gestureAt: Number.isFinite(gestureAt) ? gestureAt : null, stream: String(stream || '').startsWith('blob:') ? stream : '' }] }))?.[0]?.result;
     if (!picked || typeof picked.stream !== 'string') return refuse('FRAME_CHANGED');
     item = (await chrome.scripting.executeScript({ target, world: 'MAIN', injectImmediately: true, func: readSocialPlayerItem, args: [site, picked.stream] }))?.[0]?.result;
   } catch (_) { return refuse('FRAME_CHANGED'); }
   if (!item || typeof item !== 'object') return refuse('NO_DIRECT_MEDIA_FOUND');
-  if (inlineItem && !item.reason && String(item.itemId) !== inlineItem) return refuse('FRAME_CHANGED');
+  // TikTok names its item by id, an Instagram Reel by shortcode (INSTAGRAM-REELS-CONTROLS-01)
+  if (inlineItem && !item.reason && String(site === 'instagram' ? item.code : item.itemId) !== inlineItem) return refuse('FRAME_CHANGED');
   // separate DASH tracks would need muxing that this pipeline does not do: an unsupported source, never a silent or guessed file
   if (item.reason === 'SEPARATE_TRACKS') return { ...refuse('UNSUPPORTED_STREAM'), diagnostics: { rejectionReasons: ['SEPARATE_TRACKS'], provider: site, streamType: 'dash' } };
   if (item.reason) return refuse(item.reason === 'PLAYER_CHANGED' ? 'FRAME_CHANGED' : item.reason === 'NOT_VIDEO' ? 'NOT_VIDEO' : 'NO_DIRECT_MEDIA_FOUND');

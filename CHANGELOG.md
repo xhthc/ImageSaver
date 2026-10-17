@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased — TikTok controls
+## Unreleased — TikTok controls and Instagram Reel controls
+
+- Instagram Reels (Reels feed and opened Reel): Copy link above Download in the upper-right corner of the selected Reel's video, shown on hover over that video, hidden on exit, reachable by keyboard and always visible without hover; they replace the earlier Reel Copy above Like (ordinary posts unchanged). Download saves the Reel in view through the existing selected-video resolver and manager only when the player's own item matches the Reel's proven shortcode; covered, neighbouring, recycled or separate-track-only Reels are refused visibly, and a double press makes one job.
 
 - TikTok: reveal Copy link and Download only while the pointer is over their video, and hide them on exit. Keyboard focus keeps both actions visible; devices without hover keep them available.
 

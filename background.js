@@ -1608,7 +1608,7 @@ let contextOwnerProofs = 0;
 // gesture-captured owner gate; X keeps its selected-player path.
 const inlineRoutes = new WeakMap();
 const viaInline = (info, ...routes) => routes.includes(inlineRoutes.get(info));
-const OWN_PROOF_ROUTES = ['reddit', 'redgifs', 'pixiv', 'vk', 'tiktok'];
+const OWN_PROOF_ROUTES = ['reddit', 'redgifs', 'pixiv', 'vk', 'tiktok', 'instagram'];
 async function onContextMenuClicked(info, tab) {
   // DEBUG-MENU-01: one attempt id per save (an inline save brings the id of its click); journal only, never an authority
   if (!info.dbgCid) info.dbgCid = dbgNewCid();
@@ -1644,6 +1644,7 @@ async function onContextMenuClicked(info, tab) {
     const owner = viaInline(info, ...OWN_PROOF_ROUTES) || postMediaItemInfos.has(info) ? 'proven' : await resolveContextOwner(tab?.id, info.frameId, ownerClaim);
     if (viaInline(info, 'pixiv')) ownerClaim.documentId = info.pixivInline.documentId;
     if (viaInline(info, 'tiktok')) ownerClaim.documentId = info.tiktokInline.documentId;
+    if (viaInline(info, 'instagram')) ownerClaim.documentId = info.instagramInline.documentId;
     if (owner === 'proven' && !viaInline(info, 'reddit')) Object.assign(info, { authorProof: ownerProof, authorDocumentId: ownerClaim.documentId || '' });
     dbg('menu', 'owner', owner === 'refused' || owner === 'preview' ? 'refused' : 'ok', owner === 'preview' ? 'SEEK_PREVIEW' : (owner === 'refused' ? 'STALE_OWNER' : undefined), { owner }, { cid: info.dbgCid, tab: tab && tab.id });
     if (owner === 'refused' || owner === 'preview') {
@@ -1903,7 +1904,7 @@ async function onContextMenuClicked(info, tab) {
             gestureDocumentId,
             gestureAt,
             ownerDocumentId: ownerClaim.documentId || '',
-            socialInline: viaInline(info, 'tiktok') ? info.tiktokInline : undefined,
+            socialInline: viaInline(info, 'tiktok') ? info.tiktokInline : viaInline(info, 'instagram') ? info.instagramInline : undefined,
             inlineToken,
             redGifsEmbed: viaInline(info, 'reddit') && info.redditInlineRedGifs ? info.redditInlineRedGifs : undefined
           });
@@ -3042,6 +3043,27 @@ function handleTiktokInlineSave(message, sender) {
   }, message, sender);
 }
 
+// INSTAGRAM-REELS-CONTROLS-01: the Download control in the selected Reel's video (content/content_instagram.js). Only a one-shot token and the Reel's
+// shortcode arrive. The sender must be this extension's content script in the TOP document of www.instagram.com (active tab, document id); that
+// document proves its frozen player again (INSTAGRAM_INLINE_PROOF: the same shortcode, the same stream). The save then enters the shared admission
+// with that stream as its source; the resolver reads the player's own item in the same document and requires it to be that shortcode.
+const isInstagramPageUrl = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && (u.hostname === 'www.instagram.com' || u.hostname === 'instagram.com'); } catch (_) { return false; } };
+const instagramInlineSenderOk = (message, sender) => inlineSenderOk(message, sender, isInstagramPageUrl, { top: true, doc: true }) && typeof message.item === 'string' && /^[A-Za-z0-9_-]{5,40}$/.test(message.item);
+
+function handleInstagramInlineSave(message, sender) {
+  return runInlineSingle({
+    scope: 'instagram.inline', phase: 'save', senderOk: instagramInlineSenderOk, ask: { action: 'INSTAGRAM_INLINE_PROOF', token: message.token },
+    sanitize: (raw) => { try { return raw && raw.item === message.item && typeof raw.stream === 'string' && raw.stream.length <= 200 && raw.stream.startsWith('blob:' + new URL(sender.url).origin + '/') ? { item: raw.item, stream: raw.stream } : null; } catch (_) { return null; } },
+    why: (answer) => inlineWhy(answer, TIKTOK_INLINE_REASONS),
+    warn: (answer) => ['[MediaLatch] Inline Instagram save refused:', inlineWhy(answer, TIKTOK_INLINE_REASONS)],
+    run: async (tab, sender, media, cid) => {
+      const info = { menuItemId: 'save-image-item', pageUrl: sender.url, frameUrl: sender.url, frameId: sender.frameId, mediaType: 'video', srcUrl: media.stream, instagramInline: { documentId: sender.documentId, item: media.item }, dbgCid: cid };
+      inlineRoutes.set(info, 'instagram');
+      await onContextMenuClicked(info, tab);
+    }
+  }, message, sender);
+}
+
 // One router for the inline actions of the content script (content/content_inline.js): the route, and the label its failure is logged with.
 const INLINE_ROUTES = {
   X_INLINE_SAVE: ['Inline X Save', handleXInlineSave],
@@ -3053,7 +3075,8 @@ const INLINE_ROUTES = {
   REDDIT_INLINE_SAVE: ['Inline Reddit Save', handleRedditInlineSave],
   REDDIT_INLINE_SAVE_ALL: ['Inline Reddit Save all', handleRedditInlineSaveAll],
   REDGIFS_INLINE_SAVE: ['Inline RedGIFs Save', handleRedgifsInlineSave],
-  TIKTOK_INLINE_SAVE: ['Inline TikTok Save', handleTiktokInlineSave]
+  TIKTOK_INLINE_SAVE: ['Inline TikTok Save', handleTiktokInlineSave],
+  INSTAGRAM_INLINE_SAVE: ['Inline Instagram Save', handleInstagramInlineSave]
 };
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender) => {
